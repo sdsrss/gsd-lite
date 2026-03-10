@@ -419,11 +419,16 @@ async function resumeExecutingTask(state, basePath) {
 
   if (selection.mode === 'trigger_review') {
     const current_review = { scope: 'phase', scope_id: phase.id };
-    const persistError = await persist(basePath, {
+    const updates = {
       workflow_mode: 'reviewing_phase',
       current_task: null,
       current_review,
-    });
+    };
+    // Auto-advance phase lifecycle to 'reviewing' if currently 'active'
+    if (phase.lifecycle === 'active') {
+      updates.phases = [{ id: phase.id, lifecycle: 'reviewing' }];
+    }
+    const persistError = await persist(basePath, updates);
     if (persistError) return persistError;
 
     return {

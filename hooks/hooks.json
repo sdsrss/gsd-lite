@@ -1,13 +1,26 @@
 {
-  "description": "GSD-Lite context monitoring hooks",
+  "description": "GSD-Lite hooks: statusline progress bar + context health monitor",
   "hooks": {
+    "StatusLine": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-statusline.cjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/context-monitor.js\" postToolUse"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-context-monitor.cjs\"",
+            "timeout": 3
           }
         ]
       }

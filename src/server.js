@@ -38,9 +38,25 @@ const TOOLS = [
           items: {
             type: 'object',
             properties: {
-              name: { type: 'string' },
-              tasks: { type: 'array' },
+              name: { type: 'string', description: 'Phase name' },
+              tasks: {
+                type: 'array',
+                description: 'Task definitions',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string', description: 'Task name (required)' },
+                    index: { type: 'number', description: 'Task index within phase (default: auto)' },
+                    level: { type: 'string', description: 'Complexity level: L0/L1/L2/L3 (default: L1)' },
+                    requires: { type: 'array', description: 'Dependency list (default: [])' },
+                    review_required: { type: 'boolean', description: 'Whether review is needed (default: true)' },
+                    verification_required: { type: 'boolean', description: 'Whether verification is needed (default: true)' },
+                  },
+                  required: ['name'],
+                },
+              },
             },
+            required: ['name'],
           },
         },
         research: { type: 'boolean', description: 'Whether research directory is needed' },

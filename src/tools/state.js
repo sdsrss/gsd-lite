@@ -72,7 +72,12 @@ export async function init({ project, phases, research, force = false, basePath 
     await ensureDir(join(gsdDir, 'research'));
   }
 
-  const state = createInitialState({ project, phases });
+  let state;
+  try {
+    state = createInitialState({ project, phases });
+  } catch (err) {
+    return { error: true, message: err.message };
+  }
   state.git_head = getGitHead(basePath);
 
   // Create plan.md placeholder (atomic write)
@@ -554,6 +559,12 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
 
   const awaitingReview = phase.todo.filter(t => t.lifecycle === 'checkpointed');
   if (awaitingReview.length > 0) {
+    return { mode: 'trigger_review' };
+  }
+
+  // All tasks accepted → trigger phase review if not already reviewed
+  const allAccepted = phase.todo.length > 0 && phase.todo.every(t => t.lifecycle === 'accepted');
+  if (allAccepted && phase.phase_review?.status !== 'accepted') {
     return { mode: 'trigger_review' };
   }
 

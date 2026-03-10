@@ -1,13 +1,13 @@
 // hooks/context-monitor.js
-// This file exports TWO hook handlers used by Claude Code's hooks system.
-// Can also be invoked via CLI: node context-monitor.js <statusLine|postToolUse>
+// ESM wrapper — exports functions for unit tests.
+// Production hooks use gsd-statusline.js (CJS) and gsd-context-monitor.js (CJS) directly.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * StatusLine hook — called after each tool use.
- * Reads remaining_percentage and writes to .gsd/.context-health
+ * StatusLine hook — reads context_window data and writes bridge file.
+ * Used by unit tests; production uses gsd-statusline.js (CJS).
  */
 export function statusLine(data, basePath) {
   try {
@@ -23,8 +23,8 @@ export function statusLine(data, basePath) {
 }
 
 /**
- * PostToolUse hook — called after each tool use.
- * Reads .context-health and returns warning/stop text if threshold breached.
+ * PostToolUse hook — reads .context-health and returns warning text.
+ * Used by unit tests; production uses gsd-context-monitor.js (CJS).
  */
 export function postToolUse(basePath) {
   try {
@@ -41,24 +41,4 @@ export function postToolUse(basePath) {
     if (process.env.GSD_DEBUG) console.error('[context-monitor:postToolUse]', err);
   }
   return null;
-}
-
-// I-6: CLI dispatch — allows hook registration as shell command
-const cmd = process.argv[2];
-if (cmd === 'statusLine') {
-  // Read JSON data from stdin for statusLine
-  let input = '';
-  process.stdin.setEncoding('utf-8');
-  process.stdin.on('data', chunk => { input += chunk; });
-  process.stdin.on('end', () => {
-    try {
-      const data = JSON.parse(input);
-      statusLine(data);
-    } catch (err) {
-      if (process.env.GSD_DEBUG) console.error('[context-monitor:cli]', err);
-    }
-  });
-} else if (cmd === 'postToolUse') {
-  const result = postToolUse();
-  if (result) console.log(result);
 }

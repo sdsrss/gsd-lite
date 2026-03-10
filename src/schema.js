@@ -423,6 +423,14 @@ export function validateDebuggerResult(r) {
 }
 
 export function createInitialState({ project, phases }) {
+  // Validate task names before creating state
+  for (const [pi, p] of (phases || []).entries()) {
+    for (const [ti, t] of (p.tasks || []).entries()) {
+      if (!t.name || typeof t.name !== 'string') {
+        throw new Error(`Phase ${pi + 1} task ${ti + 1}: name is required (got ${JSON.stringify(t.name)})`);
+      }
+    }
+  }
   return {
     project,
     workflow_mode: 'executing_task',
