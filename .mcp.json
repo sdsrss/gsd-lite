@@ -1,6 +1,6 @@
 {
   "gsd-lite": {
-    "command": "node",
-    "args": ["${CLAUDE_PLUGIN_ROOT}/src/server.js"]
+    "command": "npx",
+    "args": ["-y", "gsd-lite@latest"]
   }
 }

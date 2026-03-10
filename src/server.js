@@ -12,7 +12,7 @@ import {
 } from './tools/orchestrator.js';
 
 const server = new Server(
-  { name: 'gsd-lite', version: '0.1.0' },
+  { name: 'gsd-lite', version: '0.2.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -167,7 +167,7 @@ async function dispatchToolCall(name, args) {
       result = {
         status: 'ok',
         server: 'gsd-lite',
-        version: '0.1.0',
+        version: '0.2.0',
         state_exists: !stateResult.error,
         ...(stateResult.error ? {} : {
           project: stateResult.project,
@@ -230,7 +230,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   };
 });
 
-async function main() {
+export async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

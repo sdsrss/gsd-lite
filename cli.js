@@ -1,30 +1,36 @@
 #!/usr/bin/env node
 
-import { main as install } from './install.js';
-import { main as uninstall } from './uninstall.js';
-
 function printHelp() {
-  console.log(`GSD-Lite CLI
+  console.log(`GSD-Lite — AI orchestration tool for Claude Code
 
 Usage:
-  gsd-lite install [--dry-run]
-  gsd-lite uninstall
-  gsd-lite help
-
-Default command:
-  gsd-lite            # same as install
+  gsd-lite              # Start MCP stdio server (default)
+  gsd-lite serve        # Start MCP stdio server (explicit)
+  gsd-lite install      # Install hooks/commands into Claude Code
+  gsd-lite uninstall    # Remove hooks/commands from Claude Code
+  gsd-lite help         # Show this help
 `);
 }
 
-const [command = 'install'] = process.argv.slice(2);
+const [command] = process.argv.slice(2);
 
 switch (command) {
-  case 'install':
+  case undefined:
+  case 'serve': {
+    const { main } = await import('./src/server.js');
+    main().catch(console.error);
+    break;
+  }
+  case 'install': {
+    const { main: install } = await import('./install.js');
     install();
     break;
-  case 'uninstall':
+  }
+  case 'uninstall': {
+    const { main: uninstall } = await import('./uninstall.js');
     uninstall();
     break;
+  }
   case 'help':
   case '--help':
   case '-h':
