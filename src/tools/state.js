@@ -335,3 +335,37 @@ export function propagateInvalidation(phase, reworkTaskId, contractChanged) {
     }
   }
 }
+
+/**
+ * Build executor context for a task: 6-field protocol.
+ * Returns { task_spec, research_decisions, predecessor_outputs, project_conventions, workflows, constraints }.
+ */
+export function buildExecutorContext(state, taskId, phaseId) {
+  const phase = state.phases.find(p => p.id === phaseId);
+  const task = phase.todo.find(t => t.id === taskId);
+
+  const task_spec = `phases/${String(phaseId).padStart(2, '0')}-${phase.name || 'phase'}.md`;
+
+  const research_decisions = (task.research_basis || []).map(id => {
+    const decision = state.research?.decision_index?.[id];
+    return decision ? { id, ...decision } : { id, summary: 'not found' };
+  });
+
+  const predecessor_outputs = (task.requires || [])
+    .filter(dep => dep.kind === 'task')
+    .map(dep => {
+      const depTask = phase.todo.find(t => t.id === dep.id);
+      return depTask ? { files_changed: depTask.files_changed || [], checkpoint_commit: depTask.checkpoint_commit } : null;
+    })
+    .filter(Boolean);
+
+  const project_conventions = 'CLAUDE.md';
+  const workflows = ['workflows/tdd-cycle.md', 'workflows/deviation-rules.md'];
+  const constraints = {
+    retry_count: task.retry_count || 0,
+    level: task.level || 'L1',
+    review_required: task.review_required !== false,
+  };
+
+  return { task_spec, research_decisions, predecessor_outputs, project_conventions, workflows, constraints };
+}
