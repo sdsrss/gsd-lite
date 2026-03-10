@@ -161,3 +161,73 @@ describe('state tools', () => {
     });
   });
 });
+
+describe('matchDecisionForBlocker edge cases', () => {
+  it('returns null when overlap is below MIN_OVERLAP (single token)', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    const decisions = [{ id: 'd1', summary: 'Use React frontend' }];
+    const result = matchDecisionForBlocker(decisions, 'Need frontend framework');
+    // Only "frontend" overlaps → 1 < MIN_OVERLAP(2) → null
+    assert.equal(result, null);
+  });
+
+  it('matches at exact MIN_OVERLAP boundary (overlap=2)', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    const decisions = [{ id: 'd1', summary: 'Use PostgreSQL database' }];
+    const result = matchDecisionForBlocker(decisions, 'Which database to use');
+    // "database" + "use" overlap → 2 = MIN_OVERLAP → match
+    assert.equal(result.id, 'd1');
+  });
+
+  it('returns the best match among multiple decisions', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    const decisions = [
+      { id: 'd1', summary: 'deploy staging server config' },
+      { id: 'd2', summary: 'deploy staging environment' },
+      { id: 'd3', summary: 'unrelated topic here' },
+    ];
+    const result = matchDecisionForBlocker(decisions, 'deploy staging server');
+    // d1: "deploy"+"staging"+"server" = 3 overlap
+    // d2: "deploy"+"staging" = 2 overlap
+    // d3: 0 overlap
+    assert.equal(result.id, 'd1');
+  });
+
+  it('returns null for empty decisions array', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    const result = matchDecisionForBlocker([], 'some blocked reason');
+    assert.equal(result, null);
+  });
+
+  it('returns null for empty or null blocked reason', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    const decisions = [{ id: 'd1', summary: 'Use PostgreSQL database' }];
+    assert.equal(matchDecisionForBlocker(decisions, ''), null);
+    assert.equal(matchDecisionForBlocker(decisions, null), null);
+  });
+
+  it('returns null for decision without summary (no crash)', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    const decisions = [{ id: 'd1' }];
+    const result = matchDecisionForBlocker(decisions, 'some blocked reason here');
+    assert.equal(result, null);
+  });
+
+  it('matches case-insensitively', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    const decisions = [{ id: 'd1', summary: 'Use PostgreSQL database' }];
+    const result = matchDecisionForBlocker(decisions, 'POSTGRESQL DATABASE choice');
+    // "postgresql" + "database" overlap → 2 = MIN_OVERLAP → match
+    assert.equal(result.id, 'd1');
+  });
+
+  it('filters out short tokens from punctuation splitting', async () => {
+    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+    // "I/O" splits into "i" and "o" (both length 1, filtered by MIN_TOKEN_LENGTH=2)
+    const decisions = [{ id: 'd1', summary: 'Handle I/O operations' }];
+    const result = matchDecisionForBlocker(decisions, 'I/O performance');
+    // After filtering: decision tokens = ["handle","operations"], reason tokens = ["performance"]
+    // No overlap → null
+    assert.equal(result, null);
+  });
+});
