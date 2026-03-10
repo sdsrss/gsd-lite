@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync } fr
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLAUDE_DIR = join(homedir(), '.claude');
@@ -109,10 +110,21 @@ export function main() {
 
   // 6. Stable runtime for MCP server
   copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd-lite/src/');
-  copyDir(join(__dirname, 'node_modules'), join(RUNTIME_DIR, 'node_modules'), 'runtime/node_modules → ~/.claude/gsd-lite/node_modules/');
   copyFile(join(__dirname, 'package.json'), join(RUNTIME_DIR, 'package.json'), 'runtime/package.json → ~/.claude/gsd-lite/package.json');
 
-  // 7. Register MCP server in settings.json
+  // 7. Runtime dependencies — copy local node_modules or install fresh (npx hoists deps)
+  const localNM = join(__dirname, 'node_modules');
+  if (existsSync(localNM)) {
+    copyDir(localNM, join(RUNTIME_DIR, 'node_modules'), 'runtime/node_modules (copied)');
+  } else if (!DRY_RUN) {
+    log('  ⧗ Installing runtime dependencies...');
+    execSync('npm install --omit=dev', { cwd: RUNTIME_DIR, stdio: 'pipe' });
+    log('  ✓ runtime dependencies installed');
+  } else {
+    log('  [dry-run] Would install runtime dependencies');
+  }
+
+  // 8. Register MCP server in settings.json
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
   if (!DRY_RUN) {
     let settings = {};
