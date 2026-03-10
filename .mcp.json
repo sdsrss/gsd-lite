@@ -1,0 +1,6 @@
+{
+  "gsd-lite": {
+    "command": "node",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/src/server.js"]
+  }
+}

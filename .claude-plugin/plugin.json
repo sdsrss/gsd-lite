@@ -7,11 +7,6 @@
     "url": "https://github.com/sdsrss"
   },
   "repository": "https://github.com/sdsrss/gsd-lite",
-  "homepage": "https://github.com/sdsrss/gsd-lite",
   "license": "MIT",
-  "keywords": ["claude-code", "orchestration", "mcp", "ai-agent", "task-management", "tdd"],
-  "commands": "./commands/",
-  "agents": "./agents/",
-  "hooks": "./hooks/hooks.json",
-  "mcpServers": "./.claude-plugin/mcp.json"
+  "keywords": ["claude-code", "orchestration", "mcp", "ai-agent", "task-management", "tdd"]
 }
