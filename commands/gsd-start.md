@@ -193,7 +193,8 @@ executor 上下文传递协议 (orchestrator → executor):
 │                  → 不能回答 → workflow_mode = awaiting_user，向用户转达
 ├── failed       → retry_count + 1
 │                  → 未超限 → 重新派发 executor
-│                  → 超限 (3次) 或返回 [FAILED] → 触发 debugger (见下方)
+│                  → 超限 (3次) 或返回 [FAILED] 且错误指纹重复
+│                    或修复尝试未收敛 → 触发 debugger (见下方)
 ```
 
 **Debugger 触发流程:**
