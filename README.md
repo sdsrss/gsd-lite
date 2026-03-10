@@ -86,20 +86,30 @@ cd gsd-lite && node install.js
 
 ```
 gsd-lite/
-├── src/                    # MCP Server + 工具层 (~400行)
-├── commands/               # 5 个 slash 命令
-├── agents/                 # 4 个子代理
-├── workflows/              # 5 个核心工作流
-├── references/             # 4 个参考文档
-├── hooks/                  # 上下文监控
-├── install.js              # 安装脚本 (~80行)
+├── src/                    # MCP Server + 工具层 (~1100行)
+│   ├── server.js           # MCP Server (4 tools 注册)
+│   ├── schema.js           # State schema + lifecycle 校验
+│   ├── utils.js            # 共享工具 (原子写入, 路径, git)
+│   └── tools/
+│       ├── state.js        # State CRUD + evidence + 传播逻辑
+│       └── verify.js       # lint/typecheck/test 验证
+├── commands/               # 5 个 slash 命令 (~850行 Markdown)
+├── agents/                 # 4 个子代理 (~325行 Markdown)
+├── workflows/              # 5 个核心工作流 (~760行 Markdown)
+├── references/             # 4 个参考文档 (~400行 Markdown)
+├── hooks/                  # 上下文监控 (StatusLine + PostToolUse)
+├── tests/                  # 92 个单元测试 + E2E checklist
+├── install.js              # 安装脚本
 └── uninstall.js            # 卸载脚本
 ```
+
+**26 个交付文件 | ~1100 行代码 | ~2300 行 Markdown | 92 个测试**
 
 ## 文档
 
 - [设计方案 v3.5](docs/gsd-lite-design.md) — 完整架构与协议规范
-- [工程任务清单](docs/gsd-lite-engineering-tasks.md) — 38 个实施任务 (5 Phase)
+- [工程任务清单](docs/gsd-lite-engineering-tasks.md) — 38 个实施任务 (5 Phase, 全部完成)
+- [指标校准记录](docs/calibration-notes.md) — 上下文阈值与 TTL 校准
 
 ## License
 
