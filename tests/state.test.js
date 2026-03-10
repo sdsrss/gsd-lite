@@ -26,10 +26,13 @@ describe('state tools', () => {
       assert.equal(result.success, true);
 
       const { readJson } = await import('../src/utils.js');
-      const state = await readJson(join(tempDir, '.gsd', 'state.json'));
+      const readResult = await readJson(join(tempDir, '.gsd', 'state.json'));
+      assert.equal(readResult.ok, true);
+      const state = readResult.data;
       assert.equal(state.project, 'test-project');
-      assert.equal(state.workflow_mode, 'planning');
+      assert.equal(state.workflow_mode, 'executing_task');
       assert.equal(state.phases.length, 1);
+      assert.equal(state.phases[0].lifecycle, 'active');
     });
 
     it('creates phases directory', async () => {
@@ -48,14 +51,14 @@ describe('state tools', () => {
       const { read } = await import('../src/tools/state.js');
       const result = await read({ basePath: tempDir });
       assert.equal(result.project, 'test-project');
-      assert.equal(result.workflow_mode, 'planning');
+      assert.equal(result.workflow_mode, 'executing_task');
     });
 
     it('returns filtered fields', async () => {
       const { read } = await import('../src/tools/state.js');
       const result = await read({ fields: ['project', 'workflow_mode'], basePath: tempDir });
       assert.equal(result.project, 'test-project');
-      assert.equal(result.workflow_mode, 'planning');
+      assert.equal(result.workflow_mode, 'executing_task');
       assert.equal(result.phases, undefined);
     });
 
@@ -97,6 +100,26 @@ describe('state tools', () => {
       });
       assert.equal(result.error, true);
     });
+
+    it('rejects null updates payload', async () => {
+      const { update } = await import('../src/tools/state.js');
+      const result = await update({ updates: null, basePath: tempDir });
+      assert.equal(result.error, true);
+      assert.match(result.message, /updates must be a non-null object/);
+    });
+
+    it('rejects malformed phases that fail schema validation', async () => {
+      const { update } = await import('../src/tools/state.js');
+      const result = await update({
+        updates: {
+          phases: [{ id: 2, name: 'broken', lifecycle: 'pending' }],
+          total_phases: 2,
+        },
+        basePath: tempDir,
+      });
+      assert.equal(result.error, true);
+      assert.match(result.message, /todo must be an array/);
+    });
   });
 
   describe('update lifecycle validation', () => {
@@ -114,10 +137,10 @@ describe('state tools', () => {
       const { update, read } = await import('../src/tools/state.js');
       const state = await read({ basePath: tempDir });
       const phases = JSON.parse(JSON.stringify(state.phases));
-      phases[0].lifecycle = 'reviewing'; // skip active
+      phases[0].lifecycle = 'accepted'; // skip reviewing
       const result = await update({ updates: { phases }, basePath: tempDir });
       assert.equal(result.error, true);
-      assert.ok(result.message.includes('pending'));
+      assert.ok(result.message.includes('active'));
     });
 
     it('allows legal task lifecycle transition (pending → running)', async () => {

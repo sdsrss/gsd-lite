@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 const CLAUDE_DIR = join(homedir(), '.claude');
+const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd-lite');
 
 function log(msg) { console.log(msg); }
 
@@ -22,18 +23,11 @@ function main() {
   log('Removing files...');
 
   removeDir(join(CLAUDE_DIR, 'commands', 'gsd'), 'commands/gsd/');
-  // Note: don't remove agents/ entirely — other tools may have agents there
-  // Remove only gsd-specific agent files
-  const agentFiles = ['gsd-executor.md', 'gsd-reviewer.md', 'gsd-researcher.md', 'gsd-debugger.md'];
-  for (const f of agentFiles) {
-    const p = join(CLAUDE_DIR, 'agents', f);
-    if (existsSync(p)) {
-      rmSync(p);
-      log(`  ✓ Removed agents/${f}`);
-    }
-  }
+  // Agents now namespaced under gsd/ [I-5]
+  removeDir(join(CLAUDE_DIR, 'agents', 'gsd'), 'agents/gsd/');
   removeDir(join(CLAUDE_DIR, 'workflows', 'gsd'), 'workflows/gsd/');
   removeDir(join(CLAUDE_DIR, 'references', 'gsd'), 'references/gsd/');
+  removeDir(RUNTIME_DIR, 'gsd-lite runtime/');
 
   // Remove hook file
   const hookFile = join(CLAUDE_DIR, 'hooks', 'context-monitor.js');
@@ -42,14 +36,26 @@ function main() {
     log('  ✓ Removed hooks/context-monitor.js');
   }
 
-  // Deregister MCP server
+  // Deregister MCP server and hooks [M-10]
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
   try {
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    let changed = false;
     if (settings.mcpServers && settings.mcpServers['gsd-lite']) {
       delete settings.mcpServers['gsd-lite'];
+      changed = true;
+    }
+    if (settings.hooks) {
+      for (const key of ['StatusLine', 'PostToolUse']) {
+        if (settings.hooks[key] && settings.hooks[key].includes('context-monitor.js')) {
+          delete settings.hooks[key];
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
       writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-      log('  ✓ MCP server deregistered from settings.json');
+      log('  ✓ MCP server + hooks deregistered from settings.json');
     }
   } catch {}
 

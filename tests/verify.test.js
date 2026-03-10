@@ -63,5 +63,23 @@ describe('verify tools', () => {
       assert.ok(result.test);
       assert.equal(result.lint.exit_code, -1);
     });
+
+    it('skips lint when no lint script is defined', async () => {
+      const { runAll } = await import('../src/tools/verify.js');
+      const dir = join(tempDir, 'npm-no-lint');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'package-lock.json'), '{}');
+      await writeFile(
+        join(dir, 'package.json'),
+        JSON.stringify({
+          name: 'npm-no-lint',
+          scripts: { test: 'node --eval "process.exit(0)"' },
+        }, null, 2),
+      );
+      const result = await runAll(dir);
+      assert.equal(result.lint.exit_code, 0);
+      assert.match(result.lint.summary, /no lint script found/);
+      assert.equal(result.test.exit_code, 0);
+    });
   });
 });

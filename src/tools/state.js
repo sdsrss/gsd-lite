@@ -1,19 +1,33 @@
 // State CRUD tools
 
-import { writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { ensureDir, readJson, writeJson, getStatePath, getGitHead } from '../utils.js';
+import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead } from '../utils.js';
 import {
   CANONICAL_FIELDS,
+  TASK_LIFECYCLE,
   validateState,
   validateTransition,
   createInitialState,
 } from '../schema.js';
 
+// C-1: Serialize all state mutations to prevent TOCTOU races
+let _mutationQueue = Promise.resolve();
+function withStateLock(fn) {
+  const p = _mutationQueue.then(fn);
+  _mutationQueue = p.catch(() => {});
+  return p;
+}
+
 /**
  * Initialize a new GSD project: creates .gsd/, state.json, plan.md, phases/
  */
 export async function init({ project, phases, research, basePath = process.cwd() }) {
+  if (!project || typeof project !== 'string') {
+    return { error: true, message: 'project must be a non-empty string' };
+  }
+  if (!Array.isArray(phases)) {
+    return { error: true, message: 'phases must be an array' };
+  }
   const gsdDir = join(basePath, '.gsd');
   const phasesDir = join(gsdDir, 'phases');
 
@@ -26,19 +40,17 @@ export async function init({ project, phases, research, basePath = process.cwd()
   state.git_head = getGitHead(basePath);
   await writeJson(join(gsdDir, 'state.json'), state);
 
-  // Create plan.md placeholder
-  await writeFile(
+  // Create plan.md placeholder (atomic write)
+  await writeAtomic(
     join(gsdDir, 'plan.md'),
     `# ${project}\n\nPlan placeholder — populate during planning phase.\n`,
-    'utf-8',
   );
 
-  // Create phase placeholder .md files
+  // Create phase placeholder .md files (atomic writes)
   for (const phase of state.phases) {
-    await writeFile(
+    await writeAtomic(
       join(phasesDir, `phase-${phase.id}.md`),
       `# Phase ${phase.id}: ${phase.name}\n\nTasks and details go here.\n`,
-      'utf-8',
     );
   }
 
@@ -54,10 +66,11 @@ export async function read({ fields, basePath = process.cwd() } = {}) {
     return { error: true, message: 'No .gsd directory found' };
   }
 
-  const state = await readJson(statePath);
-  if (state.error) {
-    return state;
+  const result = await readJson(statePath);
+  if (!result.ok) {
+    return { error: true, message: result.error };
   }
+  const state = result.data;
 
   if (fields && Array.isArray(fields) && fields.length > 0) {
     const filtered = {};
@@ -75,7 +88,10 @@ export async function read({ fields, basePath = process.cwd() } = {}) {
 /**
  * Update state.json with canonical field guard and full validation.
  */
-export async function update({ updates, basePath = process.cwd() }) {
+export async function update({ updates, basePath = process.cwd() } = {}) {
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    return { error: true, message: 'updates must be a non-null object' };
+  }
   // Guard: reject non-canonical fields
   const nonCanonical = Object.keys(updates).filter(
     (key) => !CANONICAL_FIELDS.includes(key),
@@ -92,141 +108,197 @@ export async function update({ updates, basePath = process.cwd() }) {
     return { error: true, message: 'No .gsd directory found' };
   }
 
-  const state = await readJson(statePath);
-  if (state.error) {
-    return state;
-  }
+  return withStateLock(async () => {
+    const result = await readJson(statePath);
+    if (!result.ok) {
+      return { error: true, message: result.error };
+    }
+    const state = result.data;
 
-  // Validate lifecycle transitions before merging
-  if (updates.phases && Array.isArray(updates.phases)) {
-    for (const newPhase of updates.phases) {
-      const oldPhase = state.phases.find(p => p.id === newPhase.id);
-      if (!oldPhase) continue;
+    // Validate lifecycle transitions before merging
+    if (updates.phases && Array.isArray(updates.phases)) {
+      for (const newPhase of updates.phases) {
+        const oldPhase = state.phases.find(p => p.id === newPhase.id);
+        if (!oldPhase) continue;
 
-      // Check phase lifecycle transition
-      if (newPhase.lifecycle && newPhase.lifecycle !== oldPhase.lifecycle) {
-        const result = validateTransition('phase', oldPhase.lifecycle, newPhase.lifecycle);
-        if (!result.valid) return { error: true, message: result.error };
-      }
+        // Check phase lifecycle transition
+        if (newPhase.lifecycle && newPhase.lifecycle !== oldPhase.lifecycle) {
+          const tr = validateTransition('phase', oldPhase.lifecycle, newPhase.lifecycle);
+          if (!tr.valid) return { error: true, message: tr.error };
+        }
 
-      // Check task lifecycle transitions
-      if (Array.isArray(newPhase.todo)) {
-        for (const newTask of newPhase.todo) {
-          const oldTask = (oldPhase.todo || []).find(t => t.id === newTask.id);
-          if (!oldTask) continue;
-          if (newTask.lifecycle && newTask.lifecycle !== oldTask.lifecycle) {
-            const result = validateTransition('task', oldTask.lifecycle, newTask.lifecycle);
-            if (!result.valid) return { error: true, message: result.error };
+        // Check task lifecycle transitions
+        if (Array.isArray(newPhase.todo)) {
+          for (const newTask of newPhase.todo) {
+            const oldTask = (oldPhase.todo || []).find(t => t.id === newTask.id);
+            if (!oldTask) continue;
+            if (newTask.lifecycle && newTask.lifecycle !== oldTask.lifecycle) {
+              const tr = validateTransition('task', oldTask.lifecycle, newTask.lifecycle);
+              if (!tr.valid) return { error: true, message: tr.error };
+            }
           }
         }
       }
     }
-  }
 
-  // Merge updates into state
-  const merged = { ...state, ...updates };
+    // Deep merge phases by ID instead of shallow replace [I-1]
+    const merged = { ...state, ...updates };
+    if (updates.phases && Array.isArray(updates.phases)) {
+      merged.phases = state.phases.map(oldPhase => {
+        const newPhase = updates.phases.find(p => p.id === oldPhase.id);
+        if (!newPhase) return oldPhase;
+        const mergedPhase = { ...oldPhase, ...newPhase };
+        // Deep merge tasks within phase by ID
+        if (Array.isArray(newPhase.todo)) {
+          mergedPhase.todo = oldPhase.todo.map(oldTask => {
+            const newTask = newPhase.todo.find(t => t.id === oldTask.id);
+            return newTask ? { ...oldTask, ...newTask } : oldTask;
+          });
+          // Add any new tasks not in old phase
+          for (const newTask of newPhase.todo) {
+            if (!oldPhase.todo.find(t => t.id === newTask.id)) {
+              mergedPhase.todo.push(newTask);
+            }
+          }
+        }
+        return mergedPhase;
+      });
+      // Add any new phases not in old state
+      for (const newPhase of updates.phases) {
+        if (!state.phases.find(p => p.id === newPhase.id)) {
+          merged.phases.push(newPhase);
+        }
+      }
+    }
 
-  // Validate full state after merge
-  const validation = validateState(merged);
-  if (!validation.valid) {
-    return {
-      error: true,
-      message: `Validation failed: ${validation.errors.join('; ')}`,
-    };
-  }
+    // Validate full state after merge
+    const validation = validateState(merged);
+    if (!validation.valid) {
+      return {
+        error: true,
+        message: `Validation failed: ${validation.errors.join('; ')}`,
+      };
+    }
 
-  await writeJson(statePath, merged);
-  return { success: true };
+    await writeJson(statePath, merged);
+    return { success: true };
+  });
 }
 
 /**
  * Complete a phase: checks handoff gate, transitions lifecycle, increments current_phase.
  */
-export async function phaseComplete({ phase_id, basePath = process.cwd() }) {
+export async function phaseComplete({ phase_id, basePath = process.cwd() } = {}) {
+  if (typeof phase_id !== 'number') {
+    return { error: true, message: 'phase_id must be a number' };
+  }
   const statePath = getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
 
-  const state = await readJson(statePath);
-  if (state.error) {
-    return state;
-  }
+  return withStateLock(async () => {
+    const result = await readJson(statePath);
+    if (!result.ok) {
+      return { error: true, message: result.error };
+    }
+    const state = result.data;
 
-  const phase = state.phases.find((p) => p.id === phase_id);
-  if (!phase) {
-    return { error: true, message: `Phase ${phase_id} not found` };
-  }
+    const phase = state.phases.find((p) => p.id === phase_id);
+    if (!phase) {
+      return { error: true, message: `Phase ${phase_id} not found` };
+    }
+    if (!Array.isArray(phase.todo)) {
+      return { error: true, message: `Phase ${phase_id} has invalid todo list` };
+    }
+    if (!phase.phase_handoff || typeof phase.phase_handoff !== 'object') {
+      return { error: true, message: `Phase ${phase_id} is missing phase_handoff metadata` };
+    }
 
-  // Check handoff gate: all tasks must be accepted
-  const pendingTasks = phase.todo.filter((t) => t.lifecycle !== 'accepted');
-  if (pendingTasks.length > 0) {
-    return {
-      error: true,
-      message: `Handoff gate not met: ${pendingTasks.length} task(s) not accepted — ${pendingTasks.map((t) => `${t.id}:${t.lifecycle}`).join(', ')}`,
-    };
-  }
+    // Validate phase lifecycle transition FIRST (fail-fast) [I-4]
+    const transitionResult = validateTransition(
+      'phase',
+      phase.lifecycle,
+      'accepted',
+    );
+    if (!transitionResult.valid) {
+      return { error: true, message: transitionResult.error };
+    }
 
-  // Check critical issues
-  if (phase.phase_handoff.critical_issues_open > 0) {
-    return {
-      error: true,
-      message: `Handoff gate not met: ${phase.phase_handoff.critical_issues_open} critical issue(s) open`,
-    };
-  }
+    // Check handoff gate: all tasks must be accepted
+    const pendingTasks = phase.todo.filter((t) => t.lifecycle !== 'accepted');
+    if (pendingTasks.length > 0) {
+      return {
+        error: true,
+        message: `Handoff gate not met: ${pendingTasks.length} task(s) not accepted — ${pendingTasks.map((t) => `${t.id}:${t.lifecycle}`).join(', ')}`,
+      };
+    }
 
-  // Validate phase lifecycle transition
-  const transitionResult = validateTransition(
-    'phase',
-    phase.lifecycle,
-    'accepted',
-  );
-  if (!transitionResult.valid) {
-    return { error: true, message: transitionResult.error };
-  }
+    // Check critical issues
+    if (phase.phase_handoff.critical_issues_open > 0) {
+      return {
+        error: true,
+        message: `Handoff gate not met: ${phase.phase_handoff.critical_issues_open} critical issue(s) open`,
+      };
+    }
 
-  // Apply transition
-  phase.lifecycle = 'accepted';
-  phase.phase_handoff.required_reviews_passed = true;
-  phase.phase_handoff.tests_passed = true;
+    // Apply transition
+    phase.lifecycle = 'accepted';
+    phase.phase_handoff.required_reviews_passed = true;
+    phase.phase_handoff.tests_passed = true;
 
-  // Increment current_phase if this was the active phase
-  if (state.current_phase === phase_id && phase_id < state.total_phases) {
-    state.current_phase = phase_id + 1;
-  }
+    // Increment current_phase if this was the active phase
+    if (state.current_phase === phase_id && phase_id < state.total_phases) {
+      state.current_phase = phase_id + 1;
+    }
 
-  // Update git_head to current commit
-  const gsdDir = dirname(statePath);
-  state.git_head = getGitHead(dirname(gsdDir));
+    // Update git_head to current commit
+    const gsdDir = dirname(statePath);
+    state.git_head = getGitHead(dirname(gsdDir));
 
-  // Prune evidence from old phases (in-memory to avoid double read/write)
-  await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
+    // Prune evidence from old phases (in-memory to avoid double read/write)
+    await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
 
-  await writeJson(statePath, state);
-  return { success: true };
+    await writeJson(statePath, state);
+    return { success: true };
+  });
 }
 
 /**
  * Add an evidence entry to state.evidence keyed by id.
  */
 export async function addEvidence({ id, data, basePath = process.cwd() }) {
+  // I-8: Validate inputs
+  if (!id || typeof id !== 'string') {
+    return { error: true, message: 'id must be a non-empty string' };
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { error: true, message: 'data must be a non-null object' };
+  }
+  if (typeof data.scope !== 'string') {
+    return { error: true, message: 'data.scope must be a string' };
+  }
+
   const statePath = getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
 
-  const state = await readJson(statePath);
-  if (state.error) {
-    return state;
-  }
+  return withStateLock(async () => {
+    const result = await readJson(statePath);
+    if (!result.ok) {
+      return { error: true, message: result.error };
+    }
+    const state = result.data;
 
-  if (!state.evidence) {
-    state.evidence = {};
-  }
+    if (!state.evidence) {
+      state.evidence = {};
+    }
 
-  state.evidence[id] = data;
-  await writeJson(statePath, state);
-  return { success: true };
+    state.evidence[id] = data;
+    await writeJson(statePath, state);
+    return { success: true };
+  });
 }
 
 /**
@@ -254,7 +326,7 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
   if (archivedCount > 0) {
     const archivePath = join(gsdDir, 'evidence-archive.json');
     const existing = await readJson(archivePath);
-    const archive = existing.error ? {} : existing;
+    const archive = existing.ok ? existing.data : {};
     Object.assign(archive, toArchive);
     await writeJson(archivePath, archive);
 
@@ -274,16 +346,19 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
     return { error: true, message: 'No .gsd directory found' };
   }
 
-  const state = await readJson(statePath);
-  if (state.error) {
-    return state;
-  }
+  return withStateLock(async () => {
+    const result = await readJson(statePath);
+    if (!result.ok) {
+      return { error: true, message: result.error };
+    }
+    const state = result.data;
 
-  const gsdDir = dirname(statePath);
-  const archived = await _pruneEvidenceFromState(state, currentPhase, gsdDir);
-  if (archived > 0) await writeJson(statePath, state);
+    const gsdDir = dirname(statePath);
+    const archived = await _pruneEvidenceFromState(state, currentPhase, gsdDir);
+    if (archived > 0) await writeJson(statePath, state);
 
-  return { success: true, archived };
+    return { success: true, archived };
+  });
 }
 
 /**
@@ -298,7 +373,7 @@ function parseScopePhase(scope) {
 
 // ── Automation functions ──
 
-const MAX_RETRY = 3;
+const DEFAULT_MAX_RETRY = 3;
 
 /**
  * Select the next runnable task from a phase, respecting dependency gates.
@@ -306,13 +381,20 @@ const MAX_RETRY = 3;
  * { mode: 'trigger_review' } if all remaining are checkpointed,
  * { mode: 'awaiting_user', blockers } if all are blocked,
  * { task: undefined } if nothing can run.
+ * @param {object} phase - Phase object with todo array
+ * @param {object} state - Full state object
+ * @param {object} [options] - Options
+ * @param {number} [options.maxRetry=3] - Maximum retry count before skipping a task
  */
-export function selectRunnableTask(phase, state) {
+export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY } = {}) {
+  if (!phase || !Array.isArray(phase.todo)) {
+    throw new Error('Phase todo must be an array');
+  }
   const runnableTasks = [];
 
   for (const task of phase.todo) {
     if (!['pending', 'needs_revalidation'].includes(task.lifecycle)) continue;
-    if (task.retry_count >= MAX_RETRY) continue;
+    if (task.retry_count >= maxRetry) continue;
     if (task.blocked_reason) continue;
 
     let depsOk = true;
@@ -373,8 +455,14 @@ export function propagateInvalidation(phase, reworkTaskId, contractChanged) {
     }
   }
 
+  // C-2: Only transition tasks whose lifecycle allows needs_revalidation
+  const canInvalidate = new Set(
+    Object.entries(TASK_LIFECYCLE)
+      .filter(([, targets]) => targets.includes('needs_revalidation'))
+      .map(([state]) => state),
+  );
   for (const task of phase.todo) {
-    if (affected.has(task.id)) {
+    if (affected.has(task.id) && canInvalidate.has(task.lifecycle)) {
       task.lifecycle = 'needs_revalidation';
       task.evidence_refs = [];
     }
@@ -387,7 +475,16 @@ export function propagateInvalidation(phase, reworkTaskId, contractChanged) {
  */
 export function buildExecutorContext(state, taskId, phaseId) {
   const phase = state.phases.find(p => p.id === phaseId);
+  if (!phase) {
+    throw new Error(`Phase ${phaseId} not found`);
+  }
+  if (!Array.isArray(phase.todo)) {
+    throw new Error(`Phase ${phaseId} has invalid todo list`);
+  }
   const task = phase.todo.find(t => t.id === taskId);
+  if (!task) {
+    throw new Error(`Task ${taskId} not found in phase ${phaseId}`);
+  }
 
   const task_spec = `phases/phase-${phaseId}.md`;
 
@@ -536,13 +633,18 @@ export function applyResearchRefresh(state, newResearch) {
   if (!state.research) state.research = {};
   state.research.decision_index = oldIndex;
 
-  // Invalidate tasks that depend on changed/removed decisions
+  // C-3: Only invalidate tasks whose lifecycle allows needs_revalidation
   if (invalidatedIds.size > 0) {
+    const canInvalidate = new Set(
+      Object.entries(TASK_LIFECYCLE)
+        .filter(([, targets]) => targets.includes('needs_revalidation'))
+        .map(([s]) => s),
+    );
     for (const phase of (state.phases || [])) {
       for (const task of (phase.todo || [])) {
         const basis = task.research_basis || [];
         const affected = basis.some(id => invalidatedIds.has(id));
-        if (affected && task.lifecycle !== 'pending') {
+        if (affected && canInvalidate.has(task.lifecycle)) {
           task.lifecycle = 'needs_revalidation';
           if (task.evidence_refs) task.evidence_refs = [];
         }

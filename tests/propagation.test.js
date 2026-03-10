@@ -13,10 +13,28 @@ describe('propagateInvalidation', () => {
       ],
     };
     propagateInvalidation(phase, '1.1', true);
-    assert.equal(phase.todo[1].lifecycle, 'needs_revalidation');
-    assert.equal(phase.todo[2].lifecycle, 'needs_revalidation');
+    assert.equal(phase.todo[1].lifecycle, 'needs_revalidation'); // accepted → needs_revalidation
+    assert.equal(phase.todo[2].lifecycle, 'needs_revalidation'); // checkpointed → needs_revalidation
     assert.deepEqual(phase.todo[1].evidence_refs, []);
     assert.deepEqual(phase.todo[2].evidence_refs, []);
+  });
+
+  it('does NOT invalidate tasks in running/pending/failed/blocked states (C-2)', async () => {
+    const { propagateInvalidation } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: [] },
+        { id: '1.2', lifecycle: 'running', requires: [{ kind: 'task', id: '1.1', gate: 'checkpoint' }], evidence_refs: ['ev:2'] },
+        { id: '1.3', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'checkpoint' }], evidence_refs: [] },
+        { id: '1.4', lifecycle: 'failed', requires: [{ kind: 'task', id: '1.1', gate: 'checkpoint' }], evidence_refs: ['ev:4'] },
+        { id: '1.5', lifecycle: 'blocked', requires: [{ kind: 'task', id: '1.1', gate: 'checkpoint' }], evidence_refs: [] },
+      ],
+    };
+    propagateInvalidation(phase, '1.1', true);
+    assert.equal(phase.todo[1].lifecycle, 'running');   // unchanged
+    assert.equal(phase.todo[2].lifecycle, 'pending');    // unchanged
+    assert.equal(phase.todo[3].lifecycle, 'failed');     // unchanged (terminal)
+    assert.equal(phase.todo[4].lifecycle, 'blocked');    // unchanged
   });
 
   it('does NOT invalidate when contract_changed is false', async () => {

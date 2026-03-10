@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { pathToFileURL } from 'node:url';
 import { init, read, update, phaseComplete } from './tools/state.js';
 
 const server = new Server(
@@ -77,10 +78,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: TOOLS,
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+async function dispatchToolCall(name, args) {
   let result;
-
   switch (name) {
     case 'gsd-state-init':
       result = await init(args);
@@ -98,6 +97,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       result = { error: true, message: `Unknown tool: ${name}` };
   }
 
+  return result;
+}
+
+export async function handleToolCall(name, args) {
+  try {
+    return await dispatchToolCall(name, args);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { error: true, message: `Tool execution failed: ${message}` };
+  }
+}
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+  const result = await handleToolCall(name, args);
+
   return {
     content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
   };
@@ -108,4 +123,6 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch(console.error);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(console.error);
+}

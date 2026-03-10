@@ -1,5 +1,6 @@
 // hooks/context-monitor.js
 // This file exports TWO hook handlers used by Claude Code's hooks system.
+// Can also be invoked via CLI: node context-monitor.js <statusLine|postToolUse>
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,4 +38,22 @@ export function postToolUse() {
     }
   } catch {}
   return null;
+}
+
+// I-6: CLI dispatch — allows hook registration as shell command
+const cmd = process.argv[2];
+if (cmd === 'statusLine') {
+  // Read JSON data from stdin for statusLine
+  let input = '';
+  process.stdin.setEncoding('utf-8');
+  process.stdin.on('data', chunk => { input += chunk; });
+  process.stdin.on('end', () => {
+    try {
+      const data = JSON.parse(input);
+      statusLine(data);
+    } catch {}
+  });
+} else if (cmd === 'postToolUse') {
+  const result = postToolUse();
+  if (result) console.log(result);
 }

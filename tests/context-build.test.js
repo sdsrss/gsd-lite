@@ -26,4 +26,12 @@ describe('buildExecutorContext', () => {
     assert.deepEqual(ctx.predecessor_outputs, [{ files_changed: ['a.js'], checkpoint_commit: 'abc' }]);
     assert.equal(ctx.research_decisions[0].summary, 'Use JWT');
   });
+
+  it('throws a clear error when phase is missing', async () => {
+    const { buildExecutorContext } = await import('../src/tools/state.js');
+    assert.throws(
+      () => buildExecutorContext({ phases: [] }, '1.1', 1),
+      /Phase 1 not found/
+    );
+  });
 });

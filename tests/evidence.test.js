@@ -75,14 +75,16 @@ describe('evidence store', () => {
     // Prune for currentPhase=3 (keep phases 3 and 2, archive phase 1 and older)
     const result = await pruneEvidence({ currentPhase: 3, basePath: tempDir });
     assert.equal(result.success, true);
+    assert.ok(result.archived > 0, 'should have archived at least one entry');
 
     // Verify evidence was moved to archive
-    const archive = await readJson(join(tempDir, '.gsd', 'evidence-archive.json'));
-    assert.ok(!archive.error, 'archive file should exist');
+    const archiveResult = await readJson(join(tempDir, '.gsd', 'evidence-archive.json'));
+    assert.ok(archiveResult.ok, 'archive file should exist and be readable');
+    assert.ok(archiveResult.data['ev:test:old-phase-1'], 'archived entry should be in archive');
+    assert.equal(archiveResult.data['ev:test:old-phase-1'].scope, 'task:1.1');
 
-    // Verify old evidence removed from state
+    // Verify old evidence removed from active state
     const state = await read({ basePath: tempDir });
-    // Evidence scoped to task:1.x should be archived since phase 1 < currentPhase-1 (2)
-    // Note: some evidence may remain if scope doesn't clearly map to old phases
+    assert.equal(state.evidence['ev:test:old-phase-1'], undefined, 'archived evidence should be removed from state');
   });
 });

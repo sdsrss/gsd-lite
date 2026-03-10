@@ -38,6 +38,11 @@ describe('schema', () => {
       assert.equal(validateTransition('task', 'accepted', 'needs_revalidation').valid, true);
     });
 
+    it('allows checkpointed → needs_revalidation (C-2 fix)', async () => {
+      const { validateTransition } = await import('../src/schema.js');
+      assert.equal(validateTransition('task', 'checkpointed', 'needs_revalidation').valid, true);
+    });
+
     it('allows needs_revalidation → pending', async () => {
       const { validateTransition } = await import('../src/schema.js');
       assert.equal(validateTransition('task', 'needs_revalidation', 'pending').valid, true);
@@ -51,6 +56,11 @@ describe('schema', () => {
     it('rejects accepted → running (no direct)', async () => {
       const { validateTransition } = await import('../src/schema.js');
       assert.equal(validateTransition('task', 'accepted', 'running').valid, false);
+    });
+
+    it('rejects blocked → running (M-3: must go through pending)', async () => {
+      const { validateTransition } = await import('../src/schema.js');
+      assert.equal(validateTransition('task', 'blocked', 'running').valid, false);
     });
   });
 
@@ -125,6 +135,33 @@ describe('schema', () => {
       const result = validateState(state);
       assert.equal(result.valid, false);
     });
+
+    it('rejects state where total_phases mismatches phases.length (M-1)', async () => {
+      const { validateState, createInitialState } = await import('../src/schema.js');
+      const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [] }] });
+      state.total_phases = 5;
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('total_phases')));
+    });
+
+    it('rejects state with non-string git_head (M-1)', async () => {
+      const { validateState, createInitialState } = await import('../src/schema.js');
+      const state = createInitialState({ project: 'test', phases: [] });
+      state.git_head = 123;
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+    });
+
+    it('rejects phase with malformed todo structure', async () => {
+      const { validateState, createInitialState } = await import('../src/schema.js');
+      const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [] }] });
+      state.phases.push({ id: 2, name: 'broken', lifecycle: 'pending' });
+      state.total_phases = 2;
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('todo must be an array')));
+    });
   });
 
   describe('createInitialState', () => {
@@ -138,10 +175,12 @@ describe('schema', () => {
         ],
       });
       assert.equal(state.project, 'my-app');
-      assert.equal(state.workflow_mode, 'planning');
+      assert.equal(state.workflow_mode, 'executing_task');
       assert.equal(state.plan_version, 1);
       assert.equal(state.total_phases, 2);
       assert.equal(state.phases.length, 2);
+      assert.equal(state.phases[0].lifecycle, 'active');
+      assert.equal(state.phases[1].lifecycle, 'pending');
       assert.equal(state.phases[0].tasks, 2);
       assert.equal(state.phases[0].todo.length, 2);
       assert.equal(state.phases[0].todo[0].id, '1.1');

@@ -69,6 +69,10 @@ git clone https://github.com/sdsrss/gsd-lite.git
 cd gsd-lite && node install.js
 ```
 
+- 安装器会把命令/Agent/工作流写入 `~/.claude/...`
+- MCP Server 运行时会复制到稳定目录 `~/.claude/gsd-lite/`
+- 从源码手动安装后，可用 `node uninstall.js` 卸载
+
 ## 快速开始
 
 ```bash
@@ -98,12 +102,12 @@ gsd-lite/
 ├── workflows/              # 5 个核心工作流 (~760行 Markdown)
 ├── references/             # 4 个参考文档 (~400行 Markdown)
 ├── hooks/                  # 上下文监控 (StatusLine + PostToolUse)
-├── tests/                  # 92 个单元测试 + E2E checklist
+├── tests/                  # 107 个单元测试 + E2E checklist
 ├── install.js              # 安装脚本
 └── uninstall.js            # 卸载脚本
 ```
 
-**26 个交付文件 | ~1100 行代码 | ~2300 行 Markdown | 92 个测试**
+**~28 个交付文件 | ~1100 行代码 | ~2300 行 Markdown | 107 个测试**
 
 ## 文档
 

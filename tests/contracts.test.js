@@ -2,7 +2,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-// These validate the JSON contract structures from agents
+// M-7: Import contract validators from schema.js (shared between server and tests)
+import {
+  validateExecutorResult,
+  validateReviewerResult,
+  validateResearcherResult,
+} from '../src/schema.js';
 
 describe('executor result contract', () => {
   const validResult = {
@@ -79,35 +84,3 @@ describe('researcher result contract', () => {
     assert.equal(validateResearcherResult(r).valid, false);
   });
 });
-
-// Contract validation functions — inline for now
-function validateExecutorResult(r) {
-  const errors = [];
-  if (!r.task_id) errors.push('missing task_id');
-  if (!['checkpointed', 'blocked', 'failed'].includes(r.outcome)) errors.push('invalid outcome');
-  if (!Array.isArray(r.files_changed)) errors.push('files_changed must be array');
-  if (!Array.isArray(r.decisions)) errors.push('decisions must be array');
-  if (!Array.isArray(r.blockers)) errors.push('blockers must be array');
-  if (typeof r.contract_changed !== 'boolean') errors.push('contract_changed must be boolean');
-  if (!Array.isArray(r.evidence)) errors.push('evidence must be array');
-  return { valid: errors.length === 0, errors };
-}
-
-function validateReviewerResult(r) {
-  const errors = [];
-  if (!['task', 'phase'].includes(r.scope)) errors.push('invalid scope');
-  if (!r.scope_id) errors.push('missing scope_id');
-  if (!Array.isArray(r.critical_issues)) errors.push('critical_issues must be array');
-  if (!Array.isArray(r.accepted_tasks)) errors.push('accepted_tasks must be array');
-  if (!Array.isArray(r.rework_tasks)) errors.push('rework_tasks must be array');
-  return { valid: errors.length === 0, errors };
-}
-
-function validateResearcherResult(r) {
-  const errors = [];
-  if (!Array.isArray(r.decision_ids)) errors.push('decision_ids must be array');
-  if (!['low', 'medium', 'high'].includes(r.volatility)) errors.push('invalid volatility');
-  if (!r.expires_at) errors.push('missing expires_at');
-  if (!Array.isArray(r.sources)) errors.push('sources must be array');
-  return { valid: errors.length === 0, errors };
-}

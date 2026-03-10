@@ -153,4 +153,12 @@ describe('selectRunnableTask', () => {
     const result = selectRunnableTask(phase, {});
     assert.equal(result.task, undefined);
   });
+
+  it('throws a clear error when phase.todo is missing', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    assert.throws(
+      () => selectRunnableTask({}, {}),
+      /Phase todo must be an array/
+    );
+  });
 });

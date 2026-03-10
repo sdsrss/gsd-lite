@@ -15,23 +15,6 @@ describe('utils', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  describe('slugify', () => {
-    it('converts spaces to hyphens', async () => {
-      const { slugify } = await import('../src/utils.js');
-      assert.equal(slugify('My Cool Project'), 'my-cool-project');
-    });
-
-    it('removes special characters', async () => {
-      const { slugify } = await import('../src/utils.js');
-      assert.equal(slugify('hello@world!'), 'helloworld');
-    });
-
-    it('handles empty string', async () => {
-      const { slugify } = await import('../src/utils.js');
-      assert.equal(slugify(''), '');
-    });
-  });
-
   describe('readJson / writeJson', () => {
     it('round-trips JSON data atomically', async () => {
       const { readJson, writeJson } = await import('../src/utils.js');
@@ -39,13 +22,15 @@ describe('utils', () => {
       const data = { key: 'value', nested: { a: 1 } };
       await writeJson(filePath, data);
       const result = await readJson(filePath);
-      assert.deepEqual(result, data);
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.data, data);
     });
 
     it('returns error for missing file', async () => {
       const { readJson } = await import('../src/utils.js');
       const result = await readJson(join(tempDir, 'nope.json'));
-      assert.equal(result.error, true);
+      assert.equal(result.ok, false);
+      assert.ok(typeof result.error === 'string');
     });
 
     it('returns error for corrupted JSON', async () => {
@@ -53,7 +38,18 @@ describe('utils', () => {
       const filePath = join(tempDir, 'bad.json');
       await writeFile(filePath, '{broken json!!!');
       const result = await readJson(filePath);
-      assert.equal(result.error, true);
+      assert.equal(result.ok, false);
+    });
+  });
+
+  describe('writeAtomic', () => {
+    it('atomically writes text content', async () => {
+      const { writeAtomic } = await import('../src/utils.js');
+      const { readFile: rf } = await import('node:fs/promises');
+      const filePath = join(tempDir, 'atomic.txt');
+      await writeAtomic(filePath, 'hello world');
+      const content = await rf(filePath, 'utf-8');
+      assert.equal(content, 'hello world');
     });
   });
 
