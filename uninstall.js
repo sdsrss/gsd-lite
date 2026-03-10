@@ -41,6 +41,31 @@ export function main() {
   removeDir(join(CLAUDE_DIR, 'plugins', 'marketplaces', 'gsd-lite'), 'plugins/marketplaces/gsd-lite/');
   removeDir(join(CLAUDE_DIR, 'plugins', 'cache', 'gsd-lite'), 'plugins/cache/gsd-lite/');
 
+  // Deregister from plugin registry files
+  const pluginsDir = join(CLAUDE_DIR, 'plugins');
+  function removeJsonEntry(filePath, key, label) {
+    try {
+      const data = JSON.parse(readFileSync(filePath, 'utf-8'));
+      if (key in data) {
+        delete data[key];
+        writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+        log(`  ✓ Removed '${key}' from ${label}`);
+      }
+    } catch {}
+  }
+  function removeNestedEntry(filePath, parentKey, key, label) {
+    try {
+      const data = JSON.parse(readFileSync(filePath, 'utf-8'));
+      if (data[parentKey] && key in data[parentKey]) {
+        delete data[parentKey][key];
+        writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+        log(`  ✓ Removed '${key}' from ${label}`);
+      }
+    } catch {}
+  }
+  removeJsonEntry(join(pluginsDir, 'known_marketplaces.json'), 'gsd-lite', 'known_marketplaces.json');
+  removeNestedEntry(join(pluginsDir, 'installed_plugins.json'), 'plugins', 'gsd-lite@gsd-lite', 'installed_plugins.json');
+
   // Deregister MCP server, hooks, and plugin entries from settings.json
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
   try {
