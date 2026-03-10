@@ -322,7 +322,7 @@ describe('gsd-health tool', () => {
     const result = await handleToolCall('gsd-health', { basePath: fakePath });
     assert.equal(result.status, 'ok');
     assert.equal(result.server, 'gsd-lite');
-    assert.equal(result.version, '0.1.0');
+    assert.equal(result.version, '0.2.0');
     assert.equal(result.state_exists, false);
   });
 

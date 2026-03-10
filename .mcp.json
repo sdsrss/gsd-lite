@@ -1,6 +1,8 @@
 {
-  "gsd-lite": {
-    "command": "npx",
-    "args": ["-y", "gsd-lite@latest"]
+  "mcpServers": {
+    "gsd-lite": {
+      "command": "npx",
+      "args": ["-y", "gsd-lite@latest"]
+    }
   }
 }
