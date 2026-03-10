@@ -17,7 +17,6 @@ export async function init({ project, phases, research, basePath = process.cwd()
   const gsdDir = join(basePath, '.gsd');
   const phasesDir = join(gsdDir, 'phases');
 
-  await ensureDir(gsdDir);
   await ensureDir(phasesDir);
   if (research) {
     await ensureDir(join(gsdDir, 'research'));
@@ -106,8 +105,8 @@ export async function update({ updates, basePath = process.cwd() }) {
 
       // Check phase lifecycle transition
       if (newPhase.lifecycle && newPhase.lifecycle !== oldPhase.lifecycle) {
-        const t = validateTransition('phase', oldPhase.lifecycle, newPhase.lifecycle);
-        if (!t.valid) return { error: true, message: t.error };
+        const result = validateTransition('phase', oldPhase.lifecycle, newPhase.lifecycle);
+        if (!result.valid) return { error: true, message: result.error };
       }
 
       // Check task lifecycle transitions
@@ -116,8 +115,8 @@ export async function update({ updates, basePath = process.cwd() }) {
           const oldTask = (oldPhase.todo || []).find(t => t.id === newTask.id);
           if (!oldTask) continue;
           if (newTask.lifecycle && newTask.lifecycle !== oldTask.lifecycle) {
-            const t = validateTransition('task', oldTask.lifecycle, newTask.lifecycle);
-            if (!t.valid) return { error: true, message: t.error };
+            const result = validateTransition('task', oldTask.lifecycle, newTask.lifecycle);
+            if (!result.valid) return { error: true, message: result.error };
           }
         }
       }
@@ -197,10 +196,11 @@ export async function phaseComplete({ phase_id, basePath = process.cwd() }) {
   }
 
   // Update git_head to current commit
-  state.git_head = getGitHead(dirname(dirname(statePath)));
+  const gsdDir = dirname(statePath);
+  state.git_head = getGitHead(dirname(gsdDir));
 
-  // Prune evidence from old phases
-  await pruneEvidence({ currentPhase: state.current_phase, basePath: dirname(dirname(statePath)) });
+  // Prune evidence from old phases (in-memory to avoid double read/write)
+  await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
 
   await writeJson(statePath, state);
   return { success: true };
@@ -230,23 +230,11 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
 }
 
 /**
- * Prune evidence: archive entries from phases older than currentPhase - 1.
- * Scope format is "task:X.Y" where X is the phase number.
+ * Internal: prune evidence in-memory and write archive file.
+ * Mutates state.evidence. Returns count of archived entries.
  */
-export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) {
-  const statePath = getStatePath(basePath);
-  if (!statePath) {
-    return { error: true, message: 'No .gsd directory found' };
-  }
-
-  const state = await readJson(statePath);
-  if (state.error) {
-    return state;
-  }
-
-  if (!state.evidence) {
-    return { success: true, archived: 0 };
-  }
+async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
+  if (!state.evidence) return 0;
 
   const threshold = currentPhase - 1;
   const toArchive = {};
@@ -264,17 +252,38 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
   const archivedCount = Object.keys(toArchive).length;
 
   if (archivedCount > 0) {
-    const archivePath = join(dirname(statePath), 'evidence-archive.json');
+    const archivePath = join(gsdDir, 'evidence-archive.json');
     const existing = await readJson(archivePath);
     const archive = existing.error ? {} : existing;
     Object.assign(archive, toArchive);
     await writeJson(archivePath, archive);
 
     state.evidence = toKeep;
-    await writeJson(statePath, state);
   }
 
-  return { success: true, archived: archivedCount };
+  return archivedCount;
+}
+
+/**
+ * Prune evidence: archive entries from phases older than currentPhase - 1.
+ * Scope format is "task:X.Y" where X is the phase number.
+ */
+export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) {
+  const statePath = getStatePath(basePath);
+  if (!statePath) {
+    return { error: true, message: 'No .gsd directory found' };
+  }
+
+  const state = await readJson(statePath);
+  if (state.error) {
+    return state;
+  }
+
+  const gsdDir = dirname(statePath);
+  const archived = await _pruneEvidenceFromState(state, currentPhase, gsdDir);
+  if (archived > 0) await writeJson(statePath, state);
+
+  return { success: true, archived };
 }
 
 /**
