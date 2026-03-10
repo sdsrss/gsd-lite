@@ -1,7 +1,7 @@
 // State CRUD tools
 
 import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { ensureDir, readJson, writeJson, getStatePath } from '../utils.js';
 import {
   CANONICAL_FIELDS,
@@ -168,4 +168,85 @@ export async function phaseComplete({ phase_id, basePath = process.cwd() }) {
 
   await writeJson(statePath, state);
   return { success: true };
+}
+
+/**
+ * Add an evidence entry to state.evidence keyed by id.
+ */
+export async function addEvidence({ id, data, basePath = process.cwd() }) {
+  const statePath = getStatePath(basePath);
+  if (!statePath) {
+    return { error: true, message: 'No .gsd directory found' };
+  }
+
+  const state = await readJson(statePath);
+  if (state.error) {
+    return state;
+  }
+
+  if (!state.evidence) {
+    state.evidence = {};
+  }
+
+  state.evidence[id] = data;
+  await writeJson(statePath, state);
+  return { success: true };
+}
+
+/**
+ * Prune evidence: archive entries from phases older than currentPhase - 1.
+ * Scope format is "task:X.Y" where X is the phase number.
+ */
+export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) {
+  const statePath = getStatePath(basePath);
+  if (!statePath) {
+    return { error: true, message: 'No .gsd directory found' };
+  }
+
+  const state = await readJson(statePath);
+  if (state.error) {
+    return state;
+  }
+
+  if (!state.evidence) {
+    return { success: true, archived: 0 };
+  }
+
+  const threshold = currentPhase - 1;
+  const toArchive = {};
+  const toKeep = {};
+
+  for (const [id, entry] of Object.entries(state.evidence)) {
+    const phaseNum = parseScopePhase(entry.scope);
+    if (phaseNum !== null && phaseNum < threshold) {
+      toArchive[id] = entry;
+    } else {
+      toKeep[id] = entry;
+    }
+  }
+
+  const archivedCount = Object.keys(toArchive).length;
+
+  if (archivedCount > 0) {
+    const archivePath = join(dirname(statePath), 'evidence-archive.json');
+    const existing = await readJson(archivePath);
+    const archive = existing.error ? {} : existing;
+    Object.assign(archive, toArchive);
+    await writeJson(archivePath, archive);
+
+    state.evidence = toKeep;
+    await writeJson(statePath, state);
+  }
+
+  return { success: true, archived: archivedCount };
+}
+
+/**
+ * Parse phase number from scope string like "task:X.Y" → X.
+ * Returns null if scope is missing or doesn't match.
+ */
+function parseScopePhase(scope) {
+  if (typeof scope !== 'string') return null;
+  const match = scope.match(/^task:(\d+)\./);
+  return match ? parseInt(match[1], 10) : null;
 }
