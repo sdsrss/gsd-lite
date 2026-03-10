@@ -16,4 +16,5 @@ if (!existsSync(join(__dirname, 'node_modules', '@modelcontextprotocol'))) {
   });
 }
 
-await import('./src/server.js');
+const { main } = await import('./src/server.js');
+await main();
