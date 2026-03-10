@@ -27,12 +27,8 @@ try {
     process.exit(0); // Can't read settings — don't risk writing a broken file
   }
 
-  // Already has a statusLine configured
+  // Already has a statusLine configured (ours or third-party) — don't overwrite
   if (settings.statusLine?.command) {
-    if (settings.statusLine.command.includes('gsd-statusline')) {
-      process.exit(0); // Already ours — nothing to do
-    }
-    // Someone else's statusline — don't overwrite
     process.exit(0);
   }
 

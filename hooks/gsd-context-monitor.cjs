@@ -16,9 +16,9 @@
 // Debounce: 5 tool uses between warnings to avoid spam
 // Severity escalation bypasses debounce (WARNING -> CRITICAL fires immediately)
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const WARNING_THRESHOLD = 35;
 const CRITICAL_THRESHOLD = 25;
@@ -45,20 +45,20 @@ process.stdin.on('end', () => {
     let metrics;
     try {
       metrics = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
-    } catch (e) {
+    } catch {
       process.exit(0); // No bridge file — fresh session or subagent
     }
-    const now = Math.floor(Date.now() / 1000);
-
-    // Ignore stale metrics
-    if (metrics.timestamp && (now - metrics.timestamp) > STALE_SECONDS) {
-      process.exit(0);
-    }
-
     const remaining = metrics.remaining_percentage;
     const usedPct = metrics.used_pct;
 
+    // Cheapest check first — most calls exit here
     if (remaining > WARNING_THRESHOLD) {
+      process.exit(0);
+    }
+
+    // Ignore stale metrics
+    const now = Math.floor(Date.now() / 1000);
+    if (metrics.timestamp && (now - metrics.timestamp) > STALE_SECONDS) {
       process.exit(0);
     }
 
@@ -70,7 +70,7 @@ process.stdin.on('end', () => {
     try {
       warnData = JSON.parse(fs.readFileSync(warnPath, 'utf8'));
       firstWarn = false;
-    } catch (e) {
+    } catch {
       // No prior warning state — first warning this session
     }
 
@@ -91,9 +91,8 @@ process.stdin.on('end', () => {
     warnData.lastLevel = currentLevel;
     fs.writeFileSync(warnPath, JSON.stringify(warnData));
 
-    // Detect if GSD-Lite is active
-    const cwd = data.cwd || process.cwd();
-    const isGsdActive = fs.existsSync(path.join(cwd, '.gsd', 'state.json'));
+    // Use bridge data to avoid extra filesystem check
+    const isGsdActive = metrics.has_gsd === true;
 
     let message;
     if (isCritical) {
@@ -119,7 +118,7 @@ process.stdin.on('end', () => {
     };
 
     process.stdout.write(JSON.stringify(output));
-  } catch (e) {
+  } catch {
     process.exit(0);
   }
 });

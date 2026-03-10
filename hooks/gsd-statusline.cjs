@@ -3,9 +3,9 @@
 // Shows: model | current task | directory | context usage progress bar
 // Reads JSON from stdin, writes bridge file for context-monitor PostToolUse hook.
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
@@ -22,15 +22,17 @@ process.stdin.on('end', () => {
 
     // Current GSD task from state.json
     let task = '';
+    let hasGsd = false;
     const gsdDir = path.join(cwd, '.gsd');
     try {
       const state = JSON.parse(fs.readFileSync(path.join(gsdDir, 'state.json'), 'utf8'));
+      hasGsd = true;
       if (state.current_task && state.current_phase) {
         const phase = (state.phases || []).find(p => p.id === state.current_phase);
         const t = phase?.todo?.find(t => t.id === state.current_task);
         if (t) task = `${t.id} ${t.name}`;
       }
-    } catch (e) {
+    } catch {
       // No state.json or parse error — skip task display
     }
 
@@ -42,26 +44,39 @@ process.stdin.on('end', () => {
       const usableRemaining = Math.max(0, ((remaining - AUTO_COMPACT_BUFFER_PCT) / (100 - AUTO_COMPACT_BUFFER_PCT)) * 100);
       const used = Math.max(0, Math.min(100, Math.round(100 - usableRemaining)));
 
-      // Write bridge file for context-monitor PostToolUse hook
+      // Write bridge file for context-monitor PostToolUse hook (skip if remaining unchanged)
       if (session) {
         try {
           const bridgePath = path.join(os.tmpdir(), `gsd-ctx-${session}.json`);
-          fs.writeFileSync(bridgePath, JSON.stringify({
-            session_id: session,
-            remaining_percentage: remaining,
-            used_pct: used,
-            timestamp: Math.floor(Date.now() / 1000),
-          }));
-        } catch (e) {
+          let needsWrite = true;
+          try {
+            const existing = JSON.parse(fs.readFileSync(bridgePath, 'utf8'));
+            if (existing.remaining_percentage === remaining) needsWrite = false;
+          } catch { /* no existing file */ }
+          if (needsWrite) {
+            fs.writeFileSync(bridgePath, JSON.stringify({
+              session_id: session,
+              remaining_percentage: remaining,
+              used_pct: used,
+              has_gsd: hasGsd,
+              timestamp: Math.floor(Date.now() / 1000),
+            }));
+          }
+        } catch {
           // Silent fail — bridge is best-effort
         }
       }
 
-      // Also write to .gsd/.context-health for MCP server reads
+      // Also write to .gsd/.context-health for MCP server reads (skip if unchanged)
       try {
-        fs.writeFileSync(path.join(gsdDir, '.context-health'), String(remaining));
-      } catch (e) {
-        // Silent fail — .gsd/ may not exist
+        const healthPath = path.join(gsdDir, '.context-health');
+        const current = fs.readFileSync(healthPath, 'utf8').trim();
+        if (current !== String(remaining)) {
+          fs.writeFileSync(healthPath, String(remaining));
+        }
+      } catch {
+        // File doesn't exist yet or .gsd/ missing — try writing
+        try { fs.writeFileSync(path.join(gsdDir, '.context-health'), String(remaining)); } catch { /* silent */ }
       }
 
       // Progress bar (10 segments)
@@ -86,7 +101,7 @@ process.stdin.on('end', () => {
     } else {
       process.stdout.write(`\x1b[2m${model}\x1b[0m \u2502 \x1b[2m${dirname}\x1b[0m${ctx}`);
     }
-  } catch (e) {
+  } catch {
     // Silent fail
   }
 });
