@@ -47,7 +47,7 @@ function normalizeResearchArtifacts(artifacts) {
 /**
  * Initialize a new GSD project: creates .gsd/, state.json, plan.md, phases/
  */
-export async function init({ project, phases, research, basePath = process.cwd() }) {
+export async function init({ project, phases, research, force = false, basePath = process.cwd() }) {
   if (!project || typeof project !== 'string') {
     return { error: true, message: 'project must be a non-empty string' };
   }
@@ -55,6 +55,16 @@ export async function init({ project, phases, research, basePath = process.cwd()
     return { error: true, message: 'phases must be an array' };
   }
   const gsdDir = join(basePath, '.gsd');
+  const statePath = join(gsdDir, 'state.json');
+
+  // Guard: reject re-initialization unless force is set
+  if (!force) {
+    try {
+      await stat(statePath);
+      return { error: true, message: 'state.json already exists; pass force: true to reinitialize' };
+    } catch {} // File doesn't exist, proceed
+  }
+
   const phasesDir = join(gsdDir, 'phases');
 
   await ensureDir(phasesDir);
@@ -345,6 +355,10 @@ export async function phaseComplete({
         summary: `Direction drift detected for phase ${phase.id}`,
       };
       phase.phase_handoff.direction_ok = false;
+      const driftValidation = validateState(state);
+      if (!driftValidation.valid) {
+        return { error: true, message: `Validation failed: ${driftValidation.errors.join('; ')}` };
+      }
       await writeJson(statePath, state);
       return {
         error: true,
@@ -508,7 +522,7 @@ const DEFAULT_MAX_RETRY = 3;
  */
 export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY } = {}) {
   if (!phase || !Array.isArray(phase.todo)) {
-    throw new Error('Phase todo must be an array');
+    return { error: true, message: 'Phase todo must be an array' };
   }
   const runnableTasks = [];
 
@@ -525,6 +539,7 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
         const gate = dep.gate || 'accepted';
         if (gate === 'checkpoint' && !['checkpointed', 'accepted'].includes(depTask.lifecycle)) { depsOk = false; break; }
         if (gate === 'accepted' && depTask.lifecycle !== 'accepted') { depsOk = false; break; }
+        if (gate === 'phase_complete') { depsOk = false; break; } // phase_complete is only valid on phase-kind deps
       } else if (dep.kind === 'phase') {
         const depPhase = (state.phases || []).find(p => p.id === dep.id);
         if (!depPhase || depPhase.lifecycle !== 'accepted') { depsOk = false; break; }
@@ -571,6 +586,8 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
           reasons.push(`dep ${dep.id} needs checkpoint (is ${depTask.lifecycle})`);
         } else if (gate === 'accepted' && depTask.lifecycle !== 'accepted') {
           reasons.push(`dep ${dep.id} needs accepted (is ${depTask.lifecycle})`);
+        } else if (gate === 'phase_complete') {
+          reasons.push(`dep ${dep.id} has phase_complete gate (invalid for task-kind dependency)`);
         }
       } else if (dep.kind === 'phase') {
         const depPhase = (state.phases || []).find(p => p.id === dep.id);
@@ -633,14 +650,14 @@ export function propagateInvalidation(phase, reworkTaskId, contractChanged) {
 export function buildExecutorContext(state, taskId, phaseId) {
   const phase = state.phases.find(p => p.id === phaseId);
   if (!phase) {
-    throw new Error(`Phase ${phaseId} not found`);
+    return { error: true, message: `Phase ${phaseId} not found` };
   }
   if (!Array.isArray(phase.todo)) {
-    throw new Error(`Phase ${phaseId} has invalid todo list`);
+    return { error: true, message: `Phase ${phaseId} has invalid todo list` };
   }
   const task = phase.todo.find(t => t.id === taskId);
   if (!task) {
-    throw new Error(`Task ${taskId} not found in phase ${phaseId}`);
+    return { error: true, message: `Task ${taskId} not found in phase ${phaseId}` };
   }
 
   const task_spec = `phases/phase-${phaseId}.md`;

@@ -304,13 +304,15 @@ async function resumeAwaitingClear(state, basePath) {
 }
 
 function buildExecutorDispatch(state, phase, task, extras = {}) {
+  const context = buildExecutorContext(state, task.id, phase.id);
+  if (context.error) return context;
   return {
     success: true,
     action: 'dispatch_executor',
     workflow_mode: 'executing_task',
     phase_id: phase.id,
     task_id: task.id,
-    executor_context: buildExecutorContext(state, task.id, phase.id),
+    executor_context: context,
     ...extras,
   };
 }
@@ -398,6 +400,7 @@ async function resumeExecutingTask(state, basePath) {
   }
 
   const selection = selectRunnableTask(phase, state);
+  if (selection.error) return selection;
 
   if (selection.task) {
     const task = selection.task;
@@ -433,8 +436,9 @@ async function resumeExecutingTask(state, basePath) {
   }
 
   if (selection.mode === 'awaiting_user') {
-    const blockers = getBlockedTasks(phase).length > 0
-      ? getBlockedTasks(phase)
+    const phaseBlockers = getBlockedTasks(phase);
+    const blockers = phaseBlockers.length > 0
+      ? phaseBlockers
       : (selection.blockers || []);
     const persistError = await persist(basePath, {
       workflow_mode: 'awaiting_user',

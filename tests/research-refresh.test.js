@@ -1,10 +1,10 @@
 // tests/research-refresh.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { applyResearchRefresh } from '../src/tools/state.js';
 
 describe('applyResearchRefresh', () => {
-  it('rule 1: same ID + same conclusion → keep reference, update expires_at', async () => {
-    const { applyResearchRefresh } = await import('../src/tools/state.js');
+  it('rule 1: same ID + same conclusion → keep reference, update expires_at', () => {
     const state = {
       research: { decision_index: { 'decision:jwt': { summary: 'Use JWT', expires_at: '2026-03-10' } } },
       phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted', research_basis: ['decision:jwt'] }] }],
@@ -16,8 +16,7 @@ describe('applyResearchRefresh', () => {
     assert.deepEqual(result.warnings, []);
   });
 
-  it('rule 2: same ID + changed conclusion → needs_revalidation', async () => {
-    const { applyResearchRefresh } = await import('../src/tools/state.js');
+  it('rule 2: same ID + changed conclusion → needs_revalidation', () => {
     const state = {
       research: { decision_index: { 'decision:jwt': { summary: 'Use JWT' } } },
       phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted', research_basis: ['decision:jwt'], evidence_refs: ['ev:1'] }] }],
@@ -27,8 +26,7 @@ describe('applyResearchRefresh', () => {
     assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation');
   });
 
-  it('rule 3: old ID missing → needs_revalidation + warning', async () => {
-    const { applyResearchRefresh } = await import('../src/tools/state.js');
+  it('rule 3: old ID missing → needs_revalidation + warning', () => {
     const state = {
       research: { decision_index: { 'decision:old': { summary: 'Old tech' } } },
       phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted', research_basis: ['decision:old'], evidence_refs: [] }] }],
@@ -39,8 +37,7 @@ describe('applyResearchRefresh', () => {
     assert.ok(result.warnings.length > 0);
   });
 
-  it('rule 4: brand new ID → no impact on existing tasks', async () => {
-    const { applyResearchRefresh } = await import('../src/tools/state.js');
+  it('rule 4: brand new ID → no impact on existing tasks', () => {
     const state = {
       research: { decision_index: {} },
       phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted', research_basis: [], evidence_refs: [] }] }],
@@ -50,8 +47,7 @@ describe('applyResearchRefresh', () => {
     assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
   });
 
-  it('does NOT invalidate tasks in running/pending/failed states (C-3)', async () => {
-    const { applyResearchRefresh } = await import('../src/tools/state.js');
+  it('does NOT invalidate tasks in running/pending/failed states (C-3)', () => {
     const state = {
       research: { decision_index: { 'decision:x': { summary: 'Old' } } },
       phases: [{

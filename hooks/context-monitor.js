@@ -9,25 +9,26 @@ import { join } from 'node:path';
  * StatusLine hook — called after each tool use.
  * Reads remaining_percentage and writes to .gsd/.context-health
  */
-export function statusLine(data) {
+export function statusLine(data, basePath) {
   try {
     const remaining = data?.context_window?.remaining_percentage;
     if (remaining == null) return;
 
-    // Find .gsd/ in cwd
-    const gsdDir = join(process.cwd(), '.gsd');
+    const gsdDir = join(basePath || process.cwd(), '.gsd');
     mkdirSync(gsdDir, { recursive: true });
     writeFileSync(join(gsdDir, '.context-health'), String(remaining));
-  } catch {}
+  } catch (err) {
+    if (process.env.GSD_DEBUG) console.error('[context-monitor:statusLine]', err);
+  }
 }
 
 /**
  * PostToolUse hook — called after each tool use.
  * Reads .context-health and returns warning/stop text if threshold breached.
  */
-export function postToolUse() {
+export function postToolUse(basePath) {
   try {
-    const gsdDir = join(process.cwd(), '.gsd');
+    const gsdDir = join(basePath || process.cwd(), '.gsd');
     const health = parseInt(readFileSync(join(gsdDir, '.context-health'), 'utf-8'), 10);
 
     if (health < 20) {
@@ -36,7 +37,9 @@ export function postToolUse() {
     if (health < 40) {
       return `⚠️ CONTEXT LOW (${health}% remaining): Complete current task, save state, set workflow_mode = awaiting_clear. Tell user to /clear then /gsd:resume.`;
     }
-  } catch {}
+  } catch (err) {
+    if (process.env.GSD_DEBUG) console.error('[context-monitor:postToolUse]', err);
+  }
   return null;
 }
 
@@ -51,7 +54,9 @@ if (cmd === 'statusLine') {
     try {
       const data = JSON.parse(input);
       statusLine(data);
-    } catch {}
+    } catch (err) {
+      if (process.env.GSD_DEBUG) console.error('[context-monitor:cli]', err);
+    }
   });
 } else if (cmd === 'postToolUse') {
   const result = postToolUse();

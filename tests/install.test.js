@@ -30,8 +30,18 @@ describe('install and uninstall scripts', () => {
       const serverPath = join(claudeDir, 'gsd-lite', 'src', 'server.js');
       const sdkPath = join(claudeDir, 'gsd-lite', 'node_modules', '@modelcontextprotocol', 'sdk');
       const runtimePackagePath = join(claudeDir, 'gsd-lite', 'package.json');
-      assert.equal(settings.hooks.StatusLine, `node ${JSON.stringify(hookPath)} statusLine`);
-      assert.equal(settings.hooks.PostToolUse, `node ${JSON.stringify(hookPath)} postToolUse`);
+      // StatusLine is registered as top-level statusLine setting
+      assert.deepEqual(settings.statusLine, {
+        type: 'command',
+        command: `node ${JSON.stringify(hookPath)} statusLine`,
+      });
+      assert.equal(settings.hooks.StatusLine, undefined);
+      // PostToolUse is registered as array entry in hooks
+      assert.ok(Array.isArray(settings.hooks.PostToolUse));
+      const gsdHook = settings.hooks.PostToolUse.find(e =>
+        e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+      assert.ok(gsdHook);
+      assert.equal(gsdHook.hooks[0].command, `node ${JSON.stringify(hookPath)} postToolUse`);
       assert.ok(settings.mcpServers['gsd-lite']);
       assert.equal(settings.mcpServers['gsd-lite'].args[0], serverPath);
       const hookStat = await stat(hookPath);
@@ -51,15 +61,19 @@ describe('install and uninstall scripts', () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-install-existing-');
     try {
       await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: { type: 'command', command: 'node /custom/status.js' },
         hooks: {
-          StatusLine: 'node /custom/status.js',
-          PostToolUse: 'node /custom/post.js',
+          PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'node /custom/post.js' }] }],
         },
       }, null, 2));
       runScript('install.js', home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.equal(settings.hooks.StatusLine, 'node /custom/status.js');
-      assert.equal(settings.hooks.PostToolUse, 'node /custom/post.js');
+      // Non-GSD statusLine preserved
+      assert.equal(settings.statusLine.command, 'node /custom/status.js');
+      // Non-GSD PostToolUse entry preserved, GSD entry added
+      const customHook = settings.hooks.PostToolUse.find(e =>
+        e.hooks?.some(h => h.command === 'node /custom/post.js'));
+      assert.ok(customHook);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -72,8 +86,10 @@ describe('install and uninstall scripts', () => {
       runScript('uninstall.js', home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
       assert.equal(settings.mcpServers?.['gsd-lite'], undefined);
-      assert.equal(settings.hooks?.StatusLine, undefined);
-      assert.equal(settings.hooks?.PostToolUse, undefined);
+      assert.equal(settings.statusLine, undefined);
+      const gsdHook = settings.hooks?.PostToolUse?.find(e =>
+        e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+      assert.equal(gsdHook, undefined);
       await assert.rejects(stat(join(claudeDir, 'gsd-lite')));
     } finally {
       await rm(home, { recursive: true, force: true });

@@ -15,7 +15,7 @@ tools: [Read, Write, Bash, WebSearch, WebFetch, mcp__context7__*]
 3. WebSearch (对比和趋势)
 </source_hierarchy>
 
-<output>
+<research_output>
 写入 .gsd/research/:
 - STACK.md — 技术栈推荐 + 理由 + 版本建议
 - ARCHITECTURE.md — 架构模式 + 推荐方案 (标识 ⭐)
@@ -38,4 +38,4 @@ tools: [Read, Write, Bash, WebSearch, WebFetch, mcp__context7__*]
 }
 ```
 </result_contract>
-</output>
+</research_output>

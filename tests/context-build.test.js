@@ -1,10 +1,10 @@
 // tests/context-build.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { buildExecutorContext } from '../src/tools/state.js';
 
 describe('buildExecutorContext', () => {
-  it('constructs context with all 6 fields', async () => {
-    const { buildExecutorContext } = await import('../src/tools/state.js');
+  it('constructs context with all 6 fields', () => {
     const state = {
       phases: [{
         id: 1,
@@ -27,11 +27,9 @@ describe('buildExecutorContext', () => {
     assert.equal(ctx.research_decisions[0].summary, 'Use JWT');
   });
 
-  it('throws a clear error when phase is missing', async () => {
-    const { buildExecutorContext } = await import('../src/tools/state.js');
-    assert.throws(
-      () => buildExecutorContext({ phases: [] }, '1.1', 1),
-      /Phase 1 not found/
-    );
+  it('returns a structured error when phase is missing', () => {
+    const result = buildExecutorContext({ phases: [] }, '1.1', 1);
+    assert.equal(result.error, true);
+    assert.match(result.message, /Phase 1 not found/);
   });
 });

@@ -46,12 +46,29 @@ export function main() {
       delete settings.mcpServers['gsd-lite'];
       changed = true;
     }
+    // Remove top-level statusLine if GSD's
+    if (settings.statusLine?.command?.includes('context-monitor.js')) {
+      delete settings.statusLine;
+      changed = true;
+    }
     if (settings.hooks) {
-      for (const key of ['StatusLine', 'PostToolUse']) {
-        if (settings.hooks[key] && settings.hooks[key].includes('context-monitor.js')) {
-          delete settings.hooks[key];
-          changed = true;
-        }
+      // Remove legacy StatusLine string entry
+      if (typeof settings.hooks.StatusLine === 'string'
+          && settings.hooks.StatusLine.includes('context-monitor.js')) {
+        delete settings.hooks.StatusLine;
+        changed = true;
+      }
+      // Remove GSD PostToolUse entry from array
+      if (Array.isArray(settings.hooks.PostToolUse)) {
+        const len = settings.hooks.PostToolUse.length;
+        settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(e =>
+          !e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+        if (settings.hooks.PostToolUse.length < len) changed = true;
+        if (settings.hooks.PostToolUse.length === 0) delete settings.hooks.PostToolUse;
+      } else if (typeof settings.hooks.PostToolUse === 'string'
+          && settings.hooks.PostToolUse.includes('context-monitor.js')) {
+        delete settings.hooks.PostToolUse;
+        changed = true;
       }
     }
     if (changed) {

@@ -31,6 +31,7 @@ tools: [Read, Write, Edit, Bash, Grep, Glob]
 </EXTREMELY-IMPORTANT>
 
 <rules>
+0. 如果编排器传入了 `workflows` 文件路径列表 (如 tdd-cycle.md, deviation-rules.md)，先使用 Read 工具逐个读取这些工作流文件，并严格遵循其中的规则。工作流文件中的规则与下方内联规则冲突时，以内联规则为准。
 1. 逐任务执行:
    a. 判断是否需要 TDD (见例外列表)
    b. 需要 TDD → RED(写失败测试) → GREEN(最小实现) → REFACTOR → checkpoint commit

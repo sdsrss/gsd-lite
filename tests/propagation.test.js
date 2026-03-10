@@ -1,10 +1,10 @@
 // tests/propagation.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { propagateInvalidation } from '../src/tools/state.js';
 
 describe('propagateInvalidation', () => {
-  it('invalidates downstream when contract_changed is true', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('invalidates downstream when contract_changed is true', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: ['ev:1'] },
@@ -19,8 +19,7 @@ describe('propagateInvalidation', () => {
     assert.deepEqual(phase.todo[2].evidence_refs, []);
   });
 
-  it('does NOT invalidate tasks in running/pending/failed/blocked states (C-2)', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('does NOT invalidate tasks in running/pending/failed/blocked states (C-2)', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: [] },
@@ -37,8 +36,7 @@ describe('propagateInvalidation', () => {
     assert.equal(phase.todo[4].lifecycle, 'blocked');    // unchanged
   });
 
-  it('does NOT invalidate when contract_changed is false', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('does NOT invalidate when contract_changed is false', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: ['ev:1'] },
@@ -50,8 +48,7 @@ describe('propagateInvalidation', () => {
     assert.deepEqual(phase.todo[1].evidence_refs, ['ev:2']);
   });
 
-  it('handles chain A→B→C propagation', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('handles chain A→B→C propagation', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: [] },
@@ -64,8 +61,7 @@ describe('propagateInvalidation', () => {
     assert.equal(phase.todo[2].lifecycle, 'needs_revalidation');
   });
 
-  it('handles task with no requires (isolated)', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('handles task with no requires (isolated)', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: ['ev:1'] },
@@ -76,8 +72,7 @@ describe('propagateInvalidation', () => {
     assert.equal(phase.todo[1].lifecycle, 'accepted'); // unaffected, no dependency
   });
 
-  it('handles diamond dependency A→B,A→C,B→D,C→D', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('handles diamond dependency A→B,A→C,B→D,C→D', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: [] },
@@ -94,8 +89,7 @@ describe('propagateInvalidation', () => {
     assert.deepEqual(phase.todo[3].evidence_refs, []);
   });
 
-  it('does not affect tasks only linked via phase gate', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('does not affect tasks only linked via phase gate', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: ['ev:1'] },
@@ -106,8 +100,7 @@ describe('propagateInvalidation', () => {
     assert.equal(phase.todo[1].lifecycle, 'accepted'); // phase dep, not task dep
   });
 
-  it('handles invalidation of already needs_revalidation task', async () => {
-    const { propagateInvalidation } = await import('../src/tools/state.js');
+  it('handles invalidation of already needs_revalidation task', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], evidence_refs: [] },

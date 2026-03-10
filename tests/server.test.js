@@ -404,3 +404,142 @@ describe('MCP tool error handling', () => {
     assert.match(result.message, /not met|not accepted|transition/i);
   });
 });
+
+describe('server dispatch coverage', () => {
+  it('dispatches gsd-state-read with null args gracefully', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const result = await handleToolCall('gsd-state-read', null);
+    // Should still work (args defaults to {})
+    assert.ok(result);
+  });
+
+  it('dispatches gsd-orchestrator-resume with null args', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    // Will fail due to no .gsd dir, but should not throw
+    const result = await handleToolCall('gsd-orchestrator-resume', null);
+    assert.ok(result);
+  });
+
+  it('dispatches gsd-orchestrator-handle-executor-result with null args', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const result = await handleToolCall('gsd-orchestrator-handle-executor-result', null);
+    assert.equal(result.error, true);
+    assert.match(result.message, /result must be an object/);
+  });
+
+  it('dispatches gsd-orchestrator-handle-debugger-result with null args', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const result = await handleToolCall('gsd-orchestrator-handle-debugger-result', null);
+    assert.equal(result.error, true);
+    assert.match(result.message, /result must be an object/);
+  });
+
+  it('dispatches gsd-orchestrator-handle-researcher-result with null args', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const result = await handleToolCall('gsd-orchestrator-handle-researcher-result', null);
+    assert.equal(result.error, true);
+    assert.match(result.message, /result must be an object/);
+  });
+
+  it('dispatches gsd-orchestrator-handle-reviewer-result with null args', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const result = await handleToolCall('gsd-orchestrator-handle-reviewer-result', null);
+    assert.equal(result.error, true);
+    assert.match(result.message, /result must be an object/);
+  });
+
+  it('catches thrown errors and wraps them as structured error', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    // gsd-state-init with invalid args that would cause an internal error
+    const result = await handleToolCall('gsd-state-init', { project: null, phases: null });
+    assert.equal(result.error, true);
+  });
+
+  it('dispatches gsd-health with null args', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const result = await handleToolCall('gsd-health', null);
+    assert.equal(result.status, 'ok');
+    assert.equal(result.server, 'gsd-lite');
+  });
+
+  it('routes reviewer result through server tool', async () => {
+    const reviewerDir = await mkdtemp(join(tmpdir(), 'gsd-server-reviewer-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'server-reviewer-test',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: reviewerDir,
+      });
+      // Move task through lifecycle to checkpointed
+      await handleToolCall('gsd-state-update', {
+        updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+        basePath: reviewerDir,
+      });
+      await handleToolCall('gsd-state-update', {
+        updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] },
+        basePath: reviewerDir,
+      });
+
+      const result = await handleToolCall('gsd-orchestrator-handle-reviewer-result', {
+        basePath: reviewerDir,
+        result: {
+          scope: 'task',
+          scope_id: '1.1',
+          review_level: 'L2',
+          spec_passed: true,
+          quality_passed: true,
+          critical_issues: [],
+          important_issues: [],
+          minor_issues: [],
+          accepted_tasks: ['1.1'],
+          rework_tasks: [],
+          evidence: [],
+        },
+      });
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'review_accepted');
+    } finally {
+      await rm(reviewerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('routes debugger result through server tool', async () => {
+    const debuggerDir = await mkdtemp(join(tmpdir(), 'gsd-server-debugger-result-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'server-debugger-result-test',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: debuggerDir,
+      });
+      await handleToolCall('gsd-state-update', {
+        updates: {
+          current_task: '1.1',
+          current_review: { scope: 'task', scope_id: '1.1', stage: 'debugging' },
+          phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running', retry_count: 3 }] }],
+        },
+        basePath: debuggerDir,
+      });
+
+      const result = await handleToolCall('gsd-orchestrator-handle-debugger-result', {
+        basePath: debuggerDir,
+        result: {
+          task_id: '1.1',
+          outcome: 'fix_suggested',
+          root_cause: 'Race condition',
+          evidence: ['ev1'],
+          hypothesis_tested: [{ hypothesis: 'Race in handler', result: 'confirmed', evidence: 'ev1' }],
+          fix_direction: 'Add mutex',
+          fix_attempts: 1,
+          blockers: [],
+          architecture_concern: false,
+        },
+      });
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'dispatch_executor');
+    } finally {
+      await rm(debuggerDir, { recursive: true, force: true });
+    }
+  });
+});

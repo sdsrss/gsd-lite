@@ -19,6 +19,26 @@ tools: [Read, Bash, Grep, Glob]
 你可能收到单任务审查 (L2) 或批量审查 (L1 合并)，流程相同。
 </role>
 
+<context_protocol>
+## 输入上下文 (由编排器传入)
+
+编排器派发审查时，会提供以下上下文:
+- `scope` — "task" (L2 单任务) 或 "phase" (L1 批量)
+- `scope_id` — task ID (如 "2.3") 或 phase ID (如 1)
+- `stage` — 当前审查阶段 ("spec" 或 "quality")
+- `review_targets` — 待审查 task 列表，每个包含:
+  - `id` — task ID
+  - `level` — 审查级别 (L1/L2)
+  - `checkpoint_commit` — checkpoint 提交哈希
+  - `files_changed` — 变更文件列表
+- `task_spec` — task 规格来源 (phases/*.md 文件路径)
+
+使用这些信息定位需要审查的代码:
+1. 从 `checkpoint_commit` 获取变更 diff (`git diff <commit>~1..<commit>`)
+2. 从 `files_changed` 读取变更后的完整文件
+3. 从 `task_spec` 路径读取 task 规格 (对照审查)
+</context_protocol>
+
 <review_strategy>
 ## 审查级别判定
 

@@ -125,14 +125,18 @@ arguments:
 
 ## STEP 11: 进入自动执行主路径
 
-按 §4.3 执行流程自动推进:
-- 加载 phase 计划 + todo DAG
-- 选择 runnable task → 构建 executor 上下文 → 派发 gsd-executor 子代理
-- 处理执行结果 (checkpointed / blocked / failed)
-- 分层审查 (L0/L1/L2)
-- phase handoff gate 校验
-- 批量更新 state.json
-- 上下文健康度检查 (< 40% → 保存状态暂停)
+加载并严格遵循 gsd-start.md STEP 11 `<execution_loop>` 中的完整执行循环 (11.1–11.9)，包括:
+- 11.1 加载 phase 计划 + todo DAG
+- 11.2 选择 runnable task (gate-aware 依赖校验)
+- 11.3 构建 executor 上下文 → 串行派发 gsd-executor
+- 11.4 处理 executor 结果 (checkpointed/blocked/failed + debugger 触发 + decisions 累积)
+- 11.5 分层审查 (L0/L1/L2 + 运行时重分类)
+- 11.6 处理 reviewer 结果 (返工失效传播)
+- 11.7 Phase handoff gate 校验
+- 11.8 批量更新 state.json + evidence 归档
+- 11.9 上下文健康度检查 (< 40% → 保存状态暂停)
+
+**重要:** 使用 Read 工具读取 `commands/gsd-start.md` STEP 11 获取完整执行细节，不要依赖此处的概要。
 
 ## STEP 12: 全部完成
 

@@ -1,8 +1,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir, stat } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, stat, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readJson, writeJson, writeAtomic, ensureDir, getGsdDir, getGitHead } from '../src/utils.js';
 
 describe('utils', () => {
   let tempDir;
@@ -17,7 +18,6 @@ describe('utils', () => {
 
   describe('readJson / writeJson', () => {
     it('round-trips JSON data atomically', async () => {
-      const { readJson, writeJson } = await import('../src/utils.js');
       const filePath = join(tempDir, 'test.json');
       const data = { key: 'value', nested: { a: 1 } };
       await writeJson(filePath, data);
@@ -27,14 +27,12 @@ describe('utils', () => {
     });
 
     it('returns error for missing file', async () => {
-      const { readJson } = await import('../src/utils.js');
       const result = await readJson(join(tempDir, 'nope.json'));
       assert.equal(result.ok, false);
       assert.ok(typeof result.error === 'string');
     });
 
     it('returns error for corrupted JSON', async () => {
-      const { readJson } = await import('../src/utils.js');
       const filePath = join(tempDir, 'bad.json');
       await writeFile(filePath, '{broken json!!!');
       const result = await readJson(filePath);
@@ -44,18 +42,15 @@ describe('utils', () => {
 
   describe('writeAtomic', () => {
     it('atomically writes text content', async () => {
-      const { writeAtomic } = await import('../src/utils.js');
-      const { readFile: rf } = await import('node:fs/promises');
       const filePath = join(tempDir, 'atomic.txt');
       await writeAtomic(filePath, 'hello world');
-      const content = await rf(filePath, 'utf-8');
+      const content = await readFile(filePath, 'utf-8');
       assert.equal(content, 'hello world');
     });
   });
 
   describe('ensureDir', () => {
     it('creates nested directories', async () => {
-      const { ensureDir } = await import('../src/utils.js');
       const nested = join(tempDir, 'a', 'b', 'c');
       await ensureDir(nested);
       const s = await stat(nested);
@@ -65,7 +60,6 @@ describe('utils', () => {
 
   describe('getGsdDir', () => {
     it('finds .gsd directory from cwd', async () => {
-      const { getGsdDir } = await import('../src/utils.js');
       const gsdDir = join(tempDir, '.gsd');
       await mkdir(gsdDir);
       const result = getGsdDir(tempDir);
@@ -73,7 +67,6 @@ describe('utils', () => {
     });
 
     it('returns null when no .gsd found', async () => {
-      const { getGsdDir } = await import('../src/utils.js');
       // Use /tmp directly to avoid ancestor .gsd dirs (tmpdir() may be under $HOME)
       const isolatedDir = await mkdtemp('/tmp/gsd-no-gsd-');
       try {
@@ -86,11 +79,20 @@ describe('utils', () => {
   });
 
   describe('getGitHead', () => {
-    it('returns a commit hash or null', async () => {
-      const { getGitHead } = await import('../src/utils.js');
+    it('returns a commit hash or null', () => {
       const head = getGitHead();
       if (head !== null) {
         assert.match(head, /^[0-9a-f]{7,40}$/);
+      }
+    });
+
+    it('returns null for non-git directory', async () => {
+      const isolatedDir = await mkdtemp('/tmp/gsd-no-git-');
+      try {
+        const head = getGitHead(isolatedDir);
+        assert.equal(head, null);
+      } finally {
+        await rm(isolatedDir, { recursive: true, force: true });
       }
     });
   });

@@ -9,6 +9,8 @@ import { init, read, update } from '../src/tools/state.js';
 import {
   handleDebuggerResult,
   handleExecutorResult,
+  handleReviewerResult,
+  handleResearcherResult,
   resumeWorkflow,
 } from '../src/tools/orchestrator.js';
 
@@ -267,14 +269,13 @@ describe('orchestrator skeleton', () => {
     await update({
       updates: {
         context: {
-          last_session: new Date().toISOString(),
+          last_session: new Date(Date.now() - 5000).toISOString(),
           remaining_percentage: 100,
         },
       },
       basePath: tempDir,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
     writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# changed\n');
 
     const result = await resumeWorkflow({ basePath: tempDir });
@@ -764,5 +765,524 @@ describe('orchestrator skeleton', () => {
     assert.equal(state.evidence['ev:string-only-ref'], undefined);
     // evidence_refs on the task should contain all entries
     assert.equal(state.phases[0].todo[0].evidence_refs.length, 3);
+  });
+
+  it('handles executor blocked outcome with string blocker', async () => {
+    await init({
+      project: 'orchestrator-blocked-string',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'blocked',
+        summary: 'Blocked by external dependency',
+        files_changed: [],
+        decisions: [],
+        blockers: ['Need API key from vendor'],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'awaiting_user');
+    assert.equal(result.blockers[0].reason, 'Need API key from vendor');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'blocked');
+    assert.equal(state.phases[0].todo[0].blocked_reason, 'Need API key from vendor');
+  });
+
+  it('handles executor blocked outcome with object blocker', async () => {
+    await init({
+      project: 'orchestrator-blocked-object',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'blocked',
+        summary: 'Blocked',
+        files_changed: [],
+        decisions: [],
+        blockers: [{ reason: 'Need DB schema', unblock_condition: 'DBA approves migration' }],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'awaiting_user');
+    assert.equal(result.blockers[0].reason, 'Need DB schema');
+    assert.equal(result.blockers[0].unblock_condition, 'DBA approves migration');
+  });
+
+  it('handles executor blocked outcome with empty blockers array', async () => {
+    await init({
+      project: 'orchestrator-blocked-empty',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'blocked',
+        summary: 'Something blocked this',
+        files_changed: [],
+        decisions: [],
+        blockers: [],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'awaiting_user');
+    // When no blockers, blocked_reason falls back to summary
+    assert.equal(result.blockers[0].reason, 'Something blocked this');
+  });
+
+  it('handles executor failure with no error_fingerprint — uses summary truncation', async () => {
+    await init({
+      project: 'orchestrator-no-fingerprint',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'failed',
+        summary: 'A very long error message that should be truncated to 80 characters for the error fingerprint value',
+        files_changed: [],
+        decisions: [],
+        blockers: [],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    const state = await read({ basePath: tempDir });
+    assert.ok(state.phases[0].todo[0].last_error_fingerprint.length <= 80);
+  });
+
+  it('rejects executor result with invalid input types', async () => {
+    const resultNull = await handleExecutorResult({ result: null, basePath: tempDir });
+    assert.equal(resultNull.error, true);
+    assert.match(resultNull.message, /result must be an object/);
+
+    const resultArray = await handleExecutorResult({ result: [], basePath: tempDir });
+    assert.equal(resultArray.error, true);
+    assert.match(resultArray.message, /result must be an object/);
+  });
+
+  it('rejects executor result for non-existent task', async () => {
+    await init({
+      project: 'orchestrator-no-task',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '99.99',
+        outcome: 'checkpointed',
+        summary: 'done',
+        checkpoint_commit: 'abc',
+        files_changed: [],
+        decisions: [],
+        blockers: [],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.error, true);
+    assert.match(result.message, /not found/);
+  });
+
+  it('accumulates decisions from executor results', async () => {
+    await init({
+      project: 'orchestrator-decisions',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'checkpointed',
+        summary: 'done',
+        checkpoint_commit: 'abc',
+        files_changed: ['src/a.js'],
+        decisions: [
+          'Use PostgreSQL',
+          { id: 'custom-id', summary: 'Custom decision' },
+          null,
+        ],
+        blockers: [],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    const state = await read({ basePath: tempDir });
+    // String decision should be converted
+    assert.ok(state.decisions.some(d => d.summary === 'Use PostgreSQL'));
+    // Object decision with custom id should be kept
+    assert.ok(state.decisions.some(d => d.id === 'custom-id'));
+    // Null entries should be filtered out
+    assert.equal(state.decisions.length, 2);
+  });
+
+  it('triggers L2 review for checkpointed task with contract_changed + sensitive keyword', async () => {
+    await init({
+      project: 'orchestrator-l2-review',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Implement auth endpoint', level: 'L1' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'checkpointed',
+        summary: 'Changed API contract',
+        checkpoint_commit: 'xyz',
+        files_changed: ['src/api.js'],
+        decisions: [],
+        blockers: [],
+        contract_changed: true,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.review_level, 'L2');
+    assert.equal(result.action, 'dispatch_reviewer');
+    assert.equal(result.workflow_mode, 'reviewing_task');
+    assert.deepEqual(result.current_review, { scope: 'task', scope_id: '1.1', stage: 'spec' });
+  });
+
+  it('resumes reviewing_task without current_review by deriving from current_task', async () => {
+    await init({
+      project: 'orchestrator-review-task-derive',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_task',
+        current_task: '1.1',
+        current_review: null,
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'dispatch_reviewer');
+    assert.equal(result.review_scope, 'task');
+  });
+
+  it('returns error for reviewing_task without current_review or current_task', async () => {
+    await init({
+      project: 'orchestrator-review-task-no-id',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_task',
+        current_task: null,
+        current_review: null,
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.error, true);
+    assert.match(result.message, /requires current_review/);
+  });
+
+  it('resumes reviewing_phase without current_review and persists derived review', async () => {
+    await init({
+      project: 'orchestrator-review-phase-derive',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_phase',
+        current_review: null,
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'dispatch_reviewer');
+    assert.equal(result.review_scope, 'phase');
+
+    const state = await read({ basePath: tempDir });
+    assert.deepEqual(state.current_review, { scope: 'phase', scope_id: 1 });
+  });
+
+  it('returns failed workflow info including failed_phases and failed_tasks', async () => {
+    await init({
+      project: 'orchestrator-failed-info',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }, { index: 2, name: 'Task B' }] }],
+      basePath: tempDir,
+    });
+    // Transition task to running first, then to failed
+    await update({
+      updates: {
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        phases: [{ id: 1, lifecycle: 'failed', todo: [
+          { id: '1.1', lifecycle: 'failed' },
+        ] }],
+      },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { workflow_mode: 'failed' },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'noop');
+    assert.equal(result.workflow_mode, 'failed');
+    assert.deepEqual(result.failed_phases, [1]);
+    assert.deepEqual(result.failed_tasks, ['1.1']);
+  });
+
+  it('handles debugger result with task_failed (non-architecture)', async () => {
+    await init({
+      project: 'orchestrator-debugger-task-fail',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        current_review: { scope: 'task', scope_id: '1.1', stage: 'debugging' },
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running', retry_count: 3 }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleDebuggerResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'failed',
+        root_cause: 'Logic error unfixable within scope',
+        evidence: ['ev1'],
+        hypothesis_tested: [],
+        fix_direction: 'None viable',
+        fix_attempts: 3,
+        blockers: [],
+        architecture_concern: false,
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'task_failed');
+    assert.equal(result.workflow_mode, 'executing_task');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'failed');
+    assert.equal(state.phases[0].lifecycle, 'active'); // Phase not failed when no architecture_concern
+  });
+
+  it('rejects debugger result with non-object input', async () => {
+    const resultNull = await handleDebuggerResult({ result: null, basePath: tempDir });
+    assert.equal(resultNull.error, true);
+    assert.match(resultNull.message, /result must be an object/);
+
+    const resultArray = await handleDebuggerResult({ result: [], basePath: tempDir });
+    assert.equal(resultArray.error, true);
+  });
+
+  it('rejects debugger result for non-existent task', async () => {
+    await init({
+      project: 'orchestrator-debugger-no-task',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    const result = await handleDebuggerResult({
+      basePath: tempDir,
+      result: {
+        task_id: '99.99',
+        outcome: 'fix_suggested',
+        root_cause: 'unknown',
+        evidence: [],
+        hypothesis_tested: [],
+        fix_direction: 'try again',
+        fix_attempts: 0,
+        blockers: [],
+        architecture_concern: false,
+      },
+    });
+
+    assert.equal(result.error, true);
+    assert.match(result.message, /not found/);
+  });
+
+  it('rejects researcher result with non-object input', async () => {
+    const resultNull = await handleResearcherResult({ result: null, basePath: tempDir });
+    assert.equal(resultNull.error, true);
+    assert.match(resultNull.message, /result must be an object/);
+
+    const resultArray = await handleResearcherResult({ result: [], basePath: tempDir });
+    assert.equal(resultArray.error, true);
+  });
+
+  it('rejects invalid researcher result', async () => {
+    const result = await handleResearcherResult({
+      result: { decision_ids: 'not-array' },
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /Invalid researcher result/);
+  });
+
+  it('handles reviewer result for phase scope with scope_id lookup', async () => {
+    await init({
+      project: 'orchestrator-reviewer-phase-scope',
+      phases: [
+        { name: 'Phase 1', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Phase 2', tasks: [{ index: 1, name: 'Task B' }] },
+      ],
+      basePath: tempDir,
+    });
+    // checkpoint task in phase 1
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] },
+      basePath: tempDir,
+    });
+
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        spec_passed: true,
+        quality_passed: true,
+        critical_issues: [],
+        important_issues: [],
+        minor_issues: [],
+        accepted_tasks: ['1.1'],
+        rework_tasks: [],
+        evidence: [{ id: 'ev:review:1', scope: 'phase:1', summary: 'review evidence' }],
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'review_accepted');
+
+    const state = await read({ basePath: tempDir });
+    assert.ok(state.evidence['ev:review:1']);
+  });
+
+  it('returns idle when no runnable task found (all accepted)', async () => {
+    await init({
+      project: 'orchestrator-idle',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // Move through full lifecycle manually without using orchestrator
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, done: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    // Should trigger review or idle, depending on selectRunnableTask logic
+    assert.equal(result.success, true);
   });
 });

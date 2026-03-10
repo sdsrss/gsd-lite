@@ -21,7 +21,7 @@ agents/        → 4 个子代理 (executor, reviewer, researcher, debugger)
 workflows/     → 5 个工作流 (tdd-cycle, review-cycle, debugging, research, deviation-rules)
 references/    → 4 个参考文档
 hooks/         → 上下文监控 (StatusLine + PostToolUse)
-tests/         → 301 个测试 (232 单元 + 69 E2E 集成) + 11 个 E2E checklist
+tests/         → 456 个测试 (387 单元 + 69 E2E 集成) + 11 个 E2E checklist
 docs/          → 设计文档 + 工程任务清单 + 校准记录
 ```
 
@@ -45,8 +45,8 @@ docs/          → 设计文档 + 工程任务清单 + 校准记录
 ## 测试
 
 ```bash
-npm test                    # 运行全部 301 个测试
-npm run test:coverage       # 运行测试 + 覆盖率报告 (88.77%)
+npm test                    # 运行全部 456 个测试
+npm run test:coverage       # 运行测试 + 覆盖率报告 (95.06% lines, 82.09% branches)
 npm run lint                # Biome lint 检查
 node --test tests/state.test.js  # 运行单个测试文件
 ```
@@ -69,13 +69,13 @@ node --test tests/state.test.js  # 运行单个测试文件
 <!-- claude-mem-lite: auto-updated context. To avoid git noise, add CLAUDE.md to .gitignore -->
 <claude-mem-context>
 ### Last Session
-Request: /clear
+Request: 修复所有问题
 
 ### Key Context
+- [change] Modified CLAUDE.md (#1718)
+- [bugfix] Error while working on gsd (#1717)
+- [change] Modified e2e-status-display.md, e2e-stop-and-resume.md, e2e-context-health.md +… (#1715)
 - [bugfix] Error while working on utils.test.js, evidence.test.js, propagation.test.js +4 … (#1712)
 - [refactor] Make runTypeCheck async and clarify verify.js configuration (#1710)
-- [change] Modified agents, utils.js, schema.js (#1707)
-- [bugfix] Skill: {"success":true,"commandName":"superpowers:reques… (#1692)
-- [change] Project finalization: update repo metadata and verify test suite (#1691)
 
 </claude-mem-context>

@@ -17,13 +17,43 @@ function formatHookCommand(scriptPath, hookName) {
   return `node ${JSON.stringify(scriptPath)} ${hookName}`;
 }
 
-function registerManagedHook(hooks, key, value) {
-  const existing = hooks[key];
-  if (!existing || existing.includes('context-monitor.js')) {
-    hooks[key] = value;
+function registerStatusLine(settings, hookPath) {
+  const command = formatHookCommand(hookPath, 'statusLine');
+  // Don't overwrite non-GSD statusLine
+  if (settings.statusLine && typeof settings.statusLine === 'object'
+      && !settings.statusLine.command?.includes('context-monitor.js')) {
+    log('  ! Preserved existing statusLine');
+    return false;
+  }
+  settings.statusLine = { type: 'command', command };
+  // Clean up legacy format (was incorrectly placed in hooks)
+  if (settings.hooks?.StatusLine) delete settings.hooks.StatusLine;
+  return true;
+}
+
+function registerPostToolUseHook(hooks, hookPath) {
+  const command = formatHookCommand(hookPath, 'postToolUse');
+  const entry = { matcher: '*', hooks: [{ type: 'command', command }] };
+  if (!hooks.PostToolUse) {
+    hooks.PostToolUse = [entry];
     return true;
   }
-  log(`  ! Preserved existing ${key} hook`);
+  // Handle legacy string format
+  if (typeof hooks.PostToolUse === 'string') {
+    if (!hooks.PostToolUse.includes('context-monitor.js')) {
+      log('  ! Preserved existing PostToolUse hook');
+      return false;
+    }
+    hooks.PostToolUse = [entry];
+    return true;
+  }
+  if (Array.isArray(hooks.PostToolUse)) {
+    const idx = hooks.PostToolUse.findIndex(e =>
+      e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+    if (idx >= 0) hooks.PostToolUse[idx] = entry;
+    else hooks.PostToolUse.push(entry);
+    return true;
+  }
   return false;
 }
 
@@ -96,19 +126,11 @@ export function main() {
       args: [join(RUNTIME_DIR, 'src', 'server.js')],
     };
 
-    // Register hooks
+    // Register statusLine (top-level setting) and PostToolUse hook
     if (!settings.hooks) settings.hooks = {};
     const hookPath = join(CLAUDE_DIR, 'hooks', 'context-monitor.js');
-    const statusLineRegistered = registerManagedHook(
-      settings.hooks,
-      'StatusLine',
-      formatHookCommand(hookPath, 'statusLine'),
-    );
-    const postToolUseRegistered = registerManagedHook(
-      settings.hooks,
-      'PostToolUse',
-      formatHookCommand(hookPath, 'postToolUse'),
-    );
+    const statusLineRegistered = registerStatusLine(settings, hookPath);
+    const postToolUseRegistered = registerPostToolUseHook(settings.hooks, hookPath);
 
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
     log('  ✓ MCP server registered in settings.json');

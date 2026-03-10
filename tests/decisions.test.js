@@ -1,10 +1,10 @@
 // tests/decisions.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { matchDecisionForBlocker } from '../src/tools/state.js';
 
 describe('matchDecisionForBlocker', () => {
-  it('matches decision to blocked question', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('matches decision to blocked question', () => {
     const decisions = [
       { id: 'd:auth-strategy', summary: '选择 JWT 而非 session', phase: 1 },
     ];
@@ -14,8 +14,7 @@ describe('matchDecisionForBlocker', () => {
     assert.equal(match.id, 'd:auth-strategy');
   });
 
-  it('returns null when no match', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('returns null when no match', () => {
     const decisions = [
       { id: 'd:db-choice', summary: 'PostgreSQL for DB', phase: 1 },
     ];

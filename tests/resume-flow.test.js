@@ -138,8 +138,7 @@ describe('resume flow matrix', () => {
     }, { git: true });
 
     await withProject('resume-replan', async (tempDir) => {
-      await update({ updates: { context: { last_session: new Date().toISOString(), remaining_percentage: 100 } }, basePath: tempDir });
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await update({ updates: { context: { last_session: new Date(Date.now() - 5000).toISOString(), remaining_percentage: 100 } }, basePath: tempDir });
       writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# modified\n');
       const replan = await resumeWorkflow({ basePath: tempDir });
       assert.equal(replan.workflow_mode, 'replan_required');

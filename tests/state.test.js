@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, stat as fsStat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { init, read, update, phaseComplete, matchDecisionForBlocker } from '../src/tools/state.js';
+import { readJson } from '../src/utils.js';
 
 describe('state tools', () => {
   let tempDir;
@@ -17,7 +19,6 @@ describe('state tools', () => {
 
   describe('init', () => {
     it('creates .gsd directory with state.json', async () => {
-      const { init } = await import('../src/tools/state.js');
       const result = await init({
         project: 'test-project',
         phases: [{ name: 'setup', tasks: [{ index: 1, name: 'init repo' }] }],
@@ -25,7 +26,6 @@ describe('state tools', () => {
       });
       assert.equal(result.success, true);
 
-      const { readJson } = await import('../src/utils.js');
       const readResult = await readJson(join(tempDir, '.gsd', 'state.json'));
       assert.equal(readResult.ok, true);
       const state = readResult.data;
@@ -48,14 +48,12 @@ describe('state tools', () => {
 
   describe('read', () => {
     it('returns full state', async () => {
-      const { read } = await import('../src/tools/state.js');
       const result = await read({ basePath: tempDir });
       assert.equal(result.project, 'test-project');
       assert.equal(result.workflow_mode, 'executing_task');
     });
 
     it('returns filtered fields', async () => {
-      const { read } = await import('../src/tools/state.js');
       const result = await read({ fields: ['project', 'workflow_mode'], basePath: tempDir });
       assert.equal(result.project, 'test-project');
       assert.equal(result.workflow_mode, 'executing_task');
@@ -63,7 +61,6 @@ describe('state tools', () => {
     });
 
     it('returns error when state not found', async () => {
-      const { read } = await import('../src/tools/state.js');
       const result = await read({ basePath: '/tmp/nonexistent-gsd-12345' });
       assert.equal(result.error, true);
     });
@@ -71,7 +68,6 @@ describe('state tools', () => {
 
   describe('update', () => {
     it('updates canonical fields', async () => {
-      const { update, read } = await import('../src/tools/state.js');
       const result = await update({
         updates: { workflow_mode: 'executing_task', current_task: '1.1' },
         basePath: tempDir,
@@ -83,7 +79,6 @@ describe('state tools', () => {
     });
 
     it('rejects non-canonical fields', async () => {
-      const { update } = await import('../src/tools/state.js');
       const result = await update({
         updates: { stopped_at: 'some value' },
         basePath: tempDir,
@@ -93,7 +88,6 @@ describe('state tools', () => {
     });
 
     it('validates state after update', async () => {
-      const { update } = await import('../src/tools/state.js');
       const result = await update({
         updates: { workflow_mode: 'invalid_mode' },
         basePath: tempDir,
@@ -102,14 +96,12 @@ describe('state tools', () => {
     });
 
     it('rejects null updates payload', async () => {
-      const { update } = await import('../src/tools/state.js');
       const result = await update({ updates: null, basePath: tempDir });
       assert.equal(result.error, true);
       assert.match(result.message, /updates must be a non-null object/);
     });
 
     it('rejects malformed phases that fail schema validation', async () => {
-      const { update } = await import('../src/tools/state.js');
       const result = await update({
         updates: {
           phases: [{ id: 2, name: 'broken', lifecycle: 'pending' }],
@@ -124,7 +116,6 @@ describe('state tools', () => {
 
   describe('update lifecycle validation', () => {
     it('rejects illegal task lifecycle transition (pending → accepted)', async () => {
-      const { update, read } = await import('../src/tools/state.js');
       const state = await read({ basePath: tempDir });
       const phases = JSON.parse(JSON.stringify(state.phases));
       phases[0].todo[0].lifecycle = 'accepted'; // skip running+checkpointed
@@ -134,7 +125,6 @@ describe('state tools', () => {
     });
 
     it('rejects illegal phase lifecycle transition (pending → reviewing)', async () => {
-      const { update, read } = await import('../src/tools/state.js');
       const state = await read({ basePath: tempDir });
       const phases = JSON.parse(JSON.stringify(state.phases));
       phases[0].lifecycle = 'accepted'; // skip reviewing
@@ -144,7 +134,6 @@ describe('state tools', () => {
     });
 
     it('allows legal task lifecycle transition (pending → running)', async () => {
-      const { update, read } = await import('../src/tools/state.js');
       const state = await read({ basePath: tempDir });
       const phases = JSON.parse(JSON.stringify(state.phases));
       phases[0].todo[0].lifecycle = 'running';
@@ -155,7 +144,6 @@ describe('state tools', () => {
 
   describe('phaseComplete', () => {
     it('rejects when handoff gate not met', async () => {
-      const { phaseComplete } = await import('../src/tools/state.js');
       const result = await phaseComplete({ phase_id: 1, basePath: tempDir });
       assert.equal(result.error, true);
     });
@@ -163,24 +151,21 @@ describe('state tools', () => {
 });
 
 describe('matchDecisionForBlocker edge cases', () => {
-  it('returns null when overlap is below MIN_OVERLAP (single token)', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('returns null when overlap is below MIN_OVERLAP (single token)', () => {
     const decisions = [{ id: 'd1', summary: 'Use React frontend' }];
     const result = matchDecisionForBlocker(decisions, 'Need frontend framework');
     // Only "frontend" overlaps → 1 < MIN_OVERLAP(2) → null
     assert.equal(result, null);
   });
 
-  it('matches at exact MIN_OVERLAP boundary (overlap=2)', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('matches at exact MIN_OVERLAP boundary (overlap=2)', () => {
     const decisions = [{ id: 'd1', summary: 'Use PostgreSQL database' }];
     const result = matchDecisionForBlocker(decisions, 'Which database to use');
     // "database" + "use" overlap → 2 = MIN_OVERLAP → match
     assert.equal(result.id, 'd1');
   });
 
-  it('returns the best match among multiple decisions', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('returns the best match among multiple decisions', () => {
     const decisions = [
       { id: 'd1', summary: 'deploy staging server config' },
       { id: 'd2', summary: 'deploy staging environment' },
@@ -193,36 +178,31 @@ describe('matchDecisionForBlocker edge cases', () => {
     assert.equal(result.id, 'd1');
   });
 
-  it('returns null for empty decisions array', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('returns null for empty decisions array', () => {
     const result = matchDecisionForBlocker([], 'some blocked reason');
     assert.equal(result, null);
   });
 
-  it('returns null for empty or null blocked reason', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('returns null for empty or null blocked reason', () => {
     const decisions = [{ id: 'd1', summary: 'Use PostgreSQL database' }];
     assert.equal(matchDecisionForBlocker(decisions, ''), null);
     assert.equal(matchDecisionForBlocker(decisions, null), null);
   });
 
-  it('returns null for decision without summary (no crash)', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('returns null for decision without summary (no crash)', () => {
     const decisions = [{ id: 'd1' }];
     const result = matchDecisionForBlocker(decisions, 'some blocked reason here');
     assert.equal(result, null);
   });
 
-  it('matches case-insensitively', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('matches case-insensitively', () => {
     const decisions = [{ id: 'd1', summary: 'Use PostgreSQL database' }];
     const result = matchDecisionForBlocker(decisions, 'POSTGRESQL DATABASE choice');
     // "postgresql" + "database" overlap → 2 = MIN_OVERLAP → match
     assert.equal(result.id, 'd1');
   });
 
-  it('filters out short tokens from punctuation splitting', async () => {
-    const { matchDecisionForBlocker } = await import('../src/tools/state.js');
+  it('filters out short tokens from punctuation splitting', () => {
     // "I/O" splits into "i" and "o" (both length 1, filtered by MIN_TOKEN_LENGTH=2)
     const decisions = [{ id: 'd1', summary: 'Handle I/O operations' }];
     const result = matchDecisionForBlocker(decisions, 'I/O performance');

@@ -1,6 +1,9 @@
 import { stat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFile = promisify(execFileCb);
 
 // M-2: Detection priority — first lockfile match wins (pnpm > yarn > npm > bun)
 const LOCKFILE_MAP = {
@@ -24,24 +27,23 @@ function summarizeOutput(output, lines) {
   return String(output || '').trim().split('\n').slice(-lines).join('\n');
 }
 
-function runCommand(command, args, cwd) {
+async function runCommand(command, args, cwd) {
   try {
-    const output = execFileSync(command, args, {
+    const { stdout } = await execFile(command, args, {
       cwd,
       encoding: 'utf-8',
       timeout: 120000,
-      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    return { exit_code: 0, summary: summarizeOutput(output, 3) };
+    return { exit_code: 0, summary: summarizeOutput(stdout, 3) };
   } catch (err) {
     return {
-      exit_code: err.status || 1,
+      exit_code: typeof err.code === 'number' ? err.code : (err.status || 1),
       summary: summarizeOutput(err.stderr || err.stdout || err.message || '', 5),
     };
   }
 }
 
-export function runTests(pm, cwd, pattern) {
+export async function runTests(pm, cwd, pattern) {
   const args = ['test'];
   if (pattern) args.push('--', pattern);
   return runCommand(pm, args, cwd);
@@ -82,6 +84,6 @@ export async function runAll(cwd = process.cwd()) {
   return {
     lint: await runLint(pm, cwd),
     typecheck: await runTypeCheck(cwd),
-    test: runTests(pm, cwd),
+    test: await runTests(pm, cwd),
   };
 }
