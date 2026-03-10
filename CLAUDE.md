@@ -21,7 +21,7 @@ agents/        → 4 个子代理 (executor, reviewer, researcher, debugger)
 workflows/     → 5 个工作流 (tdd-cycle, review-cycle, debugging, research, deviation-rules)
 references/    → 4 个参考文档
 hooks/         → 上下文监控 (StatusLine + PostToolUse)
-tests/         → 227 个单元测试 + 11 个 E2E checklist
+tests/         → 296 个测试 (227 单元 + 69 E2E 集成) + 11 个 E2E checklist
 docs/          → 设计文档 + 工程任务清单 + 校准记录
 ```
 
@@ -43,11 +43,11 @@ docs/          → 设计文档 + 工程任务清单 + 校准记录
 ## 测试
 
 ```bash
-npm test                    # 运行全部 227 个单元测试
+npm test                    # 运行全部 296 个测试
 node --test tests/state.test.js  # 运行单个测试文件
 ```
 
-测试覆盖: schema 校验、state CRUD、lifecycle 转换、evidence 存储、gate 调度、返工传播、审查重分类、decisions 累积、研究刷新、上下文构建、result contract、verify 工具
+测试覆盖: schema 校验、state CRUD、lifecycle 转换、evidence 存储、gate 调度、返工传播、审查重分类、decisions 累积、研究刷新、上下文构建、result contract、verify 工具、workflow 转换、stop/resume 往返、resume 矩阵、rework/debugger 流程、evidence 归档生命周期、research 集成刷新、context recovery
 
 ## 关键设计文档
 
