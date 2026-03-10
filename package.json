@@ -10,6 +10,28 @@
     "test": "node --test tests/*.test.js",
     "start": "node src/server.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropic/gsd-lite"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "mcp",
+    "orchestration",
+    "ai-agent",
+    "task-management"
+  ],
+  "files": [
+    "src/",
+    "commands/",
+    "agents/",
+    "workflows/",
+    "references/",
+    "hooks/",
+    "install.js",
+    "uninstall.js"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },

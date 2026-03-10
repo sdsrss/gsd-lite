@@ -1,0 +1,4 @@
+tests/
+docs/
+.gsd/
+*.test.js
