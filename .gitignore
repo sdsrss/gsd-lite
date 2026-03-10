@@ -1,0 +1,81 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build & Output
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Test & Coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Temp
+.tmp/
+tmp/
+temp/
+*.tmp
+
+# AI & Claude
+CLAUDE.md
+.claude/
+.augment*/
+
+# GSD runtime data
+gsd/
+.gsd/
+.planning/
+
+# Superpowers
+superpowers/
+
+# Docs (design & analysis, not shipped)
+docs/
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache
+.prettiercache
+
+# Package tarballs
+*.tgz
+
+# Debug
+.debug/
+
+# Evidence archive (generated at runtime)
+evidence-archive.json
+

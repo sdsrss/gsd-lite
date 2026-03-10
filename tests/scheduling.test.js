@@ -98,4 +98,59 @@ describe('selectRunnableTask', () => {
     const result = selectRunnableTask(phase, { phases: [{ id: 1, lifecycle: 'active' }] });
     assert.equal(result.task, undefined);
   });
+
+  it('handles empty todo list', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = { todo: [] };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task, undefined);
+  });
+
+  it('handles all tasks accepted (phase complete)', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'accepted', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'accepted', requires: [], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task, undefined);
+  });
+
+  it('handles mixed blocked and pending with unmet deps', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'blocked', requires: [], retry_count: 0, blocked_reason: 'needs API key' },
+        { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.mode, 'awaiting_user');
+    assert.ok(result.blockers.length > 0);
+  });
+
+  it('selects needs_revalidation tasks', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'accepted', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'needs_revalidation', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.2');
+  });
+
+  it('skips tasks with missing dependency reference', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task, undefined);
+  });
 });
