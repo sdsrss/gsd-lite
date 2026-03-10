@@ -1,0 +1,101 @@
+// tests/scheduling.test.js
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+describe('selectRunnableTask', () => {
+  it('returns first pending task with no dependencies', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'pending', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.1');
+  });
+
+  it('skips tasks with unmet accepted gate', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'accepted', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], retry_count: 0 },
+        { id: '1.3', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.2', gate: 'accepted' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.2');
+  });
+
+  it('allows checkpoint gate for checkpointed dependency', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'checkpointed', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'checkpoint' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.2');
+  });
+
+  it('blocks checkpoint gate for pending dependency', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'pending', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'checkpoint' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.1');
+  });
+
+  it('detects deadlock (all blocked)', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'blocked', requires: [], retry_count: 0, blocked_reason: 'need info' },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.mode, 'awaiting_user');
+    assert.ok(result.blockers.length > 0);
+  });
+
+  it('detects all-awaiting-review', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'checkpointed', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'checkpointed', requires: [], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.mode, 'trigger_review');
+  });
+
+  it('skips tasks that exceeded retry limit', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'pending', requires: [], retry_count: 5 },
+        { id: '1.2', lifecycle: 'pending', requires: [], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.2');
+  });
+
+  it('handles phase_complete gate', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '2.1', lifecycle: 'pending', requires: [{ kind: 'phase', id: 1, gate: 'phase_complete' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, { phases: [{ id: 1, lifecycle: 'active' }] });
+    assert.equal(result.task, undefined);
+  });
+});

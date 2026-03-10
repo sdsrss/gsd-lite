@@ -250,3 +250,55 @@ function parseScopePhase(scope) {
   const match = scope.match(/^task:(\d+)\./);
   return match ? parseInt(match[1], 10) : null;
 }
+
+// ── Automation functions ──
+
+const MAX_RETRY = 3;
+
+/**
+ * Select the next runnable task from a phase, respecting dependency gates.
+ * Returns { task } if a runnable task is found,
+ * { mode: 'trigger_review' } if all remaining are checkpointed,
+ * { mode: 'awaiting_user', blockers } if all are blocked,
+ * { task: undefined } if nothing can run.
+ */
+export function selectRunnableTask(phase, state) {
+  const runnableTasks = [];
+
+  for (const task of phase.todo) {
+    if (!['pending', 'needs_revalidation'].includes(task.lifecycle)) continue;
+    if (task.retry_count >= MAX_RETRY) continue;
+    if (task.blocked_reason) continue;
+
+    let depsOk = true;
+    for (const dep of (task.requires || [])) {
+      if (dep.kind === 'task') {
+        const depTask = phase.todo.find(t => t.id === dep.id);
+        if (!depTask) { depsOk = false; break; }
+        const gate = dep.gate || 'accepted';
+        if (gate === 'checkpoint' && !['checkpointed', 'accepted'].includes(depTask.lifecycle)) { depsOk = false; break; }
+        if (gate === 'accepted' && depTask.lifecycle !== 'accepted') { depsOk = false; break; }
+      } else if (dep.kind === 'phase') {
+        const depPhase = (state.phases || []).find(p => p.id === dep.id);
+        if (!depPhase || depPhase.lifecycle !== 'accepted') { depsOk = false; break; }
+      }
+    }
+    if (depsOk) runnableTasks.push(task);
+  }
+
+  if (runnableTasks.length > 0) {
+    return { task: runnableTasks[0] };
+  }
+
+  const awaitingReview = phase.todo.filter(t => t.lifecycle === 'checkpointed');
+  if (awaitingReview.length > 0) {
+    return { mode: 'trigger_review' };
+  }
+
+  const blockedTasks = phase.todo.filter(t => t.lifecycle === 'blocked');
+  if (blockedTasks.length > 0) {
+    return { mode: 'awaiting_user', blockers: blockedTasks.map(t => ({ id: t.id, reason: t.blocked_reason })) };
+  }
+
+  return { task: undefined };
+}
