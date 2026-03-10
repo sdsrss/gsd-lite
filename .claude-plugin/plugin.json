@@ -1,0 +1,17 @@
+{
+  "name": "gsd-lite",
+  "version": "0.1.0",
+  "description": "AI orchestration tool for Claude Code — GSD management shell + Superpowers quality core",
+  "author": {
+    "name": "sdsrss",
+    "url": "https://github.com/sdsrss"
+  },
+  "repository": "https://github.com/sdsrss/gsd-lite",
+  "homepage": "https://github.com/sdsrss/gsd-lite",
+  "license": "MIT",
+  "keywords": ["claude-code", "orchestration", "mcp", "ai-agent", "task-management", "tdd"],
+  "commands": "./commands/",
+  "agents": "./agents/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.claude-plugin/mcp.json"
+}

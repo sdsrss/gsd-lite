@@ -1,0 +1,21 @@
+{
+  "name": "gsd-lite",
+  "owner": {
+    "name": "sdsrss",
+    "email": "sdsrss@users.noreply.github.com"
+  },
+  "metadata": {
+    "description": "GSD-Lite plugin marketplace — AI orchestration for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "gsd-lite",
+      "source": ".",
+      "description": "AI orchestration tool — GSD management shell + Superpowers quality core. 5 commands, 4 agents, 5 workflows, MCP server, context monitoring.",
+      "version": "0.1.0",
+      "keywords": ["orchestration", "mcp", "tdd", "task-management"],
+      "category": "Development workflows"
+    }
+  ]
+}

@@ -58,38 +58,37 @@ GSD-Lite 是一个面向 Claude Code 的 AI 编排工具，将 [GSD](https://git
 ## 安装
 
 ```bash
-# 方式一：Claude Code 插件 (推荐)
+# 方式一：Claude Code 插件市场 (推荐)
+/plugin marketplace add sdsrss/gsd-lite
 /plugin install gsd-lite
 
 # 方式二：npx
 npx gsd-lite install
 
-# 查看帮助
-npx gsd-lite help
-
 # 方式三：手动
 git clone https://github.com/sdsrss/gsd-lite.git
-cd gsd-lite && node cli.js install
+cd gsd-lite && npm install && node cli.js install
 ```
 
-- 安装器会把命令/Agent/工作流写入 `~/.claude/...`
-- MCP Server 运行时会复制到稳定目录 `~/.claude/gsd-lite/`
-- 从源码手动安装后，可用 `node cli.js uninstall` 卸载
+**方式一** 通过 Claude Code 内置插件系统，自动注册命令、Agent、工作流、MCP Server 和 Hooks。
+
+**方式二/三** 通过安装脚本，把组件写入 `~/.claude/` 并注册 MCP Server 到 settings.json。卸载：`node cli.js uninstall`
 
 ## 更新 / 升级
 
 ```bash
-# 源码方式：先更新仓库，再重新安装
-git pull
-npm install   # 仅当 package.json / lockfile 有变化时需要
-node cli.js install
+# 插件方式
+/plugin update gsd-lite
 
-# npx 方式：直接重新执行安装即可
+# 源码方式
+git pull && npm install && node cli.js install
+
+# npx 方式
 npx gsd-lite install
 ```
 
-- 安装器支持重复执行；通常**不需要先卸载**
-- 更新后建议重启 Claude Code，或至少重开会话，以确保加载最新 MCP server / hooks
+- 安装器支持重复执行，通常**不需要先卸载**
+- 更新后建议重启 Claude Code 或重开会话，以加载最新 MCP server / hooks
 
 ## 快速开始
 
@@ -108,6 +107,10 @@ npx gsd-lite install
 
 ```
 gsd-lite/
+├── .claude-plugin/         # Claude Code 插件元数据
+│   ├── plugin.json         # 插件清单
+│   └── marketplace.json    # 插件市场目录
+├── .mcp.json               # MCP Server 配置 (插件系统)
 ├── src/                    # MCP Server + 工具层 (~1100行)
 │   ├── server.js           # MCP Server (4 tools 注册)
 │   ├── schema.js           # State schema + lifecycle 校验
@@ -120,9 +123,11 @@ gsd-lite/
 ├── workflows/              # 5 个核心工作流 (~760行 Markdown)
 ├── references/             # 4 个参考文档 (~400行 Markdown)
 ├── hooks/                  # 上下文监控 (StatusLine + PostToolUse)
+│   ├── context-monitor.js  # Hook 实现
+│   └── hooks.json          # Hook 配置 (插件系统)
 ├── cli.js                  # 安装/卸载 CLI 入口
-├── tests/                  # 109 个单元测试 + E2E checklist
-├── install.js              # 安装脚本
+├── tests/                  # 456 个测试 (387 单元 + 69 E2E)
+├── install.js              # 安装脚本 (手动/npx 方式)
 └── uninstall.js            # 卸载脚本
 ```
 
