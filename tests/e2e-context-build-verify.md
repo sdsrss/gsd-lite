@@ -160,19 +160,25 @@
 ```json
 {
   "scope": "phase",
-  "scope_id": 1,
-  "findings": [
-    { "severity": "Minor", "description": "Unused import", "location": "src/utils.js:1" }
-  ],
-  "verdict": "accepted"
+  "scope_id": "phase-1",
+  "review_level": "L1-batch",
+  "spec_passed": true,
+  "quality_passed": true,
+  "critical_issues": [],
+  "important_issues": [],
+  "minor_issues": [],
+  "accepted_tasks": ["1.1", "1.2"],
+  "rework_tasks": [],
+  "evidence": ["ev:test:phase-1", "ev:lint:phase-1"]
 }
 ```
 
 **Verify:**
 - [ ] `scope` 是 "task" 或 "phase"
-- [ ] `verdict` 是 "accepted" 或 "rework_required"
-- [ ] `findings` 是数组，每个有 severity/description
-- [ ] severity 层级: Critical > Important > Minor
+- [ ] `review_level` 是 "L2" 或 "L1-batch"
+- [ ] `spec_passed` / `quality_passed` 是布尔值
+- [ ] `critical_issues` / `important_issues` / `minor_issues` 是数组
+- [ ] `accepted_tasks` / `rework_tasks` / `evidence` 是数组
 
 ---
 
@@ -181,17 +187,20 @@
 **Valid result:**
 ```json
 {
-  "decision_index": {
-    "d_react": { "summary": "Use React 18", "volatility": "low", "expires_at": "2026-06-01" }
-  },
-  "files_written": [".gsd/research/STACK.md", ".gsd/research/PITFALLS.md"]
+  "decision_ids": ["decision:react-18"],
+  "volatility": "low",
+  "expires_at": "2026-06-01T00:00:00Z",
+  "sources": [
+    { "id": "src1", "type": "Context7", "ref": "React docs" }
+  ]
 }
 ```
 
 **Verify:**
-- [ ] `decision_index` 是对象，每个值有 summary/volatility/expires_at
+- [ ] `decision_ids` 是字符串数组
 - [ ] `volatility` 是 "low" | "medium" | "high"
-- [ ] `files_written` 是字符串数组
+- [ ] `expires_at` 是非空字符串
+- [ ] `sources` 是对象数组，每个有 `id/type/ref`
 
 ---
 
@@ -200,13 +209,24 @@
 **Valid result:**
 ```json
 {
+  "task_id": "2.3",
+  "outcome": "fix_suggested",
   "root_cause": "Connection pool exhaustion under concurrent requests",
+  "evidence": ["ev:repro:error-xyz", "ev:trace:data-flow"],
+  "hypothesis_tested": [
+    { "hypothesis": "Connection leak causes pool exhaustion", "result": "confirmed", "evidence": "ev:trace:data-flow" }
+  ],
   "fix_direction": "Increase pool size and add connection timeout",
-  "confidence": "high"
+  "fix_attempts": 1,
+  "blockers": [],
+  "architecture_concern": false
 }
 ```
 
 **Verify:**
+- [ ] `task_id` 非空，`outcome` 是 "root_cause_found" | "fix_suggested" | "failed"
 - [ ] `root_cause` 非空字符串
+- [ ] `evidence` / `hypothesis_tested` / `blockers` 是数组
 - [ ] `fix_direction` 非空字符串
-- [ ] `confidence` 是 "high" | "medium" | "low"
+- [ ] `fix_attempts` 是非负整数
+- [ ] `architecture_concern` 是布尔值

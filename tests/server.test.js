@@ -18,6 +18,166 @@ describe('server tool handling', () => {
     assert.equal(result.error, true);
     assert.match(result.message, /Unknown tool/);
   });
+
+  it('can resume minimal orchestration through server tool', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'gsd-server-orchestrator-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'orchestrator-server-test',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: tempDir,
+      });
+
+      const result = await handleToolCall('gsd-orchestrator-resume', { basePath: tempDir });
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'dispatch_executor');
+      assert.equal(result.task_id, '1.1');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('can route executor failure to debugger through server tools', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'gsd-server-debugger-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'orchestrator-server-debugger',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: tempDir,
+      });
+      await handleToolCall('gsd-state-update', {
+        updates: {
+          current_task: '1.1',
+          phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running', retry_count: 2 }] }],
+        },
+        basePath: tempDir,
+      });
+
+      const result = await handleToolCall('gsd-orchestrator-handle-executor-result', {
+        basePath: tempDir,
+        result: {
+          task_id: '1.1',
+          outcome: 'failed',
+          summary: 'repeat failure',
+          files_changed: [],
+          decisions: [],
+          blockers: [],
+          contract_changed: false,
+          evidence: [],
+        },
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'dispatch_debugger');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('can surface research refresh pre-flight through resume server tool', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'gsd-server-research-refresh-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'orchestrator-server-research-refresh',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: tempDir,
+      });
+      await handleToolCall('gsd-state-update', {
+        updates: {
+          research: {
+            expires_at: '2000-01-01T00:00:00Z',
+            decision_index: {
+              'decision:stack': { summary: 'Use React 18', expires_at: '2000-01-01T00:00:00Z' },
+            },
+          },
+        },
+        basePath: tempDir,
+      });
+
+      const result = await handleToolCall('gsd-orchestrator-resume', { basePath: tempDir });
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'dispatch_researcher');
+      assert.equal(result.workflow_mode, 'research_refresh_needed');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('can surface direction drift through resume server tool', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'gsd-server-direction-drift-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'orchestrator-server-direction-drift',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: tempDir,
+      });
+      await handleToolCall('gsd-state-update', {
+        updates: {
+          workflow_mode: 'executing_task',
+          phases: [{ id: 1, phase_handoff: { direction_ok: false } }],
+        },
+        basePath: tempDir,
+      });
+
+      const result = await handleToolCall('gsd-orchestrator-resume', { basePath: tempDir });
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'awaiting_user');
+      assert.equal(result.workflow_mode, 'awaiting_user');
+      assert.deepEqual(result.drift_phase, { id: 1, name: 'P1' });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('can persist researcher output through server tool and continue orchestration', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'gsd-server-research-store-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'orchestrator-server-research-store',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'Task A', research_basis: ['decision:jwt-rotation'] }] }],
+        research: true,
+        basePath: tempDir,
+      });
+      await handleToolCall('gsd-state-update', {
+        updates: { workflow_mode: 'research_refresh_needed' },
+        basePath: tempDir,
+      });
+
+      const result = await handleToolCall('gsd-orchestrator-handle-researcher-result', {
+        basePath: tempDir,
+        result: {
+          decision_ids: ['decision:jwt-rotation'],
+          volatility: 'medium',
+          expires_at: '2026-03-16T10:30:00Z',
+          sources: [{ id: 'src1', type: 'Context7', ref: 'Next.js auth docs' }],
+        },
+        decision_index: {
+          'decision:jwt-rotation': {
+            summary: 'Use refresh token rotation',
+            source: 'Context7',
+            expires_at: '2026-03-16T10:30:00Z',
+          },
+        },
+        artifacts: {
+          'STACK.md': '# Stack\n- Next.js\n',
+          'ARCHITECTURE.md': '# Architecture\n- BFF\n',
+          'PITFALLS.md': '# Pitfalls\n- Token replay\n',
+          'SUMMARY.md': '# Summary\nvolatility: medium\nexpires_at: 2026-03-16T10:30:00Z\ndecisions:\n- decision:jwt-rotation\n',
+        },
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'dispatch_executor');
+      assert.deepEqual(result.decision_ids, ['decision:jwt-rotation']);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('MCP tool call chain', () => {
@@ -121,10 +281,24 @@ describe('MCP tool call chain', () => {
     assert.equal(result.success, true);
   });
 
+  it('mark phase review accepted before completion', async () => {
+    const result = await handleToolCall('gsd-state-update', {
+      updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+  });
+
   it('phaseComplete succeeds when all tasks accepted', async () => {
     const result = await handleToolCall('gsd-phase-complete', {
       phase_id: 1,
       basePath: tempDir,
+      verification: {
+        lint: { exit_code: 0 },
+        typecheck: { exit_code: 0 },
+        test: { exit_code: 0 },
+      },
+      direction_ok: true,
     });
     assert.equal(result.success, true);
   });

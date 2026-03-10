@@ -98,8 +98,15 @@ reviewing_phase ─┬──→ executing_task     (batch review passed → phas
 {
   "scope": "task",
   "scope_id": "1.1",
-  "findings": [],
-  "verdict": "accepted"
+  "review_level": "L2",
+  "spec_passed": true,
+  "quality_passed": true,
+  "critical_issues": [],
+  "important_issues": [],
+  "minor_issues": [],
+  "accepted_tasks": ["1.1"],
+  "rework_tasks": [],
+  "evidence": ["ev:test:task-1.1"]
 }
 ```
 
@@ -124,10 +131,17 @@ reviewing_phase ─┬──→ executing_task     (batch review passed → phas
 {
   "scope": "task",
   "scope_id": "1.1",
-  "findings": [
-    { "severity": "Critical", "description": "SQL injection vulnerability", "location": "src/auth.js:42" }
+  "review_level": "L2",
+  "spec_passed": true,
+  "quality_passed": false,
+  "critical_issues": [
+    { "task_id": "1.1", "reason": "SQL injection vulnerability", "invalidates_downstream": true }
   ],
-  "verdict": "rework_required"
+  "important_issues": [],
+  "minor_issues": [],
+  "accepted_tasks": [],
+  "rework_tasks": ["1.1"],
+  "evidence": ["ev:test:task-1.1"]
 }
 ```
 
@@ -153,11 +167,16 @@ reviewing_phase ─┬──→ executing_task     (batch review passed → phas
 ```json
 {
   "scope": "phase",
-  "scope_id": 1,
-  "findings": [
-    { "severity": "Minor", "description": "Could use better variable names", "location": "src/utils.js:10" }
-  ],
-  "verdict": "accepted"
+  "scope_id": "phase-1",
+  "review_level": "L1-batch",
+  "spec_passed": true,
+  "quality_passed": true,
+  "critical_issues": [],
+  "important_issues": [],
+  "minor_issues": ["Could use better variable names in src/utils.js:10"],
+  "accepted_tasks": ["1.1", "1.2", "1.3"],
+  "rework_tasks": [],
+  "evidence": ["ev:test:phase-1", "ev:lint:phase-1"]
 }
 ```
 
@@ -185,11 +204,16 @@ reviewing_phase ─┬──→ executing_task     (batch review passed → phas
 ```json
 {
   "scope": "phase",
-  "scope_id": 1,
-  "findings": [
-    { "severity": "Critical", "description": "API contract violation", "location": "src/api.js:15", "task_id": "1.1" }
+  "scope_id": "phase-1",
+  "review_level": "L1-batch",
+  "spec_passed": true,
+  "quality_passed": false,
+  "critical_issues": [
+    { "task_id": "1.1", "reason": "API contract violation", "invalidates_downstream": true }
   ],
-  "verdict": "rework_required",
+  "important_issues": [],
+  "minor_issues": [],
+  "accepted_tasks": [],
   "rework_tasks": ["1.1"]
 }
 ```
@@ -311,7 +335,7 @@ reviewing_phase ─┬──→ executing_task     (batch review passed → phas
 **Verify:**
 - [ ] `retry_count` = 3（达到 MAX_RETRY）
 - [ ] `gsd-debugger` 被派发（不是 executor）
-- [ ] Debugger 返回 `{ root_cause, fix_direction, confidence }`
+- [ ] Debugger 返回完整结构化结果：`task_id / outcome / root_cause / evidence / hypothesis_tested / fix_direction / fix_attempts / blockers / architecture_concern`
 - [ ] If viable → executor 重新派发（带 fix direction context）
 - [ ] If not viable → task lifecycle = `"failed"`
 - [ ] `workflow_mode` 保持 `"executing_task"`（其他 task 可能还能运行）

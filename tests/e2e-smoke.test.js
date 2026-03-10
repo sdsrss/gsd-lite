@@ -207,8 +207,23 @@ describe('E2E smoke: full project lifecycle', () => {
     });
     assert.equal(result.success, true);
 
+    result = await update({
+      updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+
     // phaseComplete transitions reviewing -> accepted
-    result = await phaseComplete({ phase_id: 1, basePath: tempDir });
+    result = await phaseComplete({
+      phase_id: 1,
+      basePath: tempDir,
+      verification: {
+        lint: { exit_code: 0 },
+        typecheck: { exit_code: 0 },
+        test: { exit_code: 0 },
+      },
+      direction_ok: true,
+    });
     assert.equal(result.success, true);
 
     const state = await read({ basePath: tempDir });
@@ -334,8 +349,23 @@ describe('E2E smoke: full project lifecycle', () => {
     });
     assert.equal(result.success, true);
 
+    result = await update({
+      updates: { phases: [{ id: 2, phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+
     // phaseComplete transitions reviewing -> accepted
-    result = await phaseComplete({ phase_id: 2, basePath: tempDir });
+    result = await phaseComplete({
+      phase_id: 2,
+      basePath: tempDir,
+      verification: {
+        lint: { exit_code: 0 },
+        typecheck: { exit_code: 0 },
+        test: { exit_code: 0 },
+      },
+      direction_ok: true,
+    });
     assert.equal(result.success, true);
 
     // Mark project as completed

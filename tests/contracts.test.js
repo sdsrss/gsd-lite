@@ -7,6 +7,7 @@ import {
   validateExecutorResult,
   validateReviewerResult,
   validateResearcherResult,
+  validateDebuggerResult,
 } from '../src/schema.js';
 
 describe('executor result contract', () => {
@@ -40,6 +41,11 @@ describe('executor result contract', () => {
     const r = { ...validResult, evidence: 'not-array' };
     assert.equal(validateExecutorResult(r).valid, false);
   });
+
+  it('requires checkpoint_commit for checkpointed outcome', () => {
+    const r = { ...validResult, checkpoint_commit: null };
+    assert.equal(validateExecutorResult(r).valid, false);
+  });
 });
 
 describe('reviewer result contract', () => {
@@ -65,6 +71,11 @@ describe('reviewer result contract', () => {
     const r = { ...validResult, scope: 'file' };
     assert.equal(validateReviewerResult(r).valid, false);
   });
+
+  it('requires review stage booleans and evidence', () => {
+    const r = { ...validResult, spec_passed: 'yes', evidence: 'not-array' };
+    assert.equal(validateReviewerResult(r).valid, false);
+  });
 });
 
 describe('researcher result contract', () => {
@@ -82,5 +93,40 @@ describe('researcher result contract', () => {
   it('rejects invalid volatility', () => {
     const r = { ...validResult, volatility: 'extreme' };
     assert.equal(validateResearcherResult(r).valid, false);
+  });
+
+  it('requires structured sources', () => {
+    const r = { ...validResult, sources: [{ id: 'src1', type: 'Context7' }] };
+    assert.equal(validateResearcherResult(r).valid, false);
+  });
+});
+
+describe('debugger result contract', () => {
+  const validResult = {
+    task_id: '2.3',
+    outcome: 'fix_suggested',
+    root_cause: 'Connection pool exhaustion under concurrent requests',
+    evidence: ['ev:repro:error-xyz', 'ev:trace:data-flow'],
+    hypothesis_tested: [
+      { hypothesis: 'Connection leak causes pool exhaustion', result: 'confirmed', evidence: 'ev:trace:data-flow' },
+    ],
+    fix_direction: 'Reuse pooled client and add timeout safeguards',
+    fix_attempts: 1,
+    blockers: [],
+    architecture_concern: false,
+  };
+
+  it('accepts valid debugger result', () => {
+    assert.ok(validateDebuggerResult(validResult).valid);
+  });
+
+  it('rejects invalid outcome', () => {
+    const r = { ...validResult, outcome: 'unknown' };
+    assert.equal(validateDebuggerResult(r).valid, false);
+  });
+
+  it('requires failed outcome after three fix attempts', () => {
+    const r = { ...validResult, fix_attempts: 3, outcome: 'fix_suggested' };
+    assert.equal(validateDebuggerResult(r).valid, false);
   });
 });

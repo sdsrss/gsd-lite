@@ -40,8 +40,12 @@
 - [ ] Researcher result is valid JSON conforming to researcher result contract:
   ```json
   {
-    "decision_index": { "<id>": { "summary": "...", "volatility": "low|medium|high", "expires_at": "..." } },
-    "files_written": ["..."]
+    "decision_ids": ["decision:jwt-rotation"],
+    "volatility": "medium",
+    "expires_at": "2026-03-16T10:30:00Z",
+    "sources": [
+      { "id": "src1", "type": "Context7", "ref": "Next.js auth docs" }
+    ]
   }
   ```
 
@@ -189,13 +193,20 @@
   ```json
   {
     "scope": "phase",
-    "scope_id": 1,
-    "findings": [...],
-    "verdict": "accepted|rework_required"
+    "scope_id": "phase-1",
+    "review_level": "L1-batch",
+    "spec_passed": true,
+    "quality_passed": true,
+    "critical_issues": [],
+    "important_issues": [],
+    "minor_issues": [],
+    "accepted_tasks": ["1.1", "1.2"],
+    "rework_tasks": [],
+    "evidence": ["ev:test:phase-1"]
   }
   ```
-- [ ] No Critical findings → all tasks updated to `accepted`
-- [ ] Critical findings → tasks marked for rework + invalidation propagated
+- [ ] `critical_issues = []` → all tasks updated to `accepted`
+- [ ] `critical_issues` 非空 → tasks marked for rework + invalidation propagated
 
 ### L2 Review (Immediate)
 - [ ] Tasks with `level: "L2"` → immediate review after checkpoint
@@ -340,9 +351,17 @@
 - [ ] Debugger returns structured result:
   ```json
   {
+    "task_id": "1.1",
+    "outcome": "fix_suggested",
     "root_cause": "...",
+    "evidence": ["ev:repro:task-1.1"],
+    "hypothesis_tested": [
+      { "hypothesis": "...", "result": "confirmed", "evidence": "ev:trace:task-1.1" }
+    ],
     "fix_direction": "...",
-    "confidence": "high|medium|low"
+    "fix_attempts": 1,
+    "blockers": [],
+    "architecture_concern": false
   }
   ```
 

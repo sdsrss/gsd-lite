@@ -34,6 +34,8 @@ export const PHASE_LIFECYCLE = {
   failed:     [],
 };
 
+const PHASE_REVIEW_STATUS = ['pending', 'reviewing', 'accepted', 'rework_required'];
+
 export const CANONICAL_FIELDS = [
   'project',
   'workflow_mode',
@@ -52,6 +54,84 @@ export const CANONICAL_FIELDS = [
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateResearchSourcesArray(sources, errors, path = 'sources') {
+  if (!Array.isArray(sources)) {
+    errors.push(`${path} must be array`);
+    return;
+  }
+
+  for (const source of sources) {
+    if (!isPlainObject(source)) {
+      errors.push(`${path} entries must be objects`);
+      continue;
+    }
+    if (typeof source.id !== 'string' || source.id.length === 0) errors.push(`${path}[].id must be non-empty string`);
+    if (typeof source.type !== 'string' || source.type.length === 0) errors.push(`${path}[].type must be non-empty string`);
+    if (typeof source.ref !== 'string' || source.ref.length === 0) errors.push(`${path}[].ref must be non-empty string`);
+  }
+}
+
+export function validateResearchDecisionIndex(decisionIndex, requiredIds = []) {
+  const errors = [];
+  if (!isPlainObject(decisionIndex)) {
+    errors.push('decision_index must be an object');
+    return { valid: false, errors };
+  }
+
+  for (const id of requiredIds) {
+    if (!isPlainObject(decisionIndex[id])) {
+      errors.push(`decision_index.${id} must be an object`);
+    }
+  }
+
+  for (const [id, entry] of Object.entries(decisionIndex)) {
+    if (!isPlainObject(entry)) {
+      errors.push(`decision_index.${id} must be an object`);
+      continue;
+    }
+    if (typeof entry.summary !== 'string' || entry.summary.length === 0) {
+      errors.push(`decision_index.${id}.summary must be a non-empty string`);
+    }
+    if ('source' in entry && (typeof entry.source !== 'string' || entry.source.length === 0)) {
+      errors.push(`decision_index.${id}.source must be a non-empty string`);
+    }
+    if ('expires_at' in entry && (typeof entry.expires_at !== 'string' || entry.expires_at.length === 0)) {
+      errors.push(`decision_index.${id}.expires_at must be a non-empty string`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+export function validateResearchArtifacts(artifacts, { decisionIds = [], volatility, expiresAt } = {}) {
+  const errors = [];
+  if (!isPlainObject(artifacts)) {
+    return { valid: false, errors: ['artifacts must be an object'] };
+  }
+
+  const requiredFiles = ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md'];
+  for (const fileName of requiredFiles) {
+    if (typeof artifacts[fileName] !== 'string' || artifacts[fileName].trim().length === 0) {
+      errors.push(`artifacts.${fileName} must be a non-empty string`);
+    }
+  }
+
+  const summary = typeof artifacts['SUMMARY.md'] === 'string' ? artifacts['SUMMARY.md'] : '';
+  if (volatility && !summary.includes(volatility)) {
+    errors.push('artifacts.SUMMARY.md must mention volatility');
+  }
+  if (expiresAt && !summary.includes(expiresAt)) {
+    errors.push('artifacts.SUMMARY.md must mention expires_at');
+  }
+  for (const id of decisionIds) {
+    if (!summary.includes(id)) {
+      errors.push(`artifacts.SUMMARY.md must mention decision id ${id}`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
 }
 
 export function validateTransition(entity, from, to) {
@@ -107,6 +187,33 @@ export function validateState(state) {
   if (isPlainObject(state.research) && 'decision_index' in state.research && !isPlainObject(state.research.decision_index)) {
     errors.push('research.decision_index must be an object');
   }
+  if (isPlainObject(state.research)) {
+    if ('volatility' in state.research && !['low', 'medium', 'high'].includes(state.research.volatility)) {
+      errors.push('research.volatility must be low|medium|high');
+    }
+    if ('expires_at' in state.research
+      && (typeof state.research.expires_at !== 'string' || state.research.expires_at.length === 0)) {
+      errors.push('research.expires_at must be a non-empty string');
+    }
+    if ('files' in state.research && !Array.isArray(state.research.files)) {
+      errors.push('research.files must be an array');
+    }
+    if (Array.isArray(state.research.files)) {
+      for (const fileName of state.research.files) {
+        if (typeof fileName !== 'string' || fileName.length === 0) {
+          errors.push('research.files entries must be non-empty strings');
+          break;
+        }
+      }
+    }
+    if ('sources' in state.research) {
+      validateResearchSourcesArray(state.research.sources, errors, 'research.sources');
+    }
+    if ('decision_index' in state.research) {
+      const decisionIndexValidation = validateResearchDecisionIndex(state.research.decision_index);
+      errors.push(...decisionIndexValidation.errors.map((error) => `research.${error}`));
+    }
+  }
   if (!isPlainObject(state.evidence)) {
     errors.push('evidence must be an object');
   }
@@ -130,8 +237,13 @@ export function validateState(state) {
       }
       if (!isPlainObject(phase.phase_review)) {
         errors.push(`Phase ${phase.id}: phase_review must be an object`);
-      } else if (typeof phase.phase_review.retry_count !== 'number') {
-        errors.push(`Phase ${phase.id}: phase_review.retry_count must be a number`);
+      } else {
+        if (!PHASE_REVIEW_STATUS.includes(phase.phase_review.status)) {
+          errors.push(`Phase ${phase.id}: invalid phase_review.status ${phase.phase_review.status}`);
+        }
+        if (typeof phase.phase_review.retry_count !== 'number') {
+          errors.push(`Phase ${phase.id}: phase_review.retry_count must be a number`);
+        }
       }
       if (typeof phase.tasks !== 'number') {
         errors.push(`Phase ${phase.id}: tasks must be a number`);
@@ -154,6 +266,9 @@ export function validateState(state) {
         }
         if (typeof phase.phase_handoff.critical_issues_open !== 'number') {
           errors.push(`Phase ${phase.id}: phase_handoff.critical_issues_open must be a number`);
+        }
+        if ('direction_ok' in phase.phase_handoff && typeof phase.phase_handoff.direction_ok !== 'boolean') {
+          errors.push(`Phase ${phase.id}: phase_handoff.direction_ok must be boolean when present`);
         }
       }
       for (const task of phase.todo) {
@@ -207,11 +322,18 @@ export function validateExecutorResult(r) {
   const errors = [];
   if (!r.task_id) errors.push('missing task_id');
   if (!['checkpointed', 'blocked', 'failed'].includes(r.outcome)) errors.push('invalid outcome');
+  if (typeof r.summary !== 'string' || r.summary.length === 0) errors.push('summary must be non-empty string');
+  if ('checkpoint_commit' in r && r.checkpoint_commit !== null && typeof r.checkpoint_commit !== 'string') {
+    errors.push('checkpoint_commit must be string or null');
+  }
   if (!Array.isArray(r.files_changed)) errors.push('files_changed must be array');
   if (!Array.isArray(r.decisions)) errors.push('decisions must be array');
   if (!Array.isArray(r.blockers)) errors.push('blockers must be array');
   if (typeof r.contract_changed !== 'boolean') errors.push('contract_changed must be boolean');
   if (!Array.isArray(r.evidence)) errors.push('evidence must be array');
+  if (r.outcome === 'checkpointed' && typeof r.checkpoint_commit !== 'string') {
+    errors.push('checkpointed outcome requires checkpoint_commit');
+  }
   return { valid: errors.length === 0, errors };
 }
 
@@ -221,10 +343,34 @@ export function validateExecutorResult(r) {
 export function validateReviewerResult(r) {
   const errors = [];
   if (!['task', 'phase'].includes(r.scope)) errors.push('invalid scope');
-  if (!r.scope_id) errors.push('missing scope_id');
+  if (!(typeof r.scope_id === 'string' || typeof r.scope_id === 'number') || r.scope_id === '') {
+    errors.push('missing scope_id');
+  }
+  if (!['L2', 'L1-batch'].includes(r.review_level)) errors.push('invalid review_level');
+  if (typeof r.spec_passed !== 'boolean') errors.push('spec_passed must be boolean');
+  if (typeof r.quality_passed !== 'boolean') errors.push('quality_passed must be boolean');
   if (!Array.isArray(r.critical_issues)) errors.push('critical_issues must be array');
+  if (!Array.isArray(r.important_issues)) errors.push('important_issues must be array');
+  if (!Array.isArray(r.minor_issues)) errors.push('minor_issues must be array');
   if (!Array.isArray(r.accepted_tasks)) errors.push('accepted_tasks must be array');
   if (!Array.isArray(r.rework_tasks)) errors.push('rework_tasks must be array');
+  if (!Array.isArray(r.evidence)) errors.push('evidence must be array');
+
+  for (const issue of r.critical_issues || []) {
+    if (!isPlainObject(issue)) {
+      errors.push('critical_issues entries must be objects');
+      continue;
+    }
+    if (typeof issue.reason !== 'string' || issue.reason.length === 0) {
+      errors.push('critical_issues[].reason must be non-empty string');
+    }
+    if ('task_id' in issue && typeof issue.task_id !== 'string') {
+      errors.push('critical_issues[].task_id must be string');
+    }
+    if ('invalidates_downstream' in issue && typeof issue.invalidates_downstream !== 'boolean') {
+      errors.push('critical_issues[].invalidates_downstream must be boolean');
+    }
+  }
   return { valid: errors.length === 0, errors };
 }
 
@@ -235,8 +381,44 @@ export function validateResearcherResult(r) {
   const errors = [];
   if (!Array.isArray(r.decision_ids)) errors.push('decision_ids must be array');
   if (!['low', 'medium', 'high'].includes(r.volatility)) errors.push('invalid volatility');
-  if (!r.expires_at) errors.push('missing expires_at');
-  if (!Array.isArray(r.sources)) errors.push('sources must be array');
+  if (typeof r.expires_at !== 'string' || r.expires_at.length === 0) errors.push('missing expires_at');
+  validateResearchSourcesArray(r.sources, errors, 'sources');
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Validate a debugger result against the agent contract.
+ */
+export function validateDebuggerResult(r) {
+  const errors = [];
+  if (!r.task_id) errors.push('missing task_id');
+  if (!['root_cause_found', 'fix_suggested', 'failed'].includes(r.outcome)) errors.push('invalid outcome');
+  if (typeof r.root_cause !== 'string' || r.root_cause.length === 0) errors.push('root_cause must be non-empty string');
+  if (!Array.isArray(r.evidence)) errors.push('evidence must be array');
+  if (!Array.isArray(r.hypothesis_tested)) errors.push('hypothesis_tested must be array');
+  if (typeof r.fix_direction !== 'string' || r.fix_direction.length === 0) errors.push('fix_direction must be non-empty string');
+  if (!Number.isInteger(r.fix_attempts) || r.fix_attempts < 0) errors.push('fix_attempts must be non-negative integer');
+  if (!Array.isArray(r.blockers)) errors.push('blockers must be array');
+  if (typeof r.architecture_concern !== 'boolean') errors.push('architecture_concern must be boolean');
+  if (r.fix_attempts >= 3 && r.outcome !== 'failed') errors.push('fix_attempts >= 3 requires failed outcome');
+
+  for (const hypothesis of r.hypothesis_tested || []) {
+    if (!isPlainObject(hypothesis)) {
+      errors.push('hypothesis_tested entries must be objects');
+      continue;
+    }
+    if (typeof hypothesis.hypothesis !== 'string' || hypothesis.hypothesis.length === 0) {
+      errors.push('hypothesis_tested[].hypothesis must be non-empty string');
+    }
+    if (!['confirmed', 'rejected'].includes(hypothesis.result)) {
+      errors.push('hypothesis_tested[].result must be confirmed or rejected');
+    }
+    if (typeof hypothesis.evidence !== 'string' || hypothesis.evidence.length === 0) {
+      errors.push('hypothesis_tested[].evidence must be non-empty string');
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
 

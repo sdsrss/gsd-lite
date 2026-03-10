@@ -1,14 +1,21 @@
 // State CRUD tools
 
 import { join, dirname } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead } from '../utils.js';
 import {
   CANONICAL_FIELDS,
   TASK_LIFECYCLE,
+  validateResearchArtifacts,
+  validateResearchDecisionIndex,
+  validateResearcherResult,
   validateState,
   validateTransition,
   createInitialState,
 } from '../schema.js';
+import { runAll } from './verify.js';
+
+const RESEARCH_FILES = ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md'];
 
 // C-1: Serialize all state mutations to prevent TOCTOU races
 let _mutationQueue = Promise.resolve();
@@ -16,6 +23,25 @@ function withStateLock(fn) {
   const p = _mutationQueue.then(fn);
   _mutationQueue = p.catch(() => {});
   return p;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function inferWorkflowModeAfterResearch(state) {
+  if (state.current_review?.scope === 'phase') return 'reviewing_phase';
+  if (state.current_review?.scope === 'task') return 'reviewing_task';
+  return 'executing_task';
+}
+
+function normalizeResearchArtifacts(artifacts) {
+  const normalized = {};
+  for (const fileName of RESEARCH_FILES) {
+    const content = artifacts[fileName];
+    normalized[fileName] = content.endsWith('\n') ? content : `${content}\n`;
+  }
+  return normalized;
 }
 
 /**
@@ -38,7 +64,6 @@ export async function init({ project, phases, research, basePath = process.cwd()
 
   const state = createInitialState({ project, phases });
   state.git_head = getGitHead(basePath);
-  await writeJson(join(gsdDir, 'state.json'), state);
 
   // Create plan.md placeholder (atomic write)
   await writeAtomic(
@@ -53,6 +78,14 @@ export async function init({ project, phases, research, basePath = process.cwd()
       `# Phase ${phase.id}: ${phase.name}\n\nTasks and details go here.\n`,
     );
   }
+
+  const trackedFiles = [
+    join(gsdDir, 'plan.md'),
+    ...state.phases.map((phase) => join(phasesDir, `phase-${phase.id}.md`)),
+  ];
+  const mtimes = await Promise.all(trackedFiles.map(async (filePath) => (await stat(filePath)).mtimeMs));
+  state.context.last_session = new Date(Math.ceil(Math.max(...mtimes))).toISOString();
+  await writeJson(join(gsdDir, 'state.json'), state);
 
   return { success: true };
 }
@@ -148,6 +181,12 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
         const newPhase = updates.phases.find(p => p.id === oldPhase.id);
         if (!newPhase) return oldPhase;
         const mergedPhase = { ...oldPhase, ...newPhase };
+        if (isPlainObject(oldPhase.phase_review) || isPlainObject(newPhase.phase_review)) {
+          mergedPhase.phase_review = { ...oldPhase.phase_review, ...newPhase.phase_review };
+        }
+        if (isPlainObject(oldPhase.phase_handoff) || isPlainObject(newPhase.phase_handoff)) {
+          mergedPhase.phase_handoff = { ...oldPhase.phase_handoff, ...newPhase.phase_handoff };
+        }
         // Deep merge tasks within phase by ID
         if (Array.isArray(newPhase.todo)) {
           mergedPhase.todo = oldPhase.todo.map(oldTask => {
@@ -188,9 +227,42 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
 /**
  * Complete a phase: checks handoff gate, transitions lifecycle, increments current_phase.
  */
-export async function phaseComplete({ phase_id, basePath = process.cwd() } = {}) {
+function verificationPassed(verification) {
+  if (!verification || typeof verification !== 'object') return false;
+  if ('passed' in verification) return verification.passed === true;
+  return ['lint', 'typecheck', 'test'].every((key) => (
+    verification[key]
+    && typeof verification[key].exit_code === 'number'
+    && verification[key].exit_code === 0
+  ));
+}
+
+function verificationSummary(verification) {
+  if (!verification || typeof verification !== 'object') return 'no verification details';
+  return ['lint', 'typecheck', 'test']
+    .filter((key) => verification[key])
+    .map((key) => `${key}:${verification[key].exit_code}`)
+    .join(', ');
+}
+
+export async function phaseComplete({
+  phase_id,
+  basePath = process.cwd(),
+  verification,
+  run_verify = false,
+  direction_ok,
+} = {}) {
   if (typeof phase_id !== 'number') {
     return { error: true, message: 'phase_id must be a number' };
+  }
+  if (verification != null && (typeof verification !== 'object' || Array.isArray(verification))) {
+    return { error: true, message: 'verification must be an object when provided' };
+  }
+  if (typeof run_verify !== 'boolean') {
+    return { error: true, message: 'run_verify must be a boolean' };
+  }
+  if (direction_ok !== undefined && typeof direction_ok !== 'boolean') {
+    return { error: true, message: 'direction_ok must be a boolean when provided' };
   }
   const statePath = getStatePath(basePath);
   if (!statePath) {
@@ -242,14 +314,62 @@ export async function phaseComplete({ phase_id, basePath = process.cwd() } = {})
       };
     }
 
+    const reviewPassed = phase.phase_review?.status === 'accepted'
+      || phase.phase_handoff.required_reviews_passed === true;
+    if (!reviewPassed) {
+      return {
+        error: true,
+        message: 'Handoff gate not met: required reviews not passed',
+      };
+    }
+
+    const verificationResult = verification || (run_verify ? await runAll(basePath) : null);
+    const testsPassed = verificationResult
+      ? verificationPassed(verificationResult)
+      : phase.phase_handoff.tests_passed === true;
+    if (!testsPassed) {
+      return {
+        error: true,
+        message: `Handoff gate not met: verification checks failed — ${verificationSummary(verificationResult)}`,
+      };
+    }
+
+    const directionOk = direction_ok ?? phase.phase_handoff.direction_ok;
+    if (directionOk === false) {
+      state.workflow_mode = 'awaiting_user';
+      state.current_task = null;
+      state.current_review = {
+        scope: 'phase',
+        scope_id: phase.id,
+        stage: 'direction_drift',
+        summary: `Direction drift detected for phase ${phase.id}`,
+      };
+      phase.phase_handoff.direction_ok = false;
+      await writeJson(statePath, state);
+      return {
+        error: true,
+        message: 'Handoff gate not met: direction drift detected, awaiting user decision',
+        workflow_mode: 'awaiting_user',
+        phase_id: phase.id,
+      };
+    }
+
     // Apply transition
     phase.lifecycle = 'accepted';
-    phase.phase_handoff.required_reviews_passed = true;
-    phase.phase_handoff.tests_passed = true;
+    phase.phase_handoff.required_reviews_passed = reviewPassed;
+    phase.phase_handoff.tests_passed = testsPassed;
+    if (direction_ok !== undefined) {
+      phase.phase_handoff.direction_ok = direction_ok;
+    }
 
     // Increment current_phase if this was the active phase
     if (state.current_phase === phase_id && phase_id < state.total_phases) {
       state.current_phase = phase_id + 1;
+      // Activate the next phase
+      const nextPhase = state.phases.find((p) => p.id === state.current_phase);
+      if (nextPhase && nextPhase.lifecycle === 'pending') {
+        nextPhase.lifecycle = 'active';
+      }
     }
 
     // Update git_head to current commit
@@ -511,7 +631,22 @@ export function buildExecutorContext(state, taskId, phaseId) {
     review_required: task.review_required !== false,
   };
 
-  return { task_spec, research_decisions, predecessor_outputs, project_conventions, workflows, constraints };
+  const debugger_guidance = task.debug_context ? {
+    root_cause: task.debug_context.root_cause,
+    fix_direction: task.debug_context.fix_direction,
+    fix_attempts: task.debug_context.fix_attempts,
+    evidence: task.debug_context.evidence || [],
+  } : null;
+
+  return {
+    task_spec,
+    research_decisions,
+    predecessor_outputs,
+    project_conventions,
+    workflows,
+    constraints,
+    debugger_guidance,
+  };
 }
 
 const SENSITIVE_KEYWORDS = /\b(auth|payment|security|public.?api|login|token|credential|session|oauth)\b/i;
@@ -653,4 +788,85 @@ export function applyResearchRefresh(state, newResearch) {
   }
 
   return { warnings };
+}
+
+export async function storeResearch({ result, artifacts, decision_index, basePath = process.cwd() } = {}) {
+  const resultValidation = validateResearcherResult(result || {});
+  if (!resultValidation.valid) {
+    return { error: true, message: `Invalid researcher result: ${resultValidation.errors.join('; ')}` };
+  }
+
+  const artifactsValidation = validateResearchArtifacts(artifacts, {
+    decisionIds: result.decision_ids,
+    volatility: result.volatility,
+    expiresAt: result.expires_at,
+  });
+  if (!artifactsValidation.valid) {
+    return { error: true, message: `Invalid research artifacts: ${artifactsValidation.errors.join('; ')}` };
+  }
+
+  const decisionIndexValidation = validateResearchDecisionIndex(decision_index, result.decision_ids);
+  if (!decisionIndexValidation.valid) {
+    return { error: true, message: `Invalid research decision_index: ${decisionIndexValidation.errors.join('; ')}` };
+  }
+
+  const statePath = getStatePath(basePath);
+  if (!statePath) {
+    return { error: true, message: 'No .gsd directory found' };
+  }
+
+  return withStateLock(async () => {
+    const current = await readJson(statePath);
+    if (!current.ok) {
+      return { error: true, message: current.error };
+    }
+
+    const state = current.data;
+    const gsdDir = dirname(statePath);
+    const researchDir = join(gsdDir, 'research');
+    await ensureDir(researchDir);
+
+    const normalizedArtifacts = normalizeResearchArtifacts(artifacts);
+    for (const fileName of RESEARCH_FILES) {
+      await writeAtomic(join(researchDir, fileName), normalizedArtifacts[fileName]);
+    }
+
+    const nextResearch = {
+      volatility: result.volatility,
+      expires_at: result.expires_at,
+      sources: result.sources,
+      decision_index,
+      files: RESEARCH_FILES,
+      updated_at: new Date().toISOString(),
+    };
+
+    const refreshResult = state.research
+      ? applyResearchRefresh(state, nextResearch)
+      : { warnings: [] };
+
+    state.research = {
+      ...(state.research || {}),
+      ...nextResearch,
+      decision_index: state.research?.decision_index || decision_index,
+    };
+
+    if (state.workflow_mode === 'research_refresh_needed') {
+      state.workflow_mode = inferWorkflowModeAfterResearch(state);
+    }
+
+    const validation = validateState(state);
+    if (!validation.valid) {
+      return { error: true, message: `State validation failed: ${validation.errors.join('; ')}` };
+    }
+
+    await writeJson(statePath, state);
+    return {
+      success: true,
+      workflow_mode: state.workflow_mode,
+      stored_files: RESEARCH_FILES,
+      decision_ids: result.decision_ids,
+      warnings: refreshResult.warnings,
+      research: state.research,
+    };
+  });
 }

@@ -3,6 +3,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { pathToFileURL } from 'node:url';
 import { init, read, update, phaseComplete } from './tools/state.js';
+import {
+  handleDebuggerResult,
+  handleExecutorResult,
+  handleResearcherResult,
+  handleReviewerResult,
+  resumeWorkflow,
+} from './tools/orchestrator.js';
 
 const server = new Server(
   { name: 'gsd-lite', version: '0.1.0' },
@@ -68,8 +75,74 @@ const TOOLS = [
       type: 'object',
       properties: {
         phase_id: { type: 'number', description: 'Phase number to complete' },
+        verification: {
+          type: 'object',
+          description: 'Optional precomputed verification result object with lint/typecheck/test exit codes',
+        },
+        run_verify: {
+          type: 'boolean',
+          description: 'When true, run lint/typecheck/test during handoff evaluation',
+        },
+        direction_ok: {
+          type: 'boolean',
+          description: 'Optional direction drift check result; false moves workflow into awaiting_user',
+        },
       },
       required: ['phase_id'],
+    },
+  },
+  {
+    name: 'gsd-orchestrator-resume',
+    description: 'Resume the minimal orchestration loop from workflow_mode/current_phase state',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'gsd-orchestrator-handle-executor-result',
+    description: 'Persist an executor result and determine the next orchestration action',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        result: { type: 'object', description: 'Executor result payload' },
+      },
+      required: ['result'],
+    },
+  },
+  {
+    name: 'gsd-orchestrator-handle-debugger-result',
+    description: 'Persist a debugger result and determine the next orchestration action',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        result: { type: 'object', description: 'Debugger result payload' },
+      },
+      required: ['result'],
+    },
+  },
+  {
+    name: 'gsd-orchestrator-handle-researcher-result',
+    description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        result: { type: 'object', description: 'Researcher result payload' },
+        decision_index: { type: 'object', description: 'Decision index keyed by decision id' },
+        artifacts: { type: 'object', description: 'Markdown artifact contents keyed by file name' },
+      },
+      required: ['result', 'decision_index', 'artifacts'],
+    },
+  },
+  {
+    name: 'gsd-orchestrator-handle-reviewer-result',
+    description: 'Persist a reviewer result, update task lifecycles, and determine next orchestration action',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        result: { type: 'object', description: 'Reviewer result payload' },
+      },
+      required: ['result'],
     },
   },
 ];
@@ -92,6 +165,21 @@ async function dispatchToolCall(name, args) {
       break;
     case 'gsd-phase-complete':
       result = await phaseComplete(args);
+      break;
+    case 'gsd-orchestrator-resume':
+      result = await resumeWorkflow(args || {});
+      break;
+    case 'gsd-orchestrator-handle-executor-result':
+      result = await handleExecutorResult(args || {});
+      break;
+    case 'gsd-orchestrator-handle-debugger-result':
+      result = await handleDebuggerResult(args || {});
+      break;
+    case 'gsd-orchestrator-handle-researcher-result':
+      result = await handleResearcherResult(args || {});
+      break;
+    case 'gsd-orchestrator-handle-reviewer-result':
+      result = await handleReviewerResult(args || {});
       break;
     default:
       result = { error: true, message: `Unknown tool: ${name}` };
