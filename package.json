@@ -1,0 +1,17 @@
+{
+  "name": "gsd-lite",
+  "version": "0.1.0",
+  "description": "AI orchestration tool for Claude Code — GSD management shell + Superpowers quality core",
+  "type": "module",
+  "bin": {
+    "gsd-lite": "./install.js"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
