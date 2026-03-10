@@ -37,13 +37,29 @@ export function main() {
     log('  ✓ Removed hooks/context-monitor.js');
   }
 
-  // Deregister MCP server and hooks [M-10]
+  // Clean up plugin system directories (from /plugin install)
+  removeDir(join(CLAUDE_DIR, 'plugins', 'marketplaces', 'gsd-lite'), 'plugins/marketplaces/gsd-lite/');
+  removeDir(join(CLAUDE_DIR, 'plugins', 'cache', 'gsd-lite'), 'plugins/cache/gsd-lite/');
+
+  // Deregister MCP server, hooks, and plugin entries from settings.json
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
   try {
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     let changed = false;
     if (settings.mcpServers && settings.mcpServers['gsd-lite']) {
       delete settings.mcpServers['gsd-lite'];
+      changed = true;
+    }
+    // Remove plugin system entries
+    if (settings.enabledPlugins && 'gsd-lite@gsd-lite' in settings.enabledPlugins) {
+      delete settings.enabledPlugins['gsd-lite@gsd-lite'];
+      changed = true;
+    }
+    if (settings.extraKnownMarketplaces && settings.extraKnownMarketplaces['gsd-lite']) {
+      delete settings.extraKnownMarketplaces['gsd-lite'];
+      if (Object.keys(settings.extraKnownMarketplaces).length === 0) {
+        delete settings.extraKnownMarketplaces;
+      }
       changed = true;
     }
     // Remove top-level statusLine if GSD's
@@ -73,7 +89,7 @@ export function main() {
     }
     if (changed) {
       writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-      log('  ✓ MCP server + hooks deregistered from settings.json');
+      log('  ✓ MCP server + hooks + plugin entries deregistered from settings.json');
     }
   } catch {}
 
