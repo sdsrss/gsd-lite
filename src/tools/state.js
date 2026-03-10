@@ -441,3 +441,67 @@ export function matchDecisionForBlocker(decisions, blockedReason) {
 
   return bestMatch;
 }
+
+/**
+ * Apply research refresh: compare new research decisions against existing state.
+ * 4 rules:
+ *   1. Same ID + same summary → update metadata (e.g. expires_at), keep task lifecycle
+ *   2. Same ID + changed summary → invalidate dependent tasks (needs_revalidation)
+ *   3. Old ID missing from new → invalidate dependent tasks + warning
+ *   4. Brand new ID → add to index, no impact on existing tasks
+ * Returns { warnings: string[] }.
+ */
+export function applyResearchRefresh(state, newResearch) {
+  const warnings = [];
+  const oldIndex = state.research?.decision_index || {};
+  const newIndex = newResearch?.decision_index || {};
+
+  // Collect IDs of decisions that changed or were removed
+  const invalidatedIds = new Set();
+
+  // Check existing decisions against new
+  for (const [id, oldDecision] of Object.entries(oldIndex)) {
+    if (id in newIndex) {
+      const newDecision = newIndex[id];
+      if (oldDecision.summary === newDecision.summary) {
+        // Rule 1: same conclusion — update metadata in place
+        Object.assign(oldIndex[id], newDecision);
+      } else {
+        // Rule 2: changed conclusion — replace and invalidate
+        oldIndex[id] = newDecision;
+        invalidatedIds.add(id);
+      }
+    } else {
+      // Rule 3: old ID missing from new research
+      invalidatedIds.add(id);
+      warnings.push(`Decision "${id}" removed in new research — dependent tasks invalidated`);
+    }
+  }
+
+  // Rule 4: brand new IDs — just add them
+  for (const [id, newDecision] of Object.entries(newIndex)) {
+    if (!(id in oldIndex)) {
+      oldIndex[id] = newDecision;
+    }
+  }
+
+  // Ensure decision_index is set on state
+  if (!state.research) state.research = {};
+  state.research.decision_index = oldIndex;
+
+  // Invalidate tasks that depend on changed/removed decisions
+  if (invalidatedIds.size > 0) {
+    for (const phase of (state.phases || [])) {
+      for (const task of (phase.todo || [])) {
+        const basis = task.research_basis || [];
+        const affected = basis.some(id => invalidatedIds.has(id));
+        if (affected && task.lifecycle !== 'pending') {
+          task.lifecycle = 'needs_revalidation';
+          if (task.evidence_refs) task.evidence_refs = [];
+        }
+      }
+    }
+  }
+
+  return { warnings };
+}
