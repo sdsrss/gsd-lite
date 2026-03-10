@@ -16,7 +16,6 @@ import {
 } from '../src/tools/orchestrator.js';
 import {
   selectRunnableTask,
-  reclassifyReviewLevel,
 } from '../src/tools/state.js';
 
 // ── Test Case 1: executing_task → reviewing_task (L2 checkpoint) ──

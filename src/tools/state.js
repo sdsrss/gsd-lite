@@ -547,7 +547,44 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
     return { mode: 'awaiting_user', blockers: blockedTasks.map(t => ({ id: t.id, reason: t.blocked_reason })) };
   }
 
-  return { task: undefined };
+  // Diagnose why no task is runnable
+  const diagnostics = [];
+  for (const task of phase.todo) {
+    if (task.lifecycle === 'accepted' || task.lifecycle === 'failed') continue;
+    const reasons = [];
+    if (!['pending', 'needs_revalidation'].includes(task.lifecycle)) {
+      reasons.push(`lifecycle=${task.lifecycle}`);
+    }
+    if (task.retry_count >= maxRetry) {
+      reasons.push(`retry_count=${task.retry_count} >= max=${maxRetry}`);
+    }
+    if (task.blocked_reason) {
+      reasons.push(`blocked: ${task.blocked_reason}`);
+    }
+    for (const dep of (task.requires || [])) {
+      if (dep.kind === 'task') {
+        const depTask = phase.todo.find(t => t.id === dep.id);
+        const gate = dep.gate || 'accepted';
+        if (!depTask) {
+          reasons.push(`dep ${dep.id} not found`);
+        } else if (gate === 'checkpoint' && !['checkpointed', 'accepted'].includes(depTask.lifecycle)) {
+          reasons.push(`dep ${dep.id} needs checkpoint (is ${depTask.lifecycle})`);
+        } else if (gate === 'accepted' && depTask.lifecycle !== 'accepted') {
+          reasons.push(`dep ${dep.id} needs accepted (is ${depTask.lifecycle})`);
+        }
+      } else if (dep.kind === 'phase') {
+        const depPhase = (state.phases || []).find(p => p.id === dep.id);
+        if (!depPhase || depPhase.lifecycle !== 'accepted') {
+          reasons.push(`phase dep ${dep.id} not accepted`);
+        }
+      }
+    }
+    if (reasons.length > 0) {
+      diagnostics.push({ id: task.id, reasons });
+    }
+  }
+
+  return { task: undefined, diagnostics };
 }
 
 /**
@@ -689,7 +726,7 @@ function tokenize(text) {
   if (!text) return [];
   return text
     .toLowerCase()
-    .split(/[\s,.:;!?()[\]{}<>\/\\|@#$%^&*+=~`'"，。：；！？（）【】、]+/)
+    .split(/[\s,.:;!?()[\]{}<>/\\|@#$%^&*+=~`'"，。：；！？（）【】、]+/)
     .filter(t => t.length >= MIN_TOKEN_LENGTH);
 }
 

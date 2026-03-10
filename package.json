@@ -8,6 +8,9 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.js",
+    "test:coverage": "c8 --reporter=text --reporter=lcov node --test tests/*.test.js",
+    "lint": "biome check src/ tests/ hooks/",
+    "lint:fix": "biome check --write src/ tests/ hooks/",
     "start": "node src/server.js"
   },
   "repository": {
@@ -39,5 +42,9 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "c8": "^11.0.0"
   }
 }

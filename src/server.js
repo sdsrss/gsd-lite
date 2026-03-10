@@ -18,6 +18,14 @@ const server = new Server(
 
 const TOOLS = [
   {
+    name: 'gsd-health',
+    description: 'Health check: returns server status and whether .gsd state exists',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
     name: 'gsd-state-init',
     description: 'Initialize .gsd/ directory with state.json, plan.md, and phases/*.md',
     inputSchema: {
@@ -154,6 +162,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 async function dispatchToolCall(name, args) {
   let result;
   switch (name) {
+    case 'gsd-health': {
+      const stateResult = await read(args || {});
+      result = {
+        status: 'ok',
+        server: 'gsd-lite',
+        version: '0.1.0',
+        state_exists: !stateResult.error,
+        ...(stateResult.error ? {} : {
+          project: stateResult.project,
+          workflow_mode: stateResult.workflow_mode,
+          current_phase: stateResult.current_phase,
+          total_phases: stateResult.total_phases,
+        }),
+      };
+      break;
+    }
     case 'gsd-state-init':
       result = await init(args);
       break;

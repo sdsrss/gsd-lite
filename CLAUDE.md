@@ -21,7 +21,7 @@ agents/        → 4 个子代理 (executor, reviewer, researcher, debugger)
 workflows/     → 5 个工作流 (tdd-cycle, review-cycle, debugging, research, deviation-rules)
 references/    → 4 个参考文档
 hooks/         → 上下文监控 (StatusLine + PostToolUse)
-tests/         → 296 个测试 (227 单元 + 69 E2E 集成) + 11 个 E2E checklist
+tests/         → 301 个测试 (232 单元 + 69 E2E 集成) + 11 个 E2E checklist
 docs/          → 设计文档 + 工程任务清单 + 校准记录
 ```
 
@@ -39,11 +39,15 @@ docs/          → 设计文档 + 工程任务清单 + 校准记录
 - 原子写入 JSON (先写 .tmp 再 rename)
 - 错误处理: 返回结构化错误，不抛异常到调用方
 - 包管理器: 从 lockfile 自动检测 (pnpm/yarn/npm)
+- Lint: `npm run lint` (Biome)
+- 覆盖率: `npm run test:coverage` (c8, 阈值 80%)
 
 ## 测试
 
 ```bash
-npm test                    # 运行全部 296 个测试
+npm test                    # 运行全部 301 个测试
+npm run test:coverage       # 运行测试 + 覆盖率报告 (88.77%)
+npm run lint                # Biome lint 检查
 node --test tests/state.test.js  # 运行单个测试文件
 ```
 

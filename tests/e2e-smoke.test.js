@@ -249,7 +249,7 @@ describe('E2E smoke: full project lifecycle', () => {
   // Step 12
   it('selectRunnableTask in phase 2', async () => {
     // Phase 2 needs to be active before tasks can run
-    let result = await update({
+    const result = await update({
       updates: { phases: [{ id: 2, lifecycle: 'active' }] },
       basePath: tempDir,
     });

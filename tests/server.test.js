@@ -315,6 +315,39 @@ describe('MCP tool call chain', () => {
   });
 });
 
+describe('gsd-health tool', () => {
+  it('returns health status without state', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const fakePath = '/tmp/nonexistent-gsd-health-' + Date.now();
+    const result = await handleToolCall('gsd-health', { basePath: fakePath });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.server, 'gsd-lite');
+    assert.equal(result.version, '0.1.0');
+    assert.equal(result.state_exists, false);
+  });
+
+  it('returns health status with project info when state exists', async () => {
+    const healthDir = await mkdtemp(join(tmpdir(), 'gsd-health-'));
+    try {
+      const { handleToolCall } = await import('../src/server.js');
+      await handleToolCall('gsd-state-init', {
+        project: 'health-test',
+        phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }],
+        basePath: healthDir,
+      });
+      const result = await handleToolCall('gsd-health', { basePath: healthDir });
+      assert.equal(result.status, 'ok');
+      assert.equal(result.state_exists, true);
+      assert.equal(result.project, 'health-test');
+      assert.equal(result.workflow_mode, 'executing_task');
+      assert.equal(result.current_phase, 1);
+      assert.equal(result.total_phases, 1);
+    } finally {
+      await rm(healthDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('MCP tool error handling', () => {
   let tempDir;
   let handleToolCall;

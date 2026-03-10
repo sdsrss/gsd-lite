@@ -161,4 +161,51 @@ describe('selectRunnableTask', () => {
       /Phase todo must be an array/
     );
   });
+
+  it('returns diagnostics when no task is runnable due to unmet deps', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'accepted', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.3', gate: 'accepted' }], retry_count: 0 },
+        { id: '1.3', lifecycle: 'running', requires: [], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task, undefined);
+    assert.ok(Array.isArray(result.diagnostics));
+    const diag12 = result.diagnostics.find(d => d.id === '1.2');
+    assert.ok(diag12, 'diagnostics should include task 1.2');
+    assert.ok(diag12.reasons.some(r => r.includes('dep 1.3 needs accepted')));
+    const diag13 = result.diagnostics.find(d => d.id === '1.3');
+    assert.ok(diag13, 'diagnostics should include task 1.3');
+    assert.ok(diag13.reasons.some(r => r.includes('lifecycle=running')));
+  });
+
+  it('returns diagnostics for retry-exhausted tasks', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'pending', requires: [], retry_count: 5 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task, undefined);
+    assert.ok(Array.isArray(result.diagnostics));
+    assert.ok(result.diagnostics[0].reasons.some(r => r.includes('retry_count=5')));
+  });
+
+  it('returns empty diagnostics when all tasks are terminal', async () => {
+    const { selectRunnableTask } = await import('../src/tools/state.js');
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'accepted', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'failed', requires: [], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task, undefined);
+    assert.ok(Array.isArray(result.diagnostics));
+    assert.equal(result.diagnostics.length, 0);
+  });
 });

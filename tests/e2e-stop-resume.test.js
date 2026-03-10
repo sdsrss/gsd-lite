@@ -258,7 +258,7 @@ describe('E2E stop/resume: state save completeness and roundtrip data integrity'
       assert.equal(state.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'accepted');
       assert.equal(state.decisions.length, 1);
       assert.equal(state.decisions[0].id, 'd1');
-      assert.ok(state.evidence['ev1']);
+      assert.ok(state.evidence.ev1);
 
       // --- Cycle 2: resume, checkpoint 1.2, add decision d2, pause ---
       // Resume (simulating resume by updating workflow_mode back to executing_task)
@@ -296,10 +296,10 @@ describe('E2E stop/resume: state save completeness and roundtrip data integrity'
       assert.equal(state.decisions[1].id, 'd2');
 
       // Both evidences present
-      assert.ok(state.evidence['ev1'], 'evidence from cycle 1 preserved');
-      assert.ok(state.evidence['ev2'], 'evidence from cycle 2 preserved');
-      assert.deepEqual(state.evidence['ev1'].data, { cycle: 1 });
-      assert.deepEqual(state.evidence['ev2'].data, { cycle: 2 });
+      assert.ok(state.evidence.ev1, 'evidence from cycle 1 preserved');
+      assert.ok(state.evidence.ev2, 'evidence from cycle 2 preserved');
+      assert.deepEqual(state.evidence.ev1.data, { cycle: 1 });
+      assert.deepEqual(state.evidence.ev2.data, { cycle: 2 });
 
       // Task states correct
       const task11 = state.phases[0].todo.find(t => t.id === '1.1');
