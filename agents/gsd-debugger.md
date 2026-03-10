@@ -1,7 +1,7 @@
 ---
 name: gsd-debugger
 description: Systematic debugging with root cause analysis
-tools: [Read, Write, Edit, Bash, Grep, Glob]
+tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 <role>

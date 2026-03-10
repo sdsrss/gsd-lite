@@ -1,5 +1,4 @@
 ---
-name: gsd-status
 description: Display project progress overview derived from canonical state fields
 ---
 

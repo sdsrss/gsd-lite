@@ -1,5 +1,4 @@
 ---
-name: gsd-resume
 description: Resume project execution from saved state with workspace validation
 ---
 

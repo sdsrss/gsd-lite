@@ -1,5 +1,4 @@
 ---
-name: gsd-stop
 description: Save current state and pause project execution
 ---
 

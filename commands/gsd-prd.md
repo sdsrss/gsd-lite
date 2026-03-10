@@ -1,8 +1,6 @@
 ---
-name: gsd-prd
 description: Start project from requirements document or description text
-arguments:
-  path_or_description: File path to requirements doc, or inline description text
+argument-hint: File path to requirements doc, or inline description text
 ---
 
 <role>

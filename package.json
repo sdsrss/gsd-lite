@@ -35,6 +35,7 @@
     "references/",
     "hooks/",
     "cli.js",
+    "launcher.js",
     "install.js",
     "uninstall.js"
   ],

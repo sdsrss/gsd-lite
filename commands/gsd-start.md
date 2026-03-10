@@ -1,7 +1,6 @@
 ---
-name: gsd-start
 description: Interactive project start — discuss requirements, research, plan, then auto-execute
-argument-hint: ""
+argument-hint: Optional feature or project description
 ---
 
 <role>

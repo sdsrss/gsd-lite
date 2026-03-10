@@ -1,8 +1,6 @@
 {
-  "mcpServers": {
-    "gsd-lite": {
-      "command": "npx",
-      "args": ["-y", "gsd-lite@latest"]
-    }
+  "gsd-lite": {
+    "command": "node",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/launcher.js"]
   }
 }
