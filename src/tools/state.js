@@ -302,3 +302,36 @@ export function selectRunnableTask(phase, state) {
 
   return { task: undefined };
 }
+
+/**
+ * Propagate invalidation to downstream dependents when a task is reworked.
+ * If contractChanged is true, all transitive dependents get needs_revalidation
+ * and their evidence_refs are cleared.
+ */
+export function propagateInvalidation(phase, reworkTaskId, contractChanged) {
+  if (!contractChanged) return;
+
+  const affected = new Set();
+  const queue = [reworkTaskId];
+
+  while (queue.length > 0) {
+    const currentId = queue.shift();
+    for (const task of phase.todo) {
+      if (affected.has(task.id)) continue;
+      const dependsOnCurrent = (task.requires || []).some(dep =>
+        dep.kind === 'task' && dep.id === currentId
+      );
+      if (dependsOnCurrent) {
+        affected.add(task.id);
+        queue.push(task.id);
+      }
+    }
+  }
+
+  for (const task of phase.todo) {
+    if (affected.has(task.id)) {
+      task.lifecycle = 'needs_revalidation';
+      task.evidence_refs = [];
+    }
+  }
+}
