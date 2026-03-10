@@ -99,6 +99,37 @@ describe('state tools', () => {
     });
   });
 
+  describe('update lifecycle validation', () => {
+    it('rejects illegal task lifecycle transition (pending → accepted)', async () => {
+      const { update, read } = await import('../src/tools/state.js');
+      const state = await read({ basePath: tempDir });
+      const phases = JSON.parse(JSON.stringify(state.phases));
+      phases[0].todo[0].lifecycle = 'accepted'; // skip running+checkpointed
+      const result = await update({ updates: { phases }, basePath: tempDir });
+      assert.equal(result.error, true);
+      assert.ok(result.message.includes('pending'));
+    });
+
+    it('rejects illegal phase lifecycle transition (pending → reviewing)', async () => {
+      const { update, read } = await import('../src/tools/state.js');
+      const state = await read({ basePath: tempDir });
+      const phases = JSON.parse(JSON.stringify(state.phases));
+      phases[0].lifecycle = 'reviewing'; // skip active
+      const result = await update({ updates: { phases }, basePath: tempDir });
+      assert.equal(result.error, true);
+      assert.ok(result.message.includes('pending'));
+    });
+
+    it('allows legal task lifecycle transition (pending → running)', async () => {
+      const { update, read } = await import('../src/tools/state.js');
+      const state = await read({ basePath: tempDir });
+      const phases = JSON.parse(JSON.stringify(state.phases));
+      phases[0].todo[0].lifecycle = 'running';
+      const result = await update({ updates: { phases }, basePath: tempDir });
+      assert.equal(result.success, true);
+    });
+  });
+
   describe('phaseComplete', () => {
     it('rejects when handoff gate not met', async () => {
       const { phaseComplete } = await import('../src/tools/state.js');

@@ -2,7 +2,7 @@
 
 import { writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { ensureDir, readJson, writeJson, getStatePath } from '../utils.js';
+import { ensureDir, readJson, writeJson, getStatePath, getGitHead } from '../utils.js';
 import {
   CANONICAL_FIELDS,
   validateState,
@@ -13,14 +13,18 @@ import {
 /**
  * Initialize a new GSD project: creates .gsd/, state.json, plan.md, phases/
  */
-export async function init({ project, phases, basePath = process.cwd() }) {
+export async function init({ project, phases, research, basePath = process.cwd() }) {
   const gsdDir = join(basePath, '.gsd');
   const phasesDir = join(gsdDir, 'phases');
 
   await ensureDir(gsdDir);
   await ensureDir(phasesDir);
+  if (research) {
+    await ensureDir(join(gsdDir, 'research'));
+  }
 
   const state = createInitialState({ project, phases });
+  state.git_head = getGitHead(basePath);
   await writeJson(join(gsdDir, 'state.json'), state);
 
   // Create plan.md placeholder
@@ -94,6 +98,32 @@ export async function update({ updates, basePath = process.cwd() }) {
     return state;
   }
 
+  // Validate lifecycle transitions before merging
+  if (updates.phases && Array.isArray(updates.phases)) {
+    for (const newPhase of updates.phases) {
+      const oldPhase = state.phases.find(p => p.id === newPhase.id);
+      if (!oldPhase) continue;
+
+      // Check phase lifecycle transition
+      if (newPhase.lifecycle && newPhase.lifecycle !== oldPhase.lifecycle) {
+        const t = validateTransition('phase', oldPhase.lifecycle, newPhase.lifecycle);
+        if (!t.valid) return { error: true, message: t.error };
+      }
+
+      // Check task lifecycle transitions
+      if (Array.isArray(newPhase.todo)) {
+        for (const newTask of newPhase.todo) {
+          const oldTask = (oldPhase.todo || []).find(t => t.id === newTask.id);
+          if (!oldTask) continue;
+          if (newTask.lifecycle && newTask.lifecycle !== oldTask.lifecycle) {
+            const t = validateTransition('task', oldTask.lifecycle, newTask.lifecycle);
+            if (!t.valid) return { error: true, message: t.error };
+          }
+        }
+      }
+    }
+  }
+
   // Merge updates into state
   const merged = { ...state, ...updates };
 
@@ -165,6 +195,12 @@ export async function phaseComplete({ phase_id, basePath = process.cwd() }) {
   if (state.current_phase === phase_id && phase_id < state.total_phases) {
     state.current_phase = phase_id + 1;
   }
+
+  // Update git_head to current commit
+  state.git_head = getGitHead(dirname(dirname(statePath)));
+
+  // Prune evidence from old phases
+  await pruneEvidence({ currentPhase: state.current_phase, basePath: dirname(dirname(statePath)) });
 
   await writeJson(statePath, state);
   return { success: true };
@@ -344,7 +380,7 @@ export function buildExecutorContext(state, taskId, phaseId) {
   const phase = state.phases.find(p => p.id === phaseId);
   const task = phase.todo.find(t => t.id === taskId);
 
-  const task_spec = `phases/${String(phaseId).padStart(2, '0')}-${phase.name || 'phase'}.md`;
+  const task_spec = `phases/phase-${phaseId}.md`;
 
   const research_decisions = (task.research_basis || []).map(id => {
     const decision = state.research?.decision_index?.[id];
@@ -361,6 +397,8 @@ export function buildExecutorContext(state, taskId, phaseId) {
 
   const project_conventions = 'CLAUDE.md';
   const workflows = ['workflows/tdd-cycle.md', 'workflows/deviation-rules.md'];
+  if ((task.retry_count || 0) > 0) workflows.push('workflows/debugging.md');
+  if ((task.research_basis || []).length > 0) workflows.push('workflows/research.md');
   const constraints = {
     retry_count: task.retry_count || 0,
     level: task.level || 'L1',

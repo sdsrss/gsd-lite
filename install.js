@@ -61,8 +61,14 @@ function main() {
       args: [join(__dirname, 'src', 'server.js')],
     };
 
+    // Register hooks
+    if (!settings.hooks) settings.hooks = {};
+    const hookPath = join(__dirname, 'hooks', 'context-monitor.js');
+    settings.hooks.StatusLine = `node ${hookPath} statusLine`;
+    settings.hooks.PostToolUse = `node ${hookPath} postToolUse`;
+
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-    log('  ✓ MCP server registered in settings.json');
+    log('  ✓ MCP server + hooks registered in settings.json');
   } else {
     log('  [dry-run] Would register MCP server in settings.json');
   }
