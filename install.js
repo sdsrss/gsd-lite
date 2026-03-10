@@ -14,15 +14,12 @@ const DRY_RUN = process.argv.includes('--dry-run');
 
 function log(msg) { console.log(msg); }
 
-function formatHookCommand(scriptPath, hookName) {
-  return `node ${JSON.stringify(scriptPath)} ${hookName}`;
-}
 
-function registerStatusLine(settings, hookPath) {
-  const command = formatHookCommand(hookPath, 'statusLine');
+function registerStatusLine(settings, statuslineScriptPath) {
+  const command = `node ${JSON.stringify(statuslineScriptPath)}`;
   // Don't overwrite non-GSD statusLine
   if (settings.statusLine && typeof settings.statusLine === 'object'
-      && !settings.statusLine.command?.includes('context-monitor.js')) {
+      && !settings.statusLine.command?.includes('gsd-statusline')) {
     log('  ! Preserved existing statusLine');
     return false;
   }
@@ -32,8 +29,8 @@ function registerStatusLine(settings, hookPath) {
   return true;
 }
 
-function registerPostToolUseHook(hooks, hookPath) {
-  const command = formatHookCommand(hookPath, 'postToolUse');
+function registerPostToolUseHook(hooks, contextMonitorPath) {
+  const command = `node ${JSON.stringify(contextMonitorPath)}`;
   const entry = { matcher: '*', hooks: [{ type: 'command', command }] };
   if (!hooks.PostToolUse) {
     hooks.PostToolUse = [entry];
@@ -41,7 +38,7 @@ function registerPostToolUseHook(hooks, hookPath) {
   }
   // Handle legacy string format
   if (typeof hooks.PostToolUse === 'string') {
-    if (!hooks.PostToolUse.includes('context-monitor.js')) {
+    if (!hooks.PostToolUse.includes('gsd-context-monitor')) {
       log('  ! Preserved existing PostToolUse hook');
       return false;
     }
@@ -50,7 +47,7 @@ function registerPostToolUseHook(hooks, hookPath) {
   }
   if (Array.isArray(hooks.PostToolUse)) {
     const idx = hooks.PostToolUse.findIndex(e =>
-      e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+      e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
     if (idx >= 0) hooks.PostToolUse[idx] = entry;
     else hooks.PostToolUse.push(entry);
     return true;
@@ -140,9 +137,10 @@ export function main() {
 
     // Register statusLine (top-level setting) and PostToolUse hook
     if (!settings.hooks) settings.hooks = {};
-    const hookPath = join(CLAUDE_DIR, 'hooks', 'context-monitor.js');
-    const statusLineRegistered = registerStatusLine(settings, hookPath);
-    const postToolUseRegistered = registerPostToolUseHook(settings.hooks, hookPath);
+    const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
+    const contextMonitorPath = join(CLAUDE_DIR, 'hooks', 'gsd-context-monitor.cjs');
+    const statusLineRegistered = registerStatusLine(settings, statuslinePath);
+    const postToolUseRegistered = registerPostToolUseHook(settings.hooks, contextMonitorPath);
 
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
     log('  ✓ MCP server registered in settings.json');

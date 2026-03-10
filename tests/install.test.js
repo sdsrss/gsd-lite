@@ -26,29 +26,32 @@ describe('install and uninstall scripts', () => {
     try {
       runScript('install.js', home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      const hookPath = join(claudeDir, 'hooks', 'context-monitor.js');
+      const statuslinePath = join(claudeDir, 'hooks', 'gsd-statusline.cjs');
+      const contextMonitorPath = join(claudeDir, 'hooks', 'gsd-context-monitor.cjs');
       const serverPath = join(claudeDir, 'gsd-lite', 'src', 'server.js');
       const sdkPath = join(claudeDir, 'gsd-lite', 'node_modules', '@modelcontextprotocol', 'sdk');
       const runtimePackagePath = join(claudeDir, 'gsd-lite', 'package.json');
       // StatusLine is registered as top-level statusLine setting
       assert.deepEqual(settings.statusLine, {
         type: 'command',
-        command: `node ${JSON.stringify(hookPath)} statusLine`,
+        command: `node ${JSON.stringify(statuslinePath)}`,
       });
       assert.equal(settings.hooks.StatusLine, undefined);
       // PostToolUse is registered as array entry in hooks
       assert.ok(Array.isArray(settings.hooks.PostToolUse));
       const gsdHook = settings.hooks.PostToolUse.find(e =>
-        e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+        e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
       assert.ok(gsdHook);
-      assert.equal(gsdHook.hooks[0].command, `node ${JSON.stringify(hookPath)} postToolUse`);
+      assert.equal(gsdHook.hooks[0].command, `node ${JSON.stringify(contextMonitorPath)}`);
       assert.ok(settings.mcpServers['gsd-lite']);
       assert.equal(settings.mcpServers['gsd-lite'].args[0], serverPath);
-      const hookStat = await stat(hookPath);
+      const statuslineStat = await stat(statuslinePath);
+      const contextMonitorStat = await stat(contextMonitorPath);
       const serverStat = await stat(serverPath);
       const sdkStat = await stat(sdkPath);
       const runtimePackageStat = await stat(runtimePackagePath);
-      assert.ok(hookStat.isFile());
+      assert.ok(statuslineStat.isFile());
+      assert.ok(contextMonitorStat.isFile());
       assert.ok(serverStat.isFile());
       assert.ok(sdkStat.isDirectory());
       assert.ok(runtimePackageStat.isFile());
@@ -88,7 +91,7 @@ describe('install and uninstall scripts', () => {
       assert.equal(settings.mcpServers?.['gsd-lite'], undefined);
       assert.equal(settings.statusLine, undefined);
       const gsdHook = settings.hooks?.PostToolUse?.find(e =>
-        e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+        e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
       assert.equal(gsdHook, undefined);
       await assert.rejects(stat(join(claudeDir, 'gsd-lite')));
     } finally {

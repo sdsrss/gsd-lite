@@ -30,11 +30,13 @@ export function main() {
   removeDir(join(CLAUDE_DIR, 'references', 'gsd'), 'references/gsd/');
   removeDir(RUNTIME_DIR, 'gsd-lite runtime/');
 
-  // Remove hook file
-  const hookFile = join(CLAUDE_DIR, 'hooks', 'context-monitor.js');
-  if (existsSync(hookFile)) {
-    rmSync(hookFile);
-    log('  ✓ Removed hooks/context-monitor.js');
+  // Remove hook files (both legacy and current names)
+  for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-session-init.cjs']) {
+    const hookFile = join(CLAUDE_DIR, 'hooks', name);
+    if (existsSync(hookFile)) {
+      rmSync(hookFile);
+      log(`  ✓ Removed hooks/${name}`);
+    }
   }
 
   // Clean up plugin system directories (from /plugin install)
@@ -87,27 +89,31 @@ export function main() {
       }
       changed = true;
     }
-    // Remove top-level statusLine if GSD's
-    if (settings.statusLine?.command?.includes('context-monitor.js')) {
+    // Remove top-level statusLine if GSD's (match both old and new patterns)
+    if (settings.statusLine?.command?.includes('gsd-statusline') ||
+        settings.statusLine?.command?.includes('context-monitor.js')) {
       delete settings.statusLine;
       changed = true;
     }
     if (settings.hooks) {
-      // Remove legacy StatusLine string entry
+      // Remove legacy StatusLine hook entry
       if (typeof settings.hooks.StatusLine === 'string'
-          && settings.hooks.StatusLine.includes('context-monitor.js')) {
+          && (settings.hooks.StatusLine.includes('gsd-statusline') ||
+              settings.hooks.StatusLine.includes('context-monitor.js'))) {
         delete settings.hooks.StatusLine;
         changed = true;
       }
-      // Remove GSD PostToolUse entry from array
+      // Remove GSD PostToolUse entry from array (match both old and new patterns)
       if (Array.isArray(settings.hooks.PostToolUse)) {
         const len = settings.hooks.PostToolUse.length;
         settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(e =>
-          !e.hooks?.some(h => h.command?.includes('context-monitor.js')));
+          !e.hooks?.some(h => h.command?.includes('gsd-context-monitor') ||
+                              h.command?.includes('context-monitor.js')));
         if (settings.hooks.PostToolUse.length < len) changed = true;
         if (settings.hooks.PostToolUse.length === 0) delete settings.hooks.PostToolUse;
       } else if (typeof settings.hooks.PostToolUse === 'string'
-          && settings.hooks.PostToolUse.includes('context-monitor.js')) {
+          && (settings.hooks.PostToolUse.includes('gsd-context-monitor') ||
+              settings.hooks.PostToolUse.includes('context-monitor.js'))) {
         delete settings.hooks.PostToolUse;
         changed = true;
       }
