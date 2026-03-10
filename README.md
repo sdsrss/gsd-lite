@@ -64,14 +64,32 @@ GSD-Lite 是一个面向 Claude Code 的 AI 编排工具，将 [GSD](https://git
 # 方式二：npx
 npx gsd-lite install
 
+# 查看帮助
+npx gsd-lite help
+
 # 方式三：手动
 git clone https://github.com/sdsrss/gsd-lite.git
-cd gsd-lite && node install.js
+cd gsd-lite && node cli.js install
 ```
 
 - 安装器会把命令/Agent/工作流写入 `~/.claude/...`
 - MCP Server 运行时会复制到稳定目录 `~/.claude/gsd-lite/`
-- 从源码手动安装后，可用 `node uninstall.js` 卸载
+- 从源码手动安装后，可用 `node cli.js uninstall` 卸载
+
+## 更新 / 升级
+
+```bash
+# 源码方式：先更新仓库，再重新安装
+git pull
+npm install   # 仅当 package.json / lockfile 有变化时需要
+node cli.js install
+
+# npx 方式：直接重新执行安装即可
+npx gsd-lite install
+```
+
+- 安装器支持重复执行；通常**不需要先卸载**
+- 更新后建议重启 Claude Code，或至少重开会话，以确保加载最新 MCP server / hooks
 
 ## 快速开始
 
@@ -102,12 +120,13 @@ gsd-lite/
 ├── workflows/              # 5 个核心工作流 (~760行 Markdown)
 ├── references/             # 4 个参考文档 (~400行 Markdown)
 ├── hooks/                  # 上下文监控 (StatusLine + PostToolUse)
-├── tests/                  # 107 个单元测试 + E2E checklist
+├── cli.js                  # 安装/卸载 CLI 入口
+├── tests/                  # 109 个单元测试 + E2E checklist
 ├── install.js              # 安装脚本
 └── uninstall.js            # 卸载脚本
 ```
 
-**~28 个交付文件 | ~1100 行代码 | ~2300 行 Markdown | 107 个测试**
+**~29 个交付文件 | ~1100 行代码 | ~2300 行 Markdown | 109 个测试**
 
 ## 文档
 

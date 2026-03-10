@@ -4,6 +4,7 @@
 import { existsSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 
 const CLAUDE_DIR = join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd-lite');
@@ -17,7 +18,7 @@ function removeDir(path, label) {
   }
 }
 
-function main() {
+export function main() {
   log('GSD-Lite Uninstaller\n');
 
   log('Removing files...');
@@ -62,4 +63,6 @@ function main() {
   log('\n✓ GSD-Lite uninstalled.');
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLAUDE_DIR = join(homedir(), '.claude');
@@ -37,7 +37,17 @@ function copyDir(src, dest, label) {
   log(`  ✓ ${label}`);
 }
 
-function main() {
+function copyFile(src, dest, label) {
+  if (DRY_RUN) {
+    log(`  [dry-run] Would copy ${src} → ${dest}`);
+    return;
+  }
+  mkdirSync(dirname(dest), { recursive: true });
+  cpSync(src, dest);
+  log(`  ✓ ${label}`);
+}
+
+export function main() {
   log('GSD-Lite Installer\n');
 
   if (!existsSync(CLAUDE_DIR)) {
@@ -70,6 +80,7 @@ function main() {
   // 6. Stable runtime for MCP server
   copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd-lite/src/');
   copyDir(join(__dirname, 'node_modules'), join(RUNTIME_DIR, 'node_modules'), 'runtime/node_modules → ~/.claude/gsd-lite/node_modules/');
+  copyFile(join(__dirname, 'package.json'), join(RUNTIME_DIR, 'package.json'), 'runtime/package.json → ~/.claude/gsd-lite/package.json');
 
   // 7. Register MCP server in settings.json
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
@@ -113,4 +124,6 @@ function main() {
   log('  Use /gsd:resume to continue an existing project');
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

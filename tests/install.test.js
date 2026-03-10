@@ -29,6 +29,7 @@ describe('install and uninstall scripts', () => {
       const hookPath = join(claudeDir, 'hooks', 'context-monitor.js');
       const serverPath = join(claudeDir, 'gsd-lite', 'src', 'server.js');
       const sdkPath = join(claudeDir, 'gsd-lite', 'node_modules', '@modelcontextprotocol', 'sdk');
+      const runtimePackagePath = join(claudeDir, 'gsd-lite', 'package.json');
       assert.equal(settings.hooks.StatusLine, `node ${JSON.stringify(hookPath)} statusLine`);
       assert.equal(settings.hooks.PostToolUse, `node ${JSON.stringify(hookPath)} postToolUse`);
       assert.ok(settings.mcpServers['gsd-lite']);
@@ -36,9 +37,11 @@ describe('install and uninstall scripts', () => {
       const hookStat = await stat(hookPath);
       const serverStat = await stat(serverPath);
       const sdkStat = await stat(sdkPath);
+      const runtimePackageStat = await stat(runtimePackagePath);
       assert.ok(hookStat.isFile());
       assert.ok(serverStat.isFile());
       assert.ok(sdkStat.isDirectory());
+      assert.ok(runtimePackageStat.isFile());
     } finally {
       await rm(home, { recursive: true, force: true });
     }
