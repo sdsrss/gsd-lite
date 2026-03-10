@@ -369,3 +369,32 @@ export function buildExecutorContext(state, taskId, phaseId) {
 
   return { task_spec, research_decisions, predecessor_outputs, project_conventions, workflows, constraints };
 }
+
+const SENSITIVE_KEYWORDS = /\b(auth|payment|security|public.?api|login|token|credential|session|oauth)\b/i;
+
+/**
+ * Reclassify review level at runtime based on executor results.
+ * Upgrades L1→L2 when contract_changed + sensitive keywords or [LEVEL-UP].
+ * Never downgrades.
+ */
+export function reclassifyReviewLevel(task, executorResult) {
+  const currentLevel = task.level || 'L1';
+
+  // Never downgrade
+  if (currentLevel === 'L2' || currentLevel === 'L3') {
+    return currentLevel;
+  }
+
+  // Check for explicit [LEVEL-UP] in decisions
+  const hasLevelUp = (executorResult.decisions || []).some(d =>
+    typeof d === 'string' && d.includes('[LEVEL-UP]')
+  );
+  if (hasLevelUp) return 'L2';
+
+  // Check for contract change + sensitive keyword in task name
+  if (executorResult.contract_changed && SENSITIVE_KEYWORDS.test(task.name || '')) {
+    return 'L2';
+  }
+
+  return currentLevel;
+}
