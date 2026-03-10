@@ -398,3 +398,46 @@ export function reclassifyReviewLevel(task, executorResult) {
 
   return currentLevel;
 }
+
+const MIN_TOKEN_LENGTH = 2;
+const MIN_OVERLAP = 2;
+
+/**
+ * Tokenize a string into lowercase tokens, splitting on whitespace and punctuation.
+ * Filters out short tokens (< MIN_TOKEN_LENGTH).
+ */
+function tokenize(text) {
+  if (!text) return [];
+  return text
+    .toLowerCase()
+    .split(/[\s,.:;!?()[\]{}<>\/\\|@#$%^&*+=~`'"，。：；！？（）【】、]+/)
+    .filter(t => t.length >= MIN_TOKEN_LENGTH);
+}
+
+/**
+ * Match a blocked reason against research decisions by keyword overlap.
+ * Returns the best-matching decision or null if no sufficient overlap.
+ */
+export function matchDecisionForBlocker(decisions, blockedReason) {
+  const reasonTokens = new Set(tokenize(blockedReason));
+  if (reasonTokens.size === 0) return null;
+
+  let bestMatch = null;
+  let bestOverlap = 0;
+
+  for (const decision of decisions) {
+    const summaryTokens = tokenize(decision.summary);
+    let overlap = 0;
+    for (const token of summaryTokens) {
+      if (reasonTokens.has(token)) {
+        overlap++;
+      }
+    }
+    if (overlap >= MIN_OVERLAP && overlap > bestOverlap) {
+      bestOverlap = overlap;
+      bestMatch = decision;
+    }
+  }
+
+  return bestMatch;
+}
