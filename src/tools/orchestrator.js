@@ -957,10 +957,17 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     done: Math.max(0, (phase.done || 0) + doneIncrement - doneDecrement),
     phase_review: {
       status: reviewStatus,
-      ...(hasCritical ? { retry_count: (phase.phase_review?.retry_count || 0) + 1 } : {}),
+      ...(hasCritical
+        ? { retry_count: (phase.phase_review?.retry_count || 0) + 1 }
+        : { retry_count: 0 }),
     },
     todo: taskPatches,
   };
+
+  // Transition phase back to active when rework is needed
+  if (hasCritical && phase.lifecycle === 'reviewing') {
+    phaseUpdates.lifecycle = 'active';
+  }
 
   if (!hasCritical && result.scope === 'phase') {
     phaseUpdates.phase_handoff = { required_reviews_passed: true };

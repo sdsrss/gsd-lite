@@ -53,7 +53,7 @@ try {
   };
 
   // Atomic write to avoid corruption
-  const tmpPath = settingsPath + '.gsd-tmp';
+  const tmpPath = settingsPath + `.gsd-tmp-${process.pid}`;
   fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
   fs.renameSync(tmpPath, settingsPath);
 } catch {

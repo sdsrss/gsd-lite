@@ -37,7 +37,7 @@ async function runCommand(command, args, cwd) {
     return { exit_code: 0, summary: summarizeOutput(stdout, 3) };
   } catch (err) {
     return {
-      exit_code: typeof err.code === 'number' ? err.code : (err.status || 1),
+      exit_code: err.status ?? (typeof err.code === 'number' ? err.code : 1),
       summary: summarizeOutput(err.stderr || err.stdout || err.message || '', 5),
     };
   }

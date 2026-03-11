@@ -17,7 +17,7 @@ process.stdin.on('end', () => {
     const data = JSON.parse(input);
     const model = data.model?.display_name || 'Claude';
     const cwd = data.workspace?.current_dir || process.cwd();
-    const session = data.session_id || '';
+    const session = String(data.session_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
     const remaining = data.context_window?.remaining_percentage;
 
     // Current GSD task from state.json

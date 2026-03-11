@@ -33,11 +33,13 @@ process.stdin.on('end', () => {
   clearTimeout(stdinTimeout);
   try {
     const data = JSON.parse(input);
-    const sessionId = data.session_id;
+    const rawSessionId = data.session_id;
 
-    if (!sessionId) {
+    if (!rawSessionId) {
       process.exit(0);
     }
+    const sessionId = String(rawSessionId).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!sessionId) process.exit(0);
 
     const tmpDir = os.tmpdir();
     const metricsPath = path.join(tmpDir, `gsd-ctx-${sessionId}.json`);

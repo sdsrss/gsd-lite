@@ -36,7 +36,7 @@ export const PHASE_LIFECYCLE = {
   failed:     [],
 };
 
-const PHASE_REVIEW_STATUS = ['pending', 'reviewing', 'accepted', 'rework_required'];
+export const PHASE_REVIEW_STATUS = ['pending', 'reviewing', 'accepted', 'rework_required'];
 
 export const CANONICAL_FIELDS = [
   'project',
@@ -133,6 +133,9 @@ export function validateResearchArtifacts(artifacts, { decisionIds = [], volatil
 }
 
 export function validateTransition(entity, from, to) {
+  if (entity !== 'task' && entity !== 'phase') {
+    return { valid: false, error: `Unknown entity type: ${entity}` };
+  }
   const transitions = entity === 'task' ? TASK_LIFECYCLE : PHASE_LIFECYCLE;
   if (!transitions[from]) {
     return { valid: false, error: `Unknown ${entity} state: ${from}` };
@@ -151,17 +154,17 @@ export function validateState(state) {
   if (!WORKFLOW_MODES.includes(state.workflow_mode)) {
     errors.push(`Invalid workflow_mode: ${state.workflow_mode}`);
   }
-  if (typeof state.plan_version !== 'number') {
-    errors.push('plan_version must be a number');
+  if (!Number.isFinite(state.plan_version)) {
+    errors.push('plan_version must be a finite number');
   }
-  if (typeof state.current_phase !== 'number') {
-    errors.push('current_phase must be a number');
+  if (!Number.isFinite(state.current_phase)) {
+    errors.push('current_phase must be a finite number');
   }
   if (state.git_head !== null && typeof state.git_head !== 'string') {
     errors.push('git_head must be a string or null');
   }
-  if (typeof state.total_phases !== 'number') {
-    errors.push('total_phases must be a number');
+  if (!Number.isFinite(state.total_phases)) {
+    errors.push('total_phases must be a finite number');
   }
   if (!Array.isArray(state.phases)) {
     errors.push('phases must be an array');
@@ -175,8 +178,8 @@ export function validateState(state) {
     if (typeof state.context.last_session !== 'string') {
       errors.push('context.last_session must be a string');
     }
-    if (typeof state.context.remaining_percentage !== 'number') {
-      errors.push('context.remaining_percentage must be a number');
+    if (!Number.isFinite(state.context.remaining_percentage)) {
+      errors.push('context.remaining_percentage must be a finite number');
     }
   }
   if (state.research !== null && !isPlainObject(state.research)) {
@@ -230,8 +233,8 @@ export function validateState(state) {
         errors.push('phase must be an object');
         continue;
       }
-      if (typeof phase.id !== 'number') {
-        errors.push('phase.id must be a number');
+      if (!Number.isFinite(phase.id)) {
+        errors.push('phase.id must be a finite number');
       }
       if (!phase.name || typeof phase.name !== 'string') {
         errors.push(`Phase ${phase.id}: name must be a non-empty string`);
@@ -245,15 +248,15 @@ export function validateState(state) {
         if (!PHASE_REVIEW_STATUS.includes(phase.phase_review.status)) {
           errors.push(`Phase ${phase.id}: invalid phase_review.status ${phase.phase_review.status}`);
         }
-        if (typeof phase.phase_review.retry_count !== 'number') {
-          errors.push(`Phase ${phase.id}: phase_review.retry_count must be a number`);
+        if (!Number.isFinite(phase.phase_review.retry_count)) {
+          errors.push(`Phase ${phase.id}: phase_review.retry_count must be a finite number`);
         }
       }
-      if (typeof phase.tasks !== 'number') {
-        errors.push(`Phase ${phase.id}: tasks must be a number`);
+      if (!Number.isFinite(phase.tasks)) {
+        errors.push(`Phase ${phase.id}: tasks must be a finite number`);
       }
-      if (typeof phase.done !== 'number') {
-        errors.push(`Phase ${phase.id}: done must be a number`);
+      if (!Number.isFinite(phase.done)) {
+        errors.push(`Phase ${phase.id}: done must be a finite number`);
       }
       if (!Array.isArray(phase.todo)) {
         errors.push(`Phase ${phase.id}: todo must be an array`);
@@ -268,8 +271,8 @@ export function validateState(state) {
         if (typeof phase.phase_handoff.tests_passed !== 'boolean') {
           errors.push(`Phase ${phase.id}: phase_handoff.tests_passed must be boolean`);
         }
-        if (typeof phase.phase_handoff.critical_issues_open !== 'number') {
-          errors.push(`Phase ${phase.id}: phase_handoff.critical_issues_open must be a number`);
+        if (!Number.isFinite(phase.phase_handoff.critical_issues_open)) {
+          errors.push(`Phase ${phase.id}: phase_handoff.critical_issues_open must be a finite number`);
         }
         if ('direction_ok' in phase.phase_handoff && typeof phase.phase_handoff.direction_ok !== 'boolean') {
           errors.push(`Phase ${phase.id}: phase_handoff.direction_ok must be boolean when present`);
@@ -295,8 +298,8 @@ export function validateState(state) {
         if (!Array.isArray(task.requires)) {
           errors.push(`Task ${task.id}: requires must be an array`);
         }
-        if (typeof task.retry_count !== 'number') {
-          errors.push(`Task ${task.id}: retry_count must be a number`);
+        if (!Number.isFinite(task.retry_count)) {
+          errors.push(`Task ${task.id}: retry_count must be a finite number`);
         }
         if (typeof task.review_required !== 'boolean') {
           errors.push(`Task ${task.id}: review_required must be a boolean`);
@@ -324,7 +327,7 @@ export function validateState(state) {
  */
 export function validateExecutorResult(r) {
   const errors = [];
-  if (!r.task_id) errors.push('missing task_id');
+  if (typeof r.task_id !== 'string' || r.task_id.length === 0) errors.push('missing task_id');
   if (!['checkpointed', 'blocked', 'failed'].includes(r.outcome)) errors.push('invalid outcome');
   if (typeof r.summary !== 'string' || r.summary.length === 0) errors.push('summary must be non-empty string');
   if ('checkpoint_commit' in r && r.checkpoint_commit !== null && typeof r.checkpoint_commit !== 'string') {
@@ -402,7 +405,7 @@ export function validateResearcherResult(r) {
  */
 export function validateDebuggerResult(r) {
   const errors = [];
-  if (!r.task_id) errors.push('missing task_id');
+  if (typeof r.task_id !== 'string' || r.task_id.length === 0) errors.push('missing task_id');
   if (!['root_cause_found', 'fix_suggested', 'failed'].includes(r.outcome)) errors.push('invalid outcome');
   if (typeof r.root_cause !== 'string' || r.root_cause.length === 0) errors.push('root_cause must be non-empty string');
   if (!Array.isArray(r.evidence)) errors.push('evidence must be array');
@@ -433,14 +436,17 @@ export function validateDebuggerResult(r) {
 }
 
 export function createInitialState({ project, phases }) {
+  if (!Array.isArray(phases)) {
+    return { error: true, message: 'phases must be an array' };
+  }
   // Validate task names and uniqueness before creating state
   const seenIds = new Set();
-  for (const [pi, p] of (phases || []).entries()) {
+  for (const [pi, p] of phases.entries()) {
     for (const [ti, t] of (p.tasks || []).entries()) {
       if (!t.name || typeof t.name !== 'string') {
         return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: name is required (got ${JSON.stringify(t.name)})` };
       }
-      const id = `${pi + 1}.${t.index || ti + 1}`;
+      const id = `${pi + 1}.${t.index ?? (ti + 1)}`;
       if (seenIds.has(id)) {
         return { error: true, message: `Duplicate task ID: ${id} in phase ${pi + 1}` };
       }
@@ -464,7 +470,7 @@ export function createInitialState({ project, phases }) {
       tasks: p.tasks ? p.tasks.length : 0,
       done: 0,
       todo: (p.tasks || []).map((t, ti) => ({
-        id: `${i + 1}.${t.index || ti + 1}`,
+        id: `${i + 1}.${t.index ?? (ti + 1)}`,
         name: t.name,
         lifecycle: 'pending',
         level: t.level || 'L1',

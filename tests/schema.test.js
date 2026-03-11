@@ -204,7 +204,7 @@ describe('schema', () => {
       state.plan_version = 'v1';
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('plan_version must be a number')));
+      assert.ok(result.errors.some(e => e.includes('plan_version must be a finite number')));
     });
 
     it('rejects non-number current_phase', () => {
@@ -212,7 +212,7 @@ describe('schema', () => {
       state.current_phase = 'phase1';
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('current_phase must be a number')));
+      assert.ok(result.errors.some(e => e.includes('current_phase must be a finite number')));
     });
 
     it('rejects non-number total_phases', () => {
@@ -220,7 +220,7 @@ describe('schema', () => {
       state.total_phases = '0';
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('total_phases must be a number')));
+      assert.ok(result.errors.some(e => e.includes('total_phases must be a finite number')));
     });
 
     it('rejects non-array phases', () => {
@@ -260,7 +260,7 @@ describe('schema', () => {
       state.context.remaining_percentage = '100';
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('context.remaining_percentage must be a number')));
+      assert.ok(result.errors.some(e => e.includes('context.remaining_percentage must be a finite number')));
     });
 
     it('rejects non-null non-object research', () => {
@@ -366,7 +366,7 @@ describe('schema', () => {
       state.total_phases = 1;
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('phase.id must be a number')));
+      assert.ok(result.errors.some(e => e.includes('phase.id must be a finite number')));
     });
 
     it('rejects phase with missing name', () => {
@@ -402,7 +402,7 @@ describe('schema', () => {
       state.total_phases = 1;
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('phase_review.retry_count must be a number')));
+      assert.ok(result.errors.some(e => e.includes('phase_review.retry_count must be a finite number')));
     });
 
     it('rejects phase with non-object phase_review', () => {
@@ -420,7 +420,7 @@ describe('schema', () => {
       state.total_phases = 1;
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('tasks must be a number')));
+      assert.ok(result.errors.some(e => e.includes('tasks must be a finite number')));
     });
 
     it('rejects phase with non-number done', () => {
@@ -429,7 +429,7 @@ describe('schema', () => {
       state.total_phases = 1;
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('done must be a number')));
+      assert.ok(result.errors.some(e => e.includes('done must be a finite number')));
     });
 
     it('rejects phase with non-object phase_handoff', () => {
@@ -465,7 +465,7 @@ describe('schema', () => {
       state.total_phases = 1;
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('critical_issues_open must be a number')));
+      assert.ok(result.errors.some(e => e.includes('critical_issues_open must be a finite number')));
     });
 
     it('rejects phase_handoff with non-boolean direction_ok when present', () => {
@@ -530,7 +530,7 @@ describe('schema', () => {
       state.phases[0].todo[0].retry_count = 'x';
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('retry_count must be a number')));
+      assert.ok(result.errors.some(e => e.includes('retry_count must be a finite number')));
     });
 
     it('rejects task with non-boolean review_required', () => {

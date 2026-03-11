@@ -53,48 +53,50 @@ export async function init({ project, phases, research, force = false, basePath 
   const gsdDir = join(basePath, '.gsd');
   const statePath = join(gsdDir, 'state.json');
 
-  // Guard: reject re-initialization unless force is set
-  if (!force) {
-    try {
-      await stat(statePath);
-      return { error: true, message: 'state.json already exists; pass force: true to reinitialize' };
-    } catch {} // File doesn't exist, proceed
-  }
+  return withStateLock(async () => {
+    // Guard: reject re-initialization unless force is set
+    if (!force) {
+      try {
+        await stat(statePath);
+        return { error: true, message: 'state.json already exists; pass force: true to reinitialize' };
+      } catch {} // File doesn't exist, proceed
+    }
 
-  const phasesDir = join(gsdDir, 'phases');
+    const phasesDir = join(gsdDir, 'phases');
 
-  await ensureDir(phasesDir);
-  if (research) {
-    await ensureDir(join(gsdDir, 'research'));
-  }
+    await ensureDir(phasesDir);
+    if (research) {
+      await ensureDir(join(gsdDir, 'research'));
+    }
 
-  const state = createInitialState({ project, phases });
-  if (state.error) return state;
-  state.git_head = await getGitHead(basePath);
+    const state = createInitialState({ project, phases });
+    if (state.error) return state;
+    state.git_head = await getGitHead(basePath);
 
-  // Create plan.md placeholder (atomic write)
-  await writeAtomic(
-    join(gsdDir, 'plan.md'),
-    `# ${project}\n\nPlan placeholder — populate during planning phase.\n`,
-  );
-
-  // Create phase placeholder .md files (atomic writes)
-  for (const phase of state.phases) {
+    // Create plan.md placeholder (atomic write)
     await writeAtomic(
-      join(phasesDir, `phase-${phase.id}.md`),
-      `# Phase ${phase.id}: ${phase.name}\n\nTasks and details go here.\n`,
+      join(gsdDir, 'plan.md'),
+      `# ${project}\n\nPlan placeholder — populate during planning phase.\n`,
     );
-  }
 
-  const trackedFiles = [
-    join(gsdDir, 'plan.md'),
-    ...state.phases.map((phase) => join(phasesDir, `phase-${phase.id}.md`)),
-  ];
-  const mtimes = await Promise.all(trackedFiles.map(async (filePath) => (await stat(filePath)).mtimeMs));
-  state.context.last_session = new Date(Math.ceil(Math.max(...mtimes))).toISOString();
-  await writeJson(join(gsdDir, 'state.json'), state);
+    // Create phase placeholder .md files (atomic writes)
+    for (const phase of state.phases) {
+      await writeAtomic(
+        join(phasesDir, `phase-${phase.id}.md`),
+        `# Phase ${phase.id}: ${phase.name}\n\nTasks and details go here.\n`,
+      );
+    }
 
-  return { success: true };
+    const trackedFiles = [
+      join(gsdDir, 'plan.md'),
+      ...state.phases.map((phase) => join(phasesDir, `phase-${phase.id}.md`)),
+    ];
+    const mtimes = await Promise.all(trackedFiles.map(async (filePath) => (await stat(filePath)).mtimeMs));
+    state.context.last_session = new Date(Math.ceil(Math.max(...mtimes))).toISOString();
+    await writeJson(statePath, state);
+
+    return { success: true };
+  });
 }
 
 /**
@@ -894,7 +896,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       await writeAtomic(join(researchDir, fileName), normalizedArtifacts[fileName]);
     }
 
-    const nextResearch = {
+    const { decision_index: _, ...nextResearchBase } = {
       volatility: result.volatility,
       expires_at: result.expires_at,
       sources: result.sources,
@@ -904,14 +906,14 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     };
 
     const refreshResult = state.research
-      ? applyResearchRefresh(state, nextResearch)
+      ? applyResearchRefresh(state, { ...nextResearchBase, decision_index })
       : { warnings: [] };
 
-    // D-2: Compute merged decision_index explicitly before spread to avoid key-ordering fragility
+    // After applyResearchRefresh, state.research.decision_index is the merged result
     const mergedDecisionIndex = state.research?.decision_index || decision_index;
     state.research = {
       ...(state.research || {}),
-      ...nextResearch,
+      ...nextResearchBase,
       decision_index: mergedDecisionIndex,
     };
 

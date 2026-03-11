@@ -247,6 +247,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   return {
     content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    ...(result.error ? { isError: true } : {}),
   };
 });
 
@@ -254,6 +255,12 @@ export async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
+
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
+process.on('unhandledRejection', (err) => {
+  if (process.env.GSD_DEBUG) console.error('[gsd] unhandledRejection', err);
+});
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(console.error);
