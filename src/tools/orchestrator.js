@@ -1013,7 +1013,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     phaseUpdates.phase_handoff = { required_reviews_passed: true };
   }
 
-  const workflowMode = hasCritical ? 'executing_task' : state.workflow_mode;
+  const workflowMode = 'executing_task';
 
   const persistError = await persist(basePath, {
     workflow_mode: workflowMode,

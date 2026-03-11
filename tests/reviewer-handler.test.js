@@ -330,6 +330,59 @@ describe('handleReviewerResult', () => {
     assert.equal(state.current_review, null);
   });
 
+  it('transitions workflow_mode from reviewing_task to executing_task on acceptance', async () => {
+    await setupCheckpointedTask(tempDir);
+
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_task',
+        current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' },
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleReviewerResult({
+      result: makeValidReviewerResult(),
+      basePath: tempDir,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'review_accepted');
+    assert.equal(result.workflow_mode, 'executing_task');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.workflow_mode, 'executing_task');
+  });
+
+  it('transitions workflow_mode from reviewing_phase to executing_task on acceptance', async () => {
+    await setupCheckpointedTask(tempDir);
+
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_phase',
+        current_review: { scope: 'phase', scope_id: 1 },
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleReviewerResult({
+      result: makeValidReviewerResult({
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        accepted_tasks: ['1.1'],
+      }),
+      basePath: tempDir,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'review_accepted');
+    assert.equal(result.workflow_mode, 'executing_task');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.workflow_mode, 'executing_task');
+  });
+
   it('increments done count for each accepted task', async () => {
     await setupCheckpointedTask(tempDir);
 
