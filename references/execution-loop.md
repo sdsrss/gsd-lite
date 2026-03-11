@@ -123,7 +123,7 @@ executor 上下文传递协议 (orchestrator → executor):
 阶段完成后，编排器批量更新 state.json:
 - 更新 phase lifecycle → `accepted`
 - 更新 phase_handoff 信息
-- 归档旧 phase 的 evidence (只保留当前 phase 和上一 phase)
+- 归档旧 phase 的 evidence (仅保留当前 phase)
 - 推进 `current_phase` 到下一个 pending phase
 
 **规则:** 只有编排器写 state.json，避免并发竞态。
@@ -133,13 +133,13 @@ executor 上下文传递协议 (orchestrator → executor):
 每次派发子代理前和阶段切换时检查上下文健康度:
 
 ```
-remaining < 35%:
+remaining <= 35%:
   1. 保存完整状态到 state.json
   2. workflow_mode = awaiting_clear
-  3. 输出: "上下文剩余 <35%，已保存进度。请执行 /clear 然后 /gsd:resume 继续"
+  3. 输出: "上下文剩余 <=35%，已保存进度。请执行 /clear 然后 /gsd:resume 继续"
   4. 停止执行
 
-remaining < 25%:
+remaining <= 25%:
   1. 紧急保存状态到 state.json
   2. workflow_mode = awaiting_clear
   3. 输出: "上下文即将耗尽，已保存进度。请立即执行 /clear 然后 /gsd:resume"

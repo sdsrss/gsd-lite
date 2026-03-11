@@ -30,7 +30,7 @@ argument-hint: Optional feature or project description
 ## STEP 4 — 需求追问
 
 用户回答后，跟进追问直到需求清晰:
-- 使用 `references/questioning.md` 技巧 (挑战模糊、具象化、发现边界)
+- 使用 Read 工具读取 `references/questioning.md`，按其中的技巧进行提问 (挑战模糊、具象化、发现边界)
 - 每个问题提供选项，标识 ⭐ 推荐选项
 - 多轮对话直到需求清晰 (通常 2-4 轮)
 - 每轮最多 3-5 个问题，避免过度追问
@@ -123,6 +123,7 @@ argument-hint: Optional feature or project description
 ⛔ 不得在用户确认前执行 STEP 10-12。未确认 = 不写文件、不执行代码。
 </HARD-GATE>
 
+<HARD-GATE id="docs-written">
 ## STEP 10 — 生成文档
 
 1. 创建 `.gsd/` 目录
@@ -144,6 +145,13 @@ argument-hint: Optional feature or project description
 - `plan.md` 是只读索引: 生成后不再修改 (除非 replan)
 - `phases/*.md` 是 task 规格的唯一 source of truth
 - `plan.md` 不包含 task 级细节，避免与 `phases/*.md` 重复
+
+□ state.json 已写入且包含所有 canonical fields
+□ plan.md 已写入
+□ phases/*.md 已写入 (每个 phase 一个文件)
+□ 所有 task 都有 lifecycle / level / requires / review_required
+→ 全部满足才可继续
+</HARD-GATE>
 
 ## STEP 11 — 自动执行主路径
 

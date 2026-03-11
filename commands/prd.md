@@ -100,11 +100,15 @@ argument-hint: File path to requirements doc, or inline description text
 
 → 自审修正后再展示给用户
 
+<HARD-GATE id="plan-confirmation">
 ## STEP 9: 展示计划，等待用户确认
 
 - 展示完整分阶段计划
 - 用户指出问题 → 调整 → 再展示
 - 用户确认 → 继续
+
+⛔ 不得在用户确认前执行 STEP 10-12。未确认 = 不写文件、不执行代码。
+</HARD-GATE>
 
 ## STEP 10: 生成文档
 

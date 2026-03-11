@@ -177,6 +177,14 @@ description: Resume project execution from saved state with workspace validation
 
 ---
 
+### `planning` — 计划中断
+
+- 计划编制过程中被中断
+- 告知用户: "项目仍在计划阶段。请运行 /gsd:start 或 /gsd:prd 重新启动计划流程"
+- 不自动执行
+
+---
+
 ### `failed` — 已失败
 
 - 展示失败信息:

@@ -1468,4 +1468,76 @@ describe('orchestrator skeleton', () => {
     assert.equal(result.success, true);
     assert.equal(result.action, 'dispatch_executor');
   });
+
+  // --- I-15: handleReviewerResult with non-existent phase scope_id ---
+  it('handleReviewerResult returns error for non-existent phase scope_id', async () => {
+    await init({
+      project: 'reviewer-no-phase',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // Transition phase through lifecycle to accepted so getCurrentPhase fallback returns null
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
+    // Set current_phase to non-existent value — no active phases remain
+    await update({ updates: { current_phase: 99 }, basePath: tempDir });
+
+    const result = await handleReviewerResult({
+      result: {
+        scope: 'phase',
+        scope_id: 999,
+        review_level: 'L1-batch',
+        spec_passed: true,
+        quality_passed: true,
+        accepted_tasks: [],
+        rework_tasks: [],
+        critical_issues: [],
+        important_issues: [],
+        minor_issues: [],
+        evidence: [],
+      },
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.ok(result.message.includes('Phase not found'));
+  });
+
+  // --- I-16: handleReviewerResult with accepted_tasks pointing to non-existent task ---
+  it('handleReviewerResult skips non-existent task in accepted_tasks', async () => {
+    await init({
+      project: 'reviewer-skip-task',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed' }] }] },
+      basePath: tempDir,
+    });
+
+    const result = await handleReviewerResult({
+      result: {
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        spec_passed: true,
+        quality_passed: true,
+        accepted_tasks: ['1.1', '1.99'],  // 1.99 does not exist
+        rework_tasks: [],
+        critical_issues: [],
+        important_issues: [],
+        minor_issues: [],
+        evidence: [],
+      },
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+    // 1.1 should be accepted, 1.99 silently skipped
+    const state = await read({ basePath: tempDir });
+    const task = state.phases[0].todo.find(t => t.id === '1.1');
+    assert.equal(task.lifecycle, 'accepted');
+  });
 });

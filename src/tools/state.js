@@ -466,13 +466,12 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
 async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
   if (!state.evidence) return 0;
 
-  const threshold = currentPhase;
   const toArchive = {};
   const toKeep = {};
 
   for (const [id, entry] of Object.entries(state.evidence)) {
     const phaseNum = parseScopePhase(entry.scope);
-    if (phaseNum !== null && phaseNum < threshold) {
+    if (phaseNum !== null && phaseNum < currentPhase) {
       toArchive[id] = entry;
     } else {
       toKeep[id] = entry;
@@ -942,11 +941,10 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       throw err;
     }
 
-    const { decision_index: _, ...nextResearchBase } = {
+    const nextResearchBase = {
       volatility: result.volatility,
       expires_at: result.expires_at,
       sources: result.sources,
-      decision_index,
       files: RESEARCH_FILES,
       updated_at: new Date().toISOString(),
     };

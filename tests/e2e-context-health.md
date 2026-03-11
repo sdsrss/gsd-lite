@@ -19,9 +19,9 @@ Claude Code Runtime
   │
   └─ PostToolUse hook (每次 tool use 后)
       → 读取 .gsd/.context-health
-      → < 20% → 🛑 EMERGENCY 信号
-      → < 40% → ⚠️ LOW 信号
-      → >= 40% → null (静默)
+      → <= 25% → 🛑 EMERGENCY 信号
+      → <= 35% → ⚠️ LOW 信号
+      → > 35% → null (静默)
 ```
 
 ---
@@ -57,7 +57,7 @@ Claude Code Runtime
 
 ---
 
-## Test Case 2: PostToolUse Hook — 正常范围 (≥ 40%)
+## Test Case 2: PostToolUse Hook — 正常范围 (> 35%)
 
 **Setup:** `.gsd/.context-health` 内容 = `"72"`
 
@@ -70,7 +70,7 @@ Claude Code Runtime
 
 ---
 
-## Test Case 3: PostToolUse Hook — 低阈值 (20% ≤ x < 40%)
+## Test Case 3: PostToolUse Hook — 低阈值 (25% < x <= 35%)
 
 **Setup:** `.gsd/.context-health` 内容 = `"35"`
 
@@ -87,7 +87,7 @@ Claude Code Runtime
 
 ---
 
-## Test Case 4: PostToolUse Hook — 紧急阈值 (< 20%)
+## Test Case 4: PostToolUse Hook — 紧急阈值 (<= 25%)
 
 **Setup:** `.gsd/.context-health` 内容 = `"15"`
 
@@ -118,35 +118,35 @@ Claude Code Runtime
 
 ## Test Case 6: 阈值边界值
 
-### 6a. 恰好 40%
+### 6a. 恰好 36%
 
-**Setup:** `.context-health` = `"40"`
+**Setup:** `.context-health` = `"36"`
 
 **Verify:**
-- [ ] 返回 `null`（40 不 < 40）
+- [ ] 返回 `null`（36 > 35，不触发）
 - [ ] 不触发警告
 
-### 6b. 恰好 39%
+### 6b. 恰好 35%
 
-**Setup:** `.context-health` = `"39"`
-
-**Verify:**
-- [ ] 返回 ⚠️ LOW 警告
-
-### 6c. 恰好 20%
-
-**Setup:** `.context-health` = `"20"`
+**Setup:** `.context-health` = `"35"`
 
 **Verify:**
-- [ ] 返回 ⚠️ LOW 警告（20 不 < 20）
+- [ ] 返回 ⚠️ LOW 警告（35 <= 35 触发）
+
+### 6c. 恰好 26%
+
+**Setup:** `.context-health` = `"26"`
+
+**Verify:**
+- [ ] 返回 ⚠️ LOW 警告（26 > 25，不是 EMERGENCY）
 - [ ] 不是 EMERGENCY
 
-### 6d. 恰好 19%
+### 6d. 恰好 25%
 
-**Setup:** `.context-health` = `"19"`
+**Setup:** `.context-health` = `"25"`
 
 **Verify:**
-- [ ] 返回 🛑 EMERGENCY 警告
+- [ ] 返回 🛑 EMERGENCY 警告（25 <= 25 触发）
 
 ---
 

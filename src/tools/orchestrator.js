@@ -620,22 +620,28 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = 
         message: 'Workflow already completed',
       };
     case 'failed': {
-      const failedPhases = (state.phases || []).filter((p) => p.lifecycle === 'failed');
-      const failedTasks = (state.phases || []).flatMap((phase) =>
-        (phase.todo || []).filter((t) => t.lifecycle === 'failed').map((t) => ({
-          id: t.id,
-          name: t.name,
-          phase_id: phase.id,
-          retry_count: t.retry_count || 0,
-          last_failure_summary: t.last_failure_summary || null,
-          debug_context: t.debug_context || null,
-        }))
-      );
+      const failedPhases = [];
+      const failedTasks = [];
+      for (const phase of state.phases || []) {
+        if (phase.lifecycle === 'failed') failedPhases.push({ id: phase.id, name: phase.name });
+        for (const t of phase.todo || []) {
+          if (t.lifecycle === 'failed') {
+            failedTasks.push({
+              id: t.id,
+              name: t.name,
+              phase_id: phase.id,
+              retry_count: t.retry_count || 0,
+              last_failure_summary: t.last_failure_summary || null,
+              debug_context: t.debug_context || null,
+            });
+          }
+        }
+      }
       return {
         success: true,
         action: 'await_recovery_decision',
         workflow_mode: state.workflow_mode,
-        failed_phases: failedPhases.map((p) => ({ id: p.id, name: p.name })),
+        failed_phases: failedPhases,
         failed_tasks: failedTasks,
         recovery_options: ['retry_failed', 'skip_failed', 'replan'],
         message: 'Workflow is in failed state. Recovery options available.',

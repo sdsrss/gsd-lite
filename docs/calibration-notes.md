@@ -10,19 +10,19 @@
 
 | 阈值 | 行为 | 严重性 |
 |------|------|--------|
-| < 40% remaining | 保存状态 → `awaiting_clear` → 停止执行 | Warning |
-| < 20% remaining | 紧急保存 → 立即停止 | Critical |
+| <= 35% remaining | 保存状态 → `awaiting_clear` → 停止执行 | Warning |
+| <= 25% remaining | 紧急保存 → 立即停止 | Critical |
 
 ### 设计理由
 
-- **40%** — 为当前 task 完成 + checkpoint 保存留出足够空间。低于此值继续执行存在写入不完整风险。
-- **20%** — 紧急阈值。此时仅能完成状态序列化，不足以安全执行任何 agent 调用。
+- **35%** — 为当前 task 完成 + checkpoint 保存留出足够空间。低于此值继续执行存在写入不完整风险。经校准从 40% 调整至 35%，减少不必要的中断。
+- **25%** — 紧急阈值。此时仅能完成状态序列化，不足以安全执行任何 agent 调用。经校准从 20% 调整至 25%，确保更安全的保存窗口。
 
 ### 调整指南
 
-- 若项目 task 粒度大 (单 task >3 次 agent 调用)，考虑将 warning 提高到 **50%**
-- 若项目 task 粒度小 (单 task 通常 1 次 agent 调用)，可降至 **35%**
-- Critical 阈值 **不建议低于 15%**，否则可能丢失状态
+- 若项目 task 粒度大 (单 task >3 次 agent 调用)，考虑将 warning 提高到 **45%**
+- 若项目 task 粒度小 (单 task 通常 1 次 agent 调用)，可降至 **30%**
+- Critical 阈值 **不建议低于 20%**，否则可能丢失状态
 - 监控指标: 因 context 不足导致的 `awaiting_clear` 频率。每个 session 超过 3 次说明 task 粒度需要拆分
 
 ---

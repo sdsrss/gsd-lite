@@ -68,14 +68,18 @@ process.stdin.on('end', () => {
       process.exit(0);
     }
 
+    // Non-GSD sessions: don't interfere — let Claude's auto-compaction handle it
+    const isGsdActive = metrics.has_gsd === true;
+    if (!isGsdActive) {
+      process.exit(0);
+    }
+
     // Debounce logic
     const warnPath = path.join(tmpDir, `gsd-ctx-${sessionId}-warned.json`);
     let warnData = { callsSinceWarn: 0, lastLevel: null };
-    let firstWarn = true;
 
     try {
       warnData = JSON.parse(fs.readFileSync(warnPath, 'utf8'));
-      firstWarn = false;
     } catch {
       // No prior warning state — first warning this session
     }
@@ -85,25 +89,24 @@ process.stdin.on('end', () => {
     const isCritical = remaining <= CRITICAL_THRESHOLD;
     const currentLevel = isCritical ? 'critical' : 'warning';
 
-    // Severity escalation bypasses debounce
+    // Atomic debounce state write helper
+    const writeWarnData = (data) => {
+      const tmpFile = warnPath + `.${process.pid}-${Date.now()}.tmp`;
+      fs.writeFileSync(tmpFile, JSON.stringify(data));
+      fs.renameSync(tmpFile, warnPath);
+    };
+
+    // Severity escalation bypasses debounce (lastLevel null = first warning, always fire)
     const severityEscalated = currentLevel === 'critical' && warnData.lastLevel === 'warning';
-    if (!firstWarn && warnData.callsSinceWarn < DEBOUNCE_CALLS && !severityEscalated) {
-      fs.writeFileSync(warnPath, JSON.stringify(warnData));
+    if (warnData.lastLevel !== null && warnData.callsSinceWarn < DEBOUNCE_CALLS && !severityEscalated) {
+      writeWarnData(warnData);
       process.exit(0);
     }
 
     // Reset debounce
     warnData.callsSinceWarn = 0;
     warnData.lastLevel = currentLevel;
-    fs.writeFileSync(warnPath, JSON.stringify(warnData));
-
-    // Use bridge data to avoid extra filesystem check
-    const isGsdActive = metrics.has_gsd === true;
-
-    // Non-GSD sessions: don't interfere — let Claude's auto-compaction handle it
-    if (!isGsdActive) {
-      process.exit(0);
-    }
+    writeWarnData(warnData);
 
     let message;
     if (isCritical) {

@@ -1,7 +1,7 @@
 ---
 name: debugger
 description: Systematic debugging with root cause analysis
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Bash, Grep, Glob
 ---
 
 <role>
@@ -54,11 +54,11 @@ Phase 3 假设测试:
   2. 最小变更测试 (一次只改一个变量)
   3. 验证: 有效 → Phase 4 / 无效 → 新假设
 
-Phase 4 实施修复:
-  1. 写失败测试 (复现 bug)
-  2. 修复根因 (不是症状)
-  3. 验证测试通过 + 无回归
-  → 3 次修复失败 → 停止。质疑架构。报告给编排器。
+Phase 4 修复方向建议:
+  1. 提出修复方案 (针对根因，不是症状)
+  2. 建议失败测试用例 (供 executor 实现)
+  3. 评估修复影响范围 (哪些下游可能受影响)
+  → 3 次修复方向均被 executor 验证无效 → 停止。标记 architecture_concern: true。报告给编排器。
 </four_phases>
 
 <result_contract>

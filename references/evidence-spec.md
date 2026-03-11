@@ -102,13 +102,12 @@ if (Object.keys(state.evidence).length > MAX_EVIDENCE_ENTRIES) {
 
 `_pruneEvidenceFromState(state, currentPhase, gsdDir)`:
 
-1. 计算阈值: `threshold = currentPhase - 1`
-2. 遍历所有 evidence 条目
-3. 对每条 evidence 调用 `parseScopePhase(entry.scope)` 提取 phase 编号
-4. 如果 `phaseNum !== null && phaseNum < threshold` -> 标记为待归档
-5. 其余保留 (包括 scope 无法解析的条目)
+1. 遍历所有 evidence 条目
+2. 对每条 evidence 调用 `parseScopePhase(entry.scope)` 提取 phase 编号
+3. 如果 `phaseNum !== null && phaseNum < currentPhase` -> 标记为待归档
+4. 其余保留 (包括 scope 无法解析的条目)
 
-规则: 保留当前 phase 和前一个 phase 的 evidence，归档更早 phase 的 evidence。
+规则: 仅保留当前 phase 的 evidence，归档所有更早 phase 的 evidence。
 
 ## 归档生命周期
 
