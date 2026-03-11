@@ -1,146 +1,250 @@
 # GSD-Lite
 
-> GSD 的管理外壳 + Superpowers 的质量内核，砍掉 65% 开销，实现低交互自动执行
+> Get Shit Done — AI orchestration for Claude Code
 
-GSD-Lite 是一个面向 Claude Code 的 AI 编排工具，将 [GSD](https://github.com/sdsrss/get-shit-done-cc) 的项目管理能力与 Superpowers 的质量纪律整合为一个精简、科学、高效的自动化开发系统。
+GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It combines structured project management with built-in quality discipline: TDD enforcement, anti-rationalization guards, multi-level code review, and automatic failure recovery — all driven by a state machine that keeps multi-phase projects on track.
 
-## 核心理念
+**Discuss thoroughly, execute automatically.** Have as many rounds of requirement discussion as needed. Once the plan is approved, GSD-Lite auto-executes: coding, self-review, independent review, verification, and phase advancement — with minimal human intervention.
+
+## Features
+
+### Structured Execution Engine
+- **Phase-based project management** — Break work into phases with ordered tasks, dependency tracking, and handoff gates
+- **State machine orchestration** — 11 workflow modes with precise state transitions, persistent to `state.json`
+- **Automatic task scheduling** — Gate-aware dependency resolution determines what runs next
+- **Session resilience** — Stop anytime, resume exactly where you left off — even across Claude Code restarts
+
+### Quality Discipline (Built-in, Not Optional)
+- **TDD enforcement** — "No production code without a failing test first" baked into every executor dispatch
+- **Anti-rationalization guards** — Red-flag checklists inline in every agent prompt, blocking common excuses to skip process
+- **Multi-level code review** — L0 self-review / L1 phase-batch review / L2 immediate independent review
+- **Contract change propagation** — When an API contract changes, downstream tasks automatically invalidate
+
+### Intelligent Failure Recovery
+- **3-strike retry with debugger escalation** — Failed tasks retry up to 3 times, then auto-dispatch a debugger agent
+- **Systematic root cause analysis** — Debugger tests hypotheses, finds root cause, feeds fix guidance back to executor
+- **Blocked task handling** — Blocked tasks are parked; execution continues with remaining tasks
+- **Rework propagation** — Critical review issues cascade invalidation to dependent tasks
+
+### Context Protection
+- **Subagent isolation** — Each task runs in its own agent context, preventing cross-contamination
+- **StatusLine monitoring** — Real-time context health tracking via Claude Code StatusLine
+- **Evidence-based verification** — Every claim backed by command output, not assertions
+- **Research with TTL** — Research artifacts include volatility ratings and expiration dates
+
+## Architecture
 
 ```
-用户 → 讨论+研究(确认需求) → 审批方案 → 自动执行(编码→自审→审查→验证→推进)
-         ↑                      ↑             ↑
-      主交互1               主交互2        常态自动推进
+User → discuss + research (confirm requirements) → approve plan → auto-execute
+        ↑                      ↑                        ↑
+     Interaction 1          Interaction 2          Autonomous execution
+                                              (code→review→verify→advance)
 ```
 
-**讨论充分，执行自动。** 需求讨论可多轮深入，方案确认后全自动执行。
+### 5 Commands
 
-## 与当前 GSD 的对比
+| Command | Purpose |
+|---------|---------|
+| `/gsd:start` | Interactive start — discuss requirements, research, plan, then auto-execute |
+| `/gsd:prd <input>` | Start from a requirements doc or description text |
+| `/gsd:resume` | Resume execution from saved state |
+| `/gsd:status` | View project progress dashboard |
+| `/gsd:stop` | Save state and pause execution |
 
-| 维度 | GSD | GSD-Lite |
-|------|-----|----------|
-| 命令数 | 32 个 | **5 个** |
-| Agent 数 | 12 个 | **4 个** |
-| 源文件 | 100+ 个 | **~27 个** |
-| 安装器 | 2465 行 | **~80 行** |
-| 用户交互 | 6+ 次确认 | **常态 2 次** |
-| TDD / 反合理化 / 质量纪律 | ❌ | ✅ |
+### 4 Agents
 
-## 5 个命令
+| Agent | Role | Built-in Discipline |
+|-------|------|---------------------|
+| **executor** | Execute a single task (TDD + self-review + checkpoint) | Iron Law + Red Flags + Deviation Rules |
+| **reviewer** | Two-stage review (spec check → quality check) | Independent verification + Hard Gates |
+| **researcher** | Ecosystem research (Context7 → official docs → web) | Confidence scoring + TTL |
+| **debugger** | 4-phase systematic root cause analysis | Root Cause Iron Law |
 
-| 命令 | 用途 |
-|------|------|
-| `/gsd:start` | 交互式启动：讨论→研究→计划→自动执行 |
-| `/gsd:prd <需求>` | 从需求文档/描述快速启动 |
-| `/gsd:resume` | 从断点恢复执行 |
-| `/gsd:status` | 查看项目进度 |
-| `/gsd:stop` | 保存状态并暂停 |
+### MCP Server (10 Tools)
 
-## 4 个 Agent
+| Tool | Purpose |
+|------|---------|
+| `health` | Server status and state existence check |
+| `state-init` | Initialize `.gsd/` directory with project structure |
+| `state-read` | Read state with optional field filtering |
+| `state-update` | Update canonical fields with lifecycle validation |
+| `phase-complete` | Complete a phase after verifying handoff gates |
+| `orchestrator-resume` | Resume orchestration from current state |
+| `orchestrator-handle-executor-result` | Process executor output, advance lifecycle |
+| `orchestrator-handle-reviewer-result` | Process review, trigger accept/rework |
+| `orchestrator-handle-researcher-result` | Store research artifacts and decisions |
+| `orchestrator-handle-debugger-result` | Process root cause analysis, re-dispatch executor |
 
-| Agent | 职责 | 内置纪律 |
-|-------|------|---------|
-| **executor** | 执行单 task (TDD + 自审 + checkpoint) | 铁律 + 红旗 + 偏差规则 |
-| **reviewer** | 双阶段审查 (规格→质量) | 独立验证 + HARD-GATE |
-| **researcher** | 生态系统研究 (Context7→官方文档→WebSearch) | 置信度标注 |
-| **debugger** | 4 阶段系统性根因分析 | 根因铁律 |
+## Installation
 
-## 核心能力
-
-- **上下文腐败防护** — 子代理隔离 + task 边界 + StatusLine 监控 + `/clear` + `/gsd:resume`
-- **规格驱动开发** — plan.md 索引 + phases/*.md 规格 → executor 精确执行
-- **分阶段执行** — phase 管理边界 + task 执行边界 + gate-aware 依赖调度
-- **分层审查** — L0 自审 / L1 阶段批量 / L2 即时独立审查
-- **TDD 铁律** — NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST (含合理例外)
-- **反合理化** — 红旗列表内联到每个 Agent，封堵跳过流程的借口
-- **返工失效传播** — contract_changed → 下游 task 自动 needs_revalidation
-- **状态机恢复** — state.json 持久化，11 种 workflow_mode 精确恢复
-
-## 安装
+### Method 1: Claude Code Plugin (Recommended)
 
 ```bash
-# 方式一：Claude Code 插件市场 (推荐)
-/plugin marketplace add sdsrss/gsd-lite
-/plugin install gsd
+claude /plugin install sdsrss/gsd-lite
+```
 
-# 方式二：npx
+Automatically registers all commands, agents, workflows, MCP server, and hooks.
+
+### Method 2: npx
+
+```bash
 npx gsd-lite install
+```
 
-# 方式三：手动
+### Method 3: Manual
+
+```bash
 git clone https://github.com/sdsrss/gsd-lite.git
 cd gsd-lite && npm install && node cli.js install
 ```
 
-**方式一** 通过 Claude Code 内置插件系统，自动注册命令、Agent、工作流、MCP Server 和 Hooks。
+Methods 2 & 3 write components to `~/.claude/` and register the MCP server in `settings.json`.
 
-**方式二/三** 通过安装脚本，把组件写入 `~/.claude/` 并注册 MCP Server 到 settings.json。卸载：`node cli.js uninstall`
+Uninstall: `node cli.js uninstall` or `npx gsd-lite uninstall`
 
-## 更新 / 升级
+## Upgrade
 
 ```bash
-# 插件方式
-/plugin update gsd
+# Plugin
+claude /plugin update gsd
 
-# 源码方式
-git pull && npm install && node cli.js install
-
-# npx 方式
+# npx
 npx gsd-lite install
+
+# Manual
+git pull && npm install && node cli.js install
 ```
 
-- 安装器支持重复执行，通常**不需要先卸载**
-- 从旧版 (gsd-lite) 升级会自动清理旧文件
-- 更新后建议重启 Claude Code 或重开会话，以加载最新 MCP server / hooks
+- Installer is idempotent — no need to uninstall first
+- Upgrades from older versions auto-clean legacy files
+- Restart Claude Code after updating to load new MCP server / hooks
 
-## 快速开始
+## Quick Start
+
+### Interactive Start
 
 ```bash
-# 交互式启动
 /gsd:start
+```
 
-# 从需求文档启动
+GSD-Lite will:
+1. Analyze your codebase (tech stack, conventions, structure)
+2. Ask what you want to build
+3. Research the ecosystem (libraries, patterns, pitfalls)
+4. Present a phased plan for your approval
+5. Auto-execute all phases once approved
+
+### From Requirements
+
+```bash
+# From a requirements document
 /gsd:prd docs/requirements.md
 
-# 从描述启动
-/gsd:prd "实现用户认证系统，支持 JWT + OAuth2"
+# From a description
+/gsd:prd "Build a REST API with JWT auth, rate limiting, and PostgreSQL"
 ```
 
-## 项目结构
+### Resume After Interruption
+
+```bash
+/gsd:resume
+```
+
+Validates workspace consistency (git HEAD, file integrity), then resumes from the exact task and workflow mode where execution stopped.
+
+### Monitor Progress
+
+```bash
+/gsd:status
+```
+
+Shows phase completion, task lifecycle states, review status, and blockers — all derived from canonical state fields in real-time.
+
+## How It Works
+
+### Execution Loop
+
+```
+1. orchestrator-resume → determines next action
+2. dispatch executor → runs task with TDD discipline
+3. executor checkpoints → saves work + evidence
+4. dispatch reviewer → independent spec + quality review
+5. reviewer accepts → task done, schedule next
+   reviewer rejects → rework with specific feedback
+6. all tasks done → phase handoff gate check
+7. gate passes → advance to next phase
+8. all phases done → project complete
+```
+
+### Failure Recovery
+
+```
+executor fails (attempt 1) → retry with context
+executor fails (attempt 2) → retry with accumulated context
+executor fails (attempt 3) → dispatch debugger
+debugger analyzes → root cause + fix direction
+executor retries → with debugger guidance injected
+```
+
+### State Persistence
+
+All state lives in `.gsd/state.json` — a single source of truth with:
+- Canonical fields (whitelist-controlled, schema-validated)
+- Lifecycle state machine (pending → running → checkpointed → accepted)
+- Evidence references (command outputs, test results)
+- Research artifacts and decision index
+
+## Comparison with GSD
+
+| Dimension | GSD | GSD-Lite |
+|-----------|-----|----------|
+| Commands | 32 | **5** |
+| Agents | 12 | **4** |
+| Source files | 100+ | **~35** |
+| Installer | 2465 lines | **~80 lines** |
+| User interactions | 6+ confirmations | **Typically 2** |
+| TDD / Anti-rationalization | No | **Yes** |
+| State machine recovery | Partial | **Full (11 modes)** |
+| Evidence-based verification | No | **Yes** |
+
+## Project Structure
 
 ```
 gsd-lite/
-├── .claude-plugin/         # Claude Code 插件元数据
-│   ├── plugin.json         # 插件清单
-│   └── marketplace.json    # 插件市场目录
-├── .mcp.json               # MCP Server 配置 (插件系统)
-├── src/                    # MCP Server + 工具层 (~1100行)
-│   ├── server.js           # MCP Server (4 tools 注册)
-│   ├── schema.js           # State schema + lifecycle 校验
-│   ├── utils.js            # 共享工具 (原子写入, 路径, git)
+├── src/                    # MCP Server + tools (~3300 lines)
+│   ├── server.js           # MCP Server entry (10 tools)
+│   ├── schema.js           # State schema + lifecycle validation
+│   ├── utils.js            # Shared utilities (atomic writes, git)
 │   └── tools/
-│       ├── state.js        # State CRUD + evidence + 传播逻辑
-│       └── verify.js       # lint/typecheck/test 验证
-├── commands/               # 5 个 slash 命令 (~850行 Markdown)
-├── agents/                 # 4 个子代理 (~325行 Markdown)
-├── workflows/              # 5 个核心工作流 (~760行 Markdown)
-├── references/             # 4 个参考文档 (~400行 Markdown)
-├── hooks/                  # 上下文监控 (StatusLine + PostToolUse)
-│   ├── context-monitor.js  # Hook 实现
-│   └── hooks.json          # Hook 配置 (插件系统)
-├── cli.js                  # 安装/卸载 CLI 入口
-├── tests/                  # 456 个测试 (387 单元 + 69 E2E)
-├── install.js              # 安装脚本 (手动/npx 方式)
-└── uninstall.js            # 卸载脚本
+│       ├── state.js        # State CRUD + evidence + propagation
+│       ├── orchestrator.js # Orchestration logic + agent handlers
+│       └── verify.js       # lint/typecheck/test verification
+├── commands/               # 5 slash commands
+├── agents/                 # 4 subagent prompts
+├── workflows/              # 5 core workflows (TDD, review, debug, research, deviation)
+├── references/             # 8 reference docs (execution loop, state diagram, evidence spec, ...)
+├── hooks/                  # Context monitoring (StatusLine + PostToolUse)
+├── tests/                  # 575 tests (506 unit + 69 E2E)
+├── cli.js                  # Install/uninstall CLI entry
+├── install.js              # Installation script
+└── uninstall.js            # Uninstall script
 ```
 
-**~29 个交付文件 | ~1100 行代码 | ~2300 行 Markdown | 109 个测试**
+## Testing
 
-## 文档
+```bash
+npm test                    # Run all 575 tests
+npm run test:coverage       # Tests + coverage report (94%+ lines, 81%+ branches)
+npm run lint                # Biome lint
+node --test tests/file.js   # Run a single test file
+```
 
-- [设计方案 v3.5](docs/gsd-lite-design.md) — 完整架构与协议规范
-- [工程任务清单](docs/gsd-lite-engineering-tasks.md) — 38 个实施任务 (5 Phase, 全部完成)
-- [指标校准记录](docs/calibration-notes.md) — 上下文阈值与 TTL 校准
+## Documentation
+
+- [Design Document v3.5](docs/gsd-lite-design.md) — Full architecture and protocol spec
+- [Engineering Tasks](docs/gsd-lite-engineering-tasks.md) — 38 implementation tasks (5 phases, all complete)
+- [Calibration Notes](docs/calibration-notes.md) — Context threshold and TTL calibration
 
 ## License
 
 MIT
-
