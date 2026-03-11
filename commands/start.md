@@ -113,11 +113,15 @@ argument-hint: Optional feature or project description
 
 → 自审修正后再展示给用户。
 
+<HARD-GATE id="plan-confirmation">
 ## STEP 9 — 用户确认计划
 
 展示计划给用户，等待确认:
 - 用户指出问题 → 调整计划 → 重新展示
 - 用户确认 → 继续
+
+⛔ 不得在用户确认前执行 STEP 10-12。未确认 = 不写文件、不执行代码。
+</HARD-GATE>
 
 ## STEP 10 — 生成文档
 
