@@ -1164,6 +1164,37 @@ describe('createInitialState — duplicate task ID', () => {
     assert.equal(result.error, true);
     assert.match(result.message, /Duplicate task ID/);
   });
+
+  it('detects circular dependencies within a phase (M-7)', () => {
+    const result = createInitialState({
+      project: 'cycle-test',
+      phases: [{
+        name: 'P1',
+        tasks: [
+          { name: 'A', requires: [{ kind: 'task', id: '1.2', gate: 'accepted' }] },
+          { name: 'B', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }] },
+        ],
+      }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /Circular dependency/);
+  });
+
+  it('allows valid DAG dependencies (no cycle)', () => {
+    const result = createInitialState({
+      project: 'dag-test',
+      phases: [{
+        name: 'P1',
+        tasks: [
+          { name: 'A' },
+          { name: 'B', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }] },
+          { name: 'C', requires: [{ kind: 'task', id: '1.2', gate: 'accepted' }] },
+        ],
+      }],
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.project, 'dag-test');
+  });
 });
 
 describe('validateState — current_task and current_review types', () => {

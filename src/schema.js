@@ -33,7 +33,7 @@ export const PHASE_LIFECYCLE = {
   reviewing:  ['accepted', 'active'],
   accepted:   [],
   blocked:    ['active'],
-  failed:     [],
+  failed:     ['active'],  // H-3: Allow recovery from failed state (gated behind explicit user action)
 };
 
 export const TASK_LEVELS = ['L0', 'L1', 'L2', 'L3'];
@@ -532,6 +532,33 @@ export function validateDebuggerResult(r) {
   return { valid: errors.length === 0, errors };
 }
 
+// C-1: Schema migration infrastructure
+export const CURRENT_SCHEMA_VERSION = 1;
+
+/**
+ * Migrate state from older schema versions to current.
+ * Apply sequential migrations: v0→v1, v1→v2, etc.
+ * Mutates and returns the state object.
+ */
+export function migrateState(state) {
+  if (!state || typeof state !== 'object') return state;
+  const version = state.schema_version || 0;
+
+  // Migration v0 → v1: add missing fields introduced in v1
+  if (version < 1) {
+    if (!state.evidence) state.evidence = {};
+    if (!state.research) state.research = null;
+    if (!state.decisions) state.decisions = [];
+    if (!state.context) state.context = { last_session: new Date().toISOString(), remaining_percentage: 100 };
+    state.schema_version = 1;
+  }
+
+  // Future migrations go here:
+  // if (version < 2) { migrateV1toV2(state); state.schema_version = 2; }
+
+  return state;
+}
+
 export function createInitialState({ project, phases }) {
   if (!Array.isArray(phases)) {
     return { error: true, message: 'phases must be an array' };
@@ -548,6 +575,38 @@ export function createInitialState({ project, phases }) {
         return { error: true, message: `Duplicate task ID: ${id} in phase ${pi + 1}` };
       }
       seenIds.add(id);
+    }
+  }
+
+  // M-7: Detect circular dependencies within each phase (Kahn's algorithm)
+  for (const [pi, p] of phases.entries()) {
+    const tasks = p.tasks || [];
+    const taskIds = tasks.map((t, ti) => `${pi + 1}.${t.index ?? (ti + 1)}`);
+    const inDegree = new Map(taskIds.map(id => [id, 0]));
+    const adj = new Map(taskIds.map(id => [id, []]));
+    for (const [ti, t] of tasks.entries()) {
+      const id = `${pi + 1}.${t.index ?? (ti + 1)}`;
+      for (const dep of (t.requires || [])) {
+        if (dep.kind === 'task' && inDegree.has(dep.id)) {
+          adj.get(dep.id).push(id);
+          inDegree.set(id, inDegree.get(id) + 1);
+        }
+      }
+    }
+    const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
+    let sorted = 0;
+    while (queue.length > 0) {
+      const node = queue.shift();
+      sorted++;
+      for (const neighbor of adj.get(node)) {
+        const d = inDegree.get(neighbor) - 1;
+        inDegree.set(neighbor, d);
+        if (d === 0) queue.push(neighbor);
+      }
+    }
+    if (sorted < taskIds.length) {
+      const cycleNodes = [...inDegree.entries()].filter(([, d]) => d > 0).map(([id]) => id);
+      return { error: true, message: `Circular dependency detected in phase ${pi + 1}: ${cycleNodes.join(', ')}` };
     }
   }
   return {

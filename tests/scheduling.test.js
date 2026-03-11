@@ -92,13 +92,13 @@ describe('selectRunnableTask', () => {
     assert.equal(result.task, undefined);
   });
 
-  it('handles empty todo list', () => {
+  it('handles empty todo list — triggers review (D-4)', () => {
     const phase = { todo: [] };
     const result = selectRunnableTask(phase, {});
-    assert.equal(result.task, undefined);
+    assert.equal(result.mode, 'trigger_review');
   });
 
-  it('handles all tasks accepted (phase complete)', () => {
+  it('handles all tasks accepted — triggers phase review', () => {
     const phase = {
       todo: [
         { id: '1.1', lifecycle: 'accepted', requires: [], retry_count: 0 },
@@ -106,7 +106,7 @@ describe('selectRunnableTask', () => {
       ],
     };
     const result = selectRunnableTask(phase, {});
-    assert.equal(result.task, undefined);
+    assert.equal(result.mode, 'trigger_review');
   });
 
   it('handles mixed blocked and pending with unmet deps', () => {

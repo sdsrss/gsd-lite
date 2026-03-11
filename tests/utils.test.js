@@ -89,23 +89,26 @@ describe('utils', () => {
       assert.equal(first, gsdDir);
     });
 
-    it('clearGsdDirCache invalidates cache', async () => {
+    it('clearGsdDirCache invalidates positive cache', async () => {
       clearGsdDirCache();
       const isolatedDir = await mkdtemp('/tmp/gsd-cache-test-');
       try {
-        // First call: no .gsd → null
+        // First call: no .gsd → null (H-9: negative results NOT cached)
         const first = await getGsdDir(isolatedDir);
         assert.equal(first, null);
         // Create .gsd
         await mkdir(join(isolatedDir, '.gsd'));
-        // Still returns null (cached)
+        // H-9: Finds .gsd immediately — no clearGsdDirCache needed
+        const found = await getGsdDir(isolatedDir);
+        assert.equal(found, join(isolatedDir, '.gsd'));
+        // Positive result IS cached — verify by removing .gsd
+        await rm(join(isolatedDir, '.gsd'), { recursive: true, force: true });
         const cached = await getGsdDir(isolatedDir);
-        assert.equal(cached, null);
-        // Clear cache
+        assert.equal(cached, join(isolatedDir, '.gsd')); // still cached
+        // Clear cache → now sees .gsd is gone
         clearGsdDirCache();
-        // Now finds .gsd
         const fresh = await getGsdDir(isolatedDir);
-        assert.equal(fresh, join(isolatedDir, '.gsd'));
+        assert.equal(fresh, null);
       } finally {
         await rm(isolatedDir, { recursive: true, force: true });
       }

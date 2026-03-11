@@ -2,7 +2,7 @@
 
 import { join, dirname } from 'node:path';
 import { stat, writeFile, rename, unlink } from 'node:fs/promises';
-import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject, clearGsdDirCache } from '../utils.js';
+import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject, clearGsdDirCache, withFileLock } from '../utils.js';
 import {
   CANONICAL_FIELDS,
   TASK_LIFECYCLE,
@@ -13,16 +13,30 @@ import {
   validateStateUpdate,
   validateTransition,
   createInitialState,
+  migrateState,
 } from '../schema.js';
 import { runAll } from './verify.js';
 
 const RESEARCH_FILES = ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md'];
 const MAX_EVIDENCE_ENTRIES = 200;
+const MAX_ARCHIVE_ENTRIES = 1000;
 
 // C-1: Serialize all state mutations to prevent TOCTOU races
+// C-2: Layer cross-process advisory file lock on top of in-process queue
 let _mutationQueue = Promise.resolve();
+let _fileLockPath = null;
+
+export function setLockPath(lockPath) {
+  _fileLockPath = lockPath;
+}
+
 function withStateLock(fn) {
-  const p = _mutationQueue.then(fn);
+  const p = _mutationQueue.then(() => {
+    if (_fileLockPath) {
+      return withFileLock(_fileLockPath, fn);
+    }
+    return fn();
+  });
   _mutationQueue = p.catch(() => {});
   return p;
 }
@@ -62,6 +76,14 @@ export async function init({ project, phases, research, force = false, basePath 
         await stat(statePath);
         return { error: true, message: 'state.json already exists; pass force: true to reinitialize' };
       } catch {} // File doesn't exist, proceed
+    } else {
+      // H-8: Backup existing state before force overwrite
+      try {
+        const existing = await readJson(statePath);
+        if (existing.ok) {
+          await writeJson(join(gsdDir, 'state.json.bak'), existing.data);
+        }
+      } catch {} // No existing state to backup
     }
 
     const phasesDir = join(gsdDir, 'phases');
@@ -105,7 +127,7 @@ export async function init({ project, phases, research, force = false, basePath 
 /**
  * Read state.json, optionally filtering to specific fields.
  */
-export async function read({ fields, basePath = process.cwd() } = {}) {
+export async function read({ fields, basePath = process.cwd(), validate = false } = {}) {
   const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
@@ -115,7 +137,15 @@ export async function read({ fields, basePath = process.cwd() } = {}) {
   if (!result.ok) {
     return { error: true, message: result.error };
   }
-  const state = result.data;
+  const state = migrateState(result.data);
+
+  // H-7: Optional semantic validation on read
+  if (validate) {
+    const validation = validateState(state);
+    if (!validation.valid) {
+      return { error: true, message: `State validation failed: ${validation.errors.join('; ')}` };
+    }
+  }
 
   if (fields && Array.isArray(fields) && fields.length > 0) {
     const filtered = {};
@@ -152,6 +182,8 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
+  // C-2: Initialize cross-process lock path on first mutation
+  if (!_fileLockPath) _fileLockPath = join(dirname(statePath), 'state.lock');
 
   return withStateLock(async () => {
     const result = await readJson(statePath);
@@ -392,10 +424,11 @@ export async function phaseComplete({
     // Increment current_phase if this was the active phase
     if (state.current_phase === phase_id && phase_id < state.total_phases) {
       state.current_phase = phase_id + 1;
-      // Activate the next phase
+      // Activate the next phase (M-3: use validateTransition for consistency)
       const nextPhase = state.phases.find((p) => p.id === state.current_phase);
-      if (nextPhase && nextPhase.lifecycle === 'pending') {
-        nextPhase.lifecycle = 'active';
+      if (nextPhase) {
+        const nextTr = validateTransition('phase', nextPhase.lifecycle, 'active');
+        if (nextTr.valid) nextPhase.lifecycle = 'active';
       }
     } else if (state.current_phase === phase_id && phase_id >= state.total_phases) {
       // Final phase completed — mark workflow as completed
@@ -485,8 +518,15 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
     const existing = await readJson(archivePath);
     const archive = existing.ok ? existing.data : {};
     Object.assign(archive, toArchive);
-    await writeJson(archivePath, archive);
 
+    // H-2: Cap archive size to prevent unbounded growth
+    const archiveKeys = Object.keys(archive);
+    if (archiveKeys.length > MAX_ARCHIVE_ENTRIES) {
+      const toRemove = archiveKeys.slice(0, archiveKeys.length - MAX_ARCHIVE_ENTRIES);
+      for (const key of toRemove) delete archive[key];
+    }
+
+    await writeJson(archivePath, archive);
     state.evidence = toKeep;
   }
 
@@ -498,6 +538,9 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
  * Scope format is "task:X.Y" where X is the phase number.
  */
 export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) {
+  if (typeof currentPhase !== 'number' || !Number.isFinite(currentPhase)) {
+    return { error: true, message: 'currentPhase must be a finite number' };
+  }
   const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };

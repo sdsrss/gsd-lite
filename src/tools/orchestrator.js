@@ -17,6 +17,7 @@ import { getGitHead, getGsdDir } from '../utils.js';
 const MAX_DEBUG_RETRY = 3;
 const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
+const MAX_DECISIONS = 200;
 
 function isTerminalWorkflowMode(workflowMode) {
   return workflowMode === 'completed' || workflowMode === 'failed';
@@ -696,7 +697,9 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
   }
 
   const decisionEntries = buildDecisionEntries(result.decisions, phase.id, task.id, (state.decisions || []).length);
-  const decisions = [...(state.decisions || []), ...decisionEntries];
+  const allDecisions = [...(state.decisions || []), ...decisionEntries];
+  // H-1: Cap decisions to prevent unbounded growth
+  const decisions = allDecisions.length > MAX_DECISIONS ? allDecisions.slice(-MAX_DECISIONS) : allDecisions;
 
   if (result.outcome === 'checkpointed') {
     const reviewLevel = reclassifyReviewLevel(task, result);

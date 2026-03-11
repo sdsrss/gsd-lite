@@ -23,7 +23,7 @@ export async function getGsdDir(startDir = process.cwd()) {
     } catch {}
     const parent = dirname(dir);
     if (parent === dir) {
-      _gsdDirCache.set(resolved, null);
+      // H-9: Don't cache negative results — .gsd may be created later by init()
       return null;
     }
     dir = parent;
@@ -49,6 +49,52 @@ export async function getGitHead(cwd = process.cwd()) {
     return stdout.trim();
   } catch {
     return null;
+  }
+}
+
+// C-2: Advisory file lock for cross-process serialization
+const LOCK_STALE_MS = 10_000;
+const LOCK_RETRY_MS = 50;
+const LOCK_MAX_RETRIES = 100; // 5 seconds total
+
+/**
+ * Execute fn while holding an advisory file lock.
+ * Uses O_CREAT|O_EXCL (via 'wx' flag) for atomic lock acquisition.
+ * Stale locks (>10s) are automatically broken.
+ * Falls through without locking on non-EEXIST errors (e.g., read-only fs).
+ */
+export async function withFileLock(lockPath, fn) {
+  let acquired = false;
+  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
+    try {
+      await writeFile(lockPath, String(process.pid), { flag: 'wx' });
+      acquired = true;
+      break;
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        try {
+          const s = await stat(lockPath);
+          if (Date.now() - s.mtimeMs > LOCK_STALE_MS) {
+            try { await unlink(lockPath); } catch {}
+            continue;
+          }
+        } catch {
+          // stat failed — lock may have been released between checks
+          continue;
+        }
+        await new Promise(r => setTimeout(r, LOCK_RETRY_MS));
+      } else {
+        break; // Non-EEXIST error — proceed without lock
+      }
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (acquired) {
+      try { await unlink(lockPath); } catch {}
+    }
   }
 }
 

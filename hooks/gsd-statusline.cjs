@@ -16,8 +16,7 @@ function findGsdDir(startDir) {
   while (true) {
     const candidate = path.join(dir, '.gsd');
     try {
-      fs.statSync(candidate);
-      return candidate;
+      if (fs.statSync(candidate).isDirectory()) return candidate;
     } catch {
       const parent = path.dirname(dir);
       if (parent === dir) return null; // reached filesystem root
@@ -44,7 +43,7 @@ process.stdin.on('end', () => {
     let task = '';
     let hasGsd = false;
     const gsdDir = findGsdDir(cwd);
-    try {
+    if (gsdDir) try {
       const state = JSON.parse(fs.readFileSync(path.join(gsdDir, 'state.json'), 'utf8'));
       hasGsd = true;
       if (state.current_task && state.current_phase) {
