@@ -1131,10 +1131,14 @@ describe('orchestrator skeleton', () => {
 
     const result = await resumeWorkflow({ basePath: tempDir });
     assert.equal(result.success, true);
-    assert.equal(result.action, 'noop');
+    assert.equal(result.action, 'await_recovery_decision');
     assert.equal(result.workflow_mode, 'failed');
-    assert.deepEqual(result.failed_phases, [1]);
-    assert.deepEqual(result.failed_tasks, ['1.1']);
+    assert.deepEqual(result.failed_phases, [{ id: 1, name: 'Core' }]);
+    assert.equal(result.failed_tasks.length, 1);
+    assert.equal(result.failed_tasks[0].id, '1.1');
+    assert.equal(result.failed_tasks[0].name, 'Task A');
+    assert.equal(result.failed_tasks[0].phase_id, 1);
+    assert.deepEqual(result.recovery_options, ['retry_failed', 'skip_failed', 'replan']);
   });
 
   it('handles debugger result with task_failed (non-architecture)', async () => {

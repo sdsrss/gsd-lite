@@ -126,8 +126,9 @@ describe('resume flow matrix', () => {
       await update({ updates: { phases: [{ id: 1, lifecycle: 'failed', todo: [{ id: '1.1', lifecycle: 'failed' }] }] }, basePath: tempDir });
       await update({ updates: { workflow_mode: 'failed' }, basePath: tempDir });
       const failed = await resumeWorkflow({ basePath: tempDir });
-      assert.equal(failed.action, 'noop');
-      assert.deepEqual(failed.failed_tasks, ['1.1']);
+      assert.equal(failed.action, 'await_recovery_decision');
+      assert.deepEqual(failed.failed_tasks, [{ id: '1.1', name: 'Task A', phase_id: 1, retry_count: 0, last_failure_summary: null, debug_context: null }]);
+      assert.deepEqual(failed.recovery_options, ['retry_failed', 'skip_failed', 'replan']);
     });
 
     await withProject('resume-reconcile', async (tempDir) => {
@@ -261,6 +262,56 @@ describe('resume flow matrix', () => {
       const result = await resumeWorkflow({ basePath: tempDir });
       assert.equal(result.action, 'await_manual_intervention');
       assert.equal(result.resume_to, 'executing_task');
+    });
+  });
+
+  it('failed mode returns structured recovery info with task details', async () => {
+    await withProject('resume-failed-detailed', async (tempDir) => {
+      await update({ updates: { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({
+        updates: {
+          phases: [{
+            id: 1,
+            lifecycle: 'failed',
+            todo: [{
+              id: '1.1',
+              lifecycle: 'failed',
+              retry_count: 2,
+              last_failure_summary: 'Test assertion failed in auth module',
+              debug_context: { root_cause: 'Missing token refresh', fix_direction: 'Add refresh logic' },
+            }],
+          }],
+        },
+        basePath: tempDir,
+      });
+      await update({ updates: { workflow_mode: 'failed' }, basePath: tempDir });
+      const result = await resumeWorkflow({ basePath: tempDir });
+
+      // Action should indicate recovery decision needed
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'await_recovery_decision');
+      assert.equal(result.workflow_mode, 'failed');
+
+      // Failed phases should be objects with id and name
+      assert.equal(result.failed_phases.length, 1);
+      assert.equal(result.failed_phases[0].id, 1);
+      assert.equal(result.failed_phases[0].name, 'Core');
+
+      // Failed tasks should include detail fields
+      assert.equal(result.failed_tasks.length, 1);
+      const ft = result.failed_tasks[0];
+      assert.equal(ft.id, '1.1');
+      assert.equal(ft.name, 'Task A');
+      assert.equal(ft.phase_id, 1);
+      assert.equal(ft.retry_count, 2);
+      assert.equal(ft.last_failure_summary, 'Test assertion failed in auth module');
+      assert.deepEqual(ft.debug_context, { root_cause: 'Missing token refresh', fix_direction: 'Add refresh logic' });
+
+      // Recovery options per resume.md spec
+      assert.deepEqual(result.recovery_options, ['retry_failed', 'skip_failed', 'replan']);
+
+      // Message should mention recovery
+      assert.match(result.message, /[Rr]ecovery/);
     });
   });
 

@@ -366,10 +366,11 @@ describe('TC11: failed — noop', () => {
     const res = await resumeWorkflow({ basePath: dir });
 
     assert.equal(res.success, true);
-    assert.equal(res.action, 'noop');
+    assert.equal(res.action, 'await_recovery_decision');
     assert.equal(res.workflow_mode, 'failed');
     assert.ok(Array.isArray(res.failed_tasks));
-    assert.ok(res.failed_tasks.includes('1.1'));
+    assert.ok(res.failed_tasks.some((t) => t.id === '1.1'));
+    assert.deepEqual(res.recovery_options, ['retry_failed', 'skip_failed', 'replan']);
   });
 });
 
