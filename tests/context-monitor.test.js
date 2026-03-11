@@ -60,12 +60,12 @@ describe('context-monitor hooks', () => {
       writeFileSync(join(tempDir, '.gsd', '.context-health'), String(value));
     }
 
-    it('returns null when health >= 35', () => {
+    it('returns null when health > 35', () => {
       writeHealth(72);
       assert.equal(postToolUse(tempDir), null);
     });
 
-    it('returns LOW warning when 25 <= health < 35', () => {
+    it('returns LOW warning when 25 < health <= 35', () => {
       writeHealth(30);
       const result = postToolUse(tempDir);
       assert.ok(result.includes('CONTEXT LOW'));
@@ -73,7 +73,7 @@ describe('context-monitor hooks', () => {
       assert.ok(result.includes('awaiting_clear'));
     });
 
-    it('returns EMERGENCY when health < 25', () => {
+    it('returns EMERGENCY when health <= 25', () => {
       writeHealth(15);
       const result = postToolUse(tempDir);
       assert.ok(result.includes('CONTEXT EMERGENCY'));
@@ -86,10 +86,20 @@ describe('context-monitor hooks', () => {
       assert.equal(postToolUse(tempDir), null);
     });
 
-    // Boundary tests — aligned with CJS production thresholds (35/25)
-    it('boundary: 35% returns null (35 is not < 35)', () => {
-      writeHealth(35);
+    // Boundary tests — aligned with CJS production thresholds:
+    //   remaining > 35  → no warning (exit early)
+    //   remaining <= 35 → warning
+    //   remaining <= 25 → critical/emergency
+    it('boundary: 36% returns null (above warning threshold)', () => {
+      writeHealth(36);
       assert.equal(postToolUse(tempDir), null);
+    });
+
+    it('boundary: 35% returns LOW warning (35 <= 35 triggers warning)', () => {
+      writeHealth(35);
+      const result = postToolUse(tempDir);
+      assert.ok(result.includes('CONTEXT LOW'));
+      assert.ok(result.includes('35%'));
     });
 
     it('boundary: 34% returns LOW warning', () => {
@@ -99,10 +109,17 @@ describe('context-monitor hooks', () => {
       assert.ok(result.includes('34%'));
     });
 
-    it('boundary: 25% returns LOW warning (25 is not < 25)', () => {
-      writeHealth(25);
+    it('boundary: 26% returns LOW warning', () => {
+      writeHealth(26);
       const result = postToolUse(tempDir);
       assert.ok(result.includes('CONTEXT LOW'));
+      assert.ok(result.includes('26%'));
+    });
+
+    it('boundary: 25% returns EMERGENCY (25 <= 25 triggers critical)', () => {
+      writeHealth(25);
+      const result = postToolUse(tempDir);
+      assert.ok(result.includes('CONTEXT EMERGENCY'));
       assert.ok(result.includes('25%'));
     });
 
