@@ -160,6 +160,15 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
     }
     const state = result.data;
 
+    // Guard: reject workflow_mode changes FROM terminal states
+    if (updates.workflow_mode) {
+      const currentMode = state.workflow_mode;
+      if ((currentMode === 'completed' || currentMode === 'failed')
+          && updates.workflow_mode !== currentMode) {
+        return { error: true, message: `Cannot change workflow_mode from terminal state '${currentMode}'` };
+      }
+    }
+
     // Validate lifecycle transitions before merging
     if (updates.phases && Array.isArray(updates.phases)) {
       for (const newPhase of updates.phases) {

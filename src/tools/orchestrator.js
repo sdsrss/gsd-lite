@@ -625,6 +625,19 @@ export async function resumeWorkflow({ basePath = process.cwd() } = {}) {
         message: 'Workflow is in failed state',
       };
     case 'paused_by_user':
+      return {
+        success: true,
+        action: 'await_manual_intervention',
+        workflow_mode: state.workflow_mode,
+        resume_to: state.current_review?.scope === 'phase'
+          ? 'reviewing_phase'
+          : state.current_review?.scope === 'task'
+            ? 'reviewing_task'
+            : 'executing_task',
+        current_review: state.current_review || null,
+        current_task: state.current_task || null,
+        message: 'Project is paused. Confirm to resume execution.',
+      };
     case 'planning':
     case 'reconcile_workspace':
     case 'replan_required':

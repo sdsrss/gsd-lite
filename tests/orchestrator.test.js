@@ -451,11 +451,22 @@ describe('orchestrator skeleton', () => {
     assert.equal(completed.action, 'noop');
     assert.equal(completed.completed_phases, 1);
 
-    await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: tempDir });
-    const paused = await resumeWorkflow({ basePath: tempDir });
-    assert.equal(paused.success, true);
-    assert.equal(paused.action, 'await_manual_intervention');
-    assert.match(paused.message, /not yet automated/);
+    // Use a fresh project for paused_by_user (can't transition from completed)
+    const pausedDir = await mkdtemp(join(tmpdir(), 'gsd-paused-'));
+    try {
+      await init({
+        project: 'orchestrator-paused',
+        phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: pausedDir,
+      });
+      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: pausedDir });
+      const paused = await resumeWorkflow({ basePath: pausedDir });
+      assert.equal(paused.success, true);
+      assert.equal(paused.action, 'await_manual_intervention');
+      assert.match(paused.message, /paused/i);
+    } finally {
+      await rm(pausedDir, { recursive: true, force: true });
+    }
   });
 
   it('retries executor failures before debugger threshold', async () => {
