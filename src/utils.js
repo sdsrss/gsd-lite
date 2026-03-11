@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, unlink } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
@@ -65,8 +65,13 @@ export async function readJson(filePath) {
 export async function writeJson(filePath, data) {
   const tmpPath = `${filePath}.${process.pid}-${Date.now()}.tmp`;
   await ensureDir(dirname(filePath));
-  await writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-  await rename(tmpPath, filePath);
+  try {
+    await writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    try { await unlink(tmpPath); } catch {}
+    throw err;
+  }
 }
 
 /**
@@ -75,6 +80,11 @@ export async function writeJson(filePath, data) {
 export async function writeAtomic(filePath, content) {
   const tmpPath = `${filePath}.${process.pid}-${Date.now()}.tmp`;
   await ensureDir(dirname(filePath));
-  await writeFile(tmpPath, content, 'utf-8');
-  await rename(tmpPath, filePath);
+  try {
+    await writeFile(tmpPath, content, 'utf-8');
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    try { await unlink(tmpPath); } catch {}
+    throw err;
+  }
 }

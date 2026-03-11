@@ -79,7 +79,7 @@ describe('resume flow matrix', () => {
       await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: tempDir });
       const reviewingPhase = await resumeWorkflow({ basePath: tempDir });
       assert.equal(reviewingPhase.action, 'dispatch_reviewer');
-      assert.deepEqual(reviewingPhase.review_targets, [{ id: '1.1', level: 'L1', checkpoint_commit: 'abc123' }]);
+      assert.deepEqual(reviewingPhase.review_targets, [{ id: '1.1', level: 'L1', checkpoint_commit: 'abc123', files_changed: [] }]);
     });
 
     await withProject('resume-awaiting-clear', async (tempDir) => {

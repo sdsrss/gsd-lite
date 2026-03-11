@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: Research domain ecosystem before planning
-tools: Read, Write, Bash, WebSearch, WebFetch, mcp__context7__*
+tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 ---
 
 <role>

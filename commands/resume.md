@@ -97,7 +97,7 @@ description: Resume project execution from saved state with workspace validation
 ### `awaiting_clear` — 继续自动执行
 
 - 上下文已通过 /clear 清理
-- 直接继续自动执行主路径 (§4.3)
+- 直接继续自动执行主路径
 - 从 `current_phase` + `current_task` 恢复调度
 
 ---
@@ -211,5 +211,5 @@ description: Resume project execution from saved state with workspace validation
 - 校验覆写 workflow_mode 时，首个命中生效，不累积
 - awaiting_user / reconcile_workspace / replan_required 模式下不自动执行代码
 - 只有编排器写 state.json，子代理不直接写
-- 上下文 < 40% → 保存状态 + workflow_mode = awaiting_clear + 停止执行
+- 上下文 < 35% → 保存状态 + workflow_mode = awaiting_clear + 停止执行
 </EXTREMELY-IMPORTANT>

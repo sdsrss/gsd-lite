@@ -77,10 +77,12 @@ process.stdin.on('end', () => {
           fs.writeFileSync(healthPath, String(remaining));
         }
       } catch {
-        // File doesn't exist yet or .gsd/ missing — ensure dir exists then write
+        // File doesn't exist yet or .gsd/ missing — ensure dir exists then atomic write
         try {
           fs.mkdirSync(gsdDir, { recursive: true });
-          fs.writeFileSync(path.join(gsdDir, '.context-health'), String(remaining));
+          const tmpHealth = path.join(gsdDir, `.context-health.${process.pid}.tmp`);
+          fs.writeFileSync(tmpHealth, String(remaining));
+          fs.renameSync(tmpHealth, path.join(gsdDir, '.context-health'));
         } catch { /* silent */ }
       }
 

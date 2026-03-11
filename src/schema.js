@@ -23,7 +23,7 @@ export const TASK_LIFECYCLE = {
   checkpointed:         ['accepted', 'needs_revalidation'],
   accepted:             ['needs_revalidation'],
   blocked:              ['pending'],
-  failed:               [],
+  failed:               ['pending'],
   needs_revalidation:   ['pending'],
 };
 

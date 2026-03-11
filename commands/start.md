@@ -276,13 +276,13 @@ executor 上下文传递协议 (orchestrator → executor):
 每次派发子代理前和阶段切换时检查上下文健康度:
 
 ```
-remaining < 40%:
+remaining < 35%:
   1. 保存完整状态到 state.json
   2. workflow_mode = awaiting_clear
-  3. 输出: "上下文剩余 <40%，已保存进度。请执行 /clear 然后 /gsd:resume 继续"
+  3. 输出: "上下文剩余 <35%，已保存进度。请执行 /clear 然后 /gsd:resume 继续"
   4. 停止执行
 
-remaining < 20%:
+remaining < 25%:
   1. 紧急保存状态到 state.json
   2. workflow_mode = awaiting_clear
   3. 输出: "上下文即将耗尽，已保存进度。请立即执行 /clear 然后 /gsd:resume"

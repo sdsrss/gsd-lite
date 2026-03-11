@@ -10,10 +10,15 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 if (!existsSync(join(__dirname, 'node_modules', '@modelcontextprotocol'))) {
-  execSync('npm install --omit=dev --ignore-scripts', {
-    cwd: __dirname,
-    stdio: 'pipe',
-  });
+  try {
+    execSync('npm install --omit=dev --ignore-scripts', {
+      cwd: __dirname,
+      stdio: 'pipe',
+    });
+  } catch (err) {
+    console.error('Failed to install dependencies:', err.stderr?.toString() || err.message);
+    process.exit(1);
+  }
 }
 
 const { main } = await import('./src/server.js');

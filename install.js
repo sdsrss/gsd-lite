@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Plugin installer for GSD-Lite
 
-import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CLAUDE_DIR = join(homedir(), '.claude');
+const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -134,7 +134,11 @@ export function main() {
     let settings = {};
     try {
       settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    } catch {}
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        log(`  ! Warning: Could not parse ${settingsPath}: ${err.message}`);
+      }
+    }
 
     if (!settings.mcpServers) settings.mcpServers = {};
     // Remove legacy "gsd-lite" server entry from older versions
@@ -151,7 +155,9 @@ export function main() {
     const statusLineRegistered = registerStatusLine(settings, statuslinePath);
     const postToolUseRegistered = registerPostToolUseHook(settings.hooks, contextMonitorPath);
 
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+    const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;
+    writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n');
+    renameSync(tmpSettings, settingsPath);
     log('  ✓ MCP server registered in settings.json');
     if (statusLineRegistered || postToolUseRegistered) {
       log('  ✓ GSD-Lite hooks registered in settings.json');

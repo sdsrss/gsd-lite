@@ -428,7 +428,7 @@ describe('orchestrator skeleton', () => {
     assert.equal(result.success, true);
     assert.equal(result.action, 'dispatch_reviewer');
     assert.equal(result.review_scope, 'phase');
-    assert.deepEqual(result.review_targets, [{ id: '1.1', level: 'L1', checkpoint_commit: 'abc123' }]);
+    assert.deepEqual(result.review_targets, [{ id: '1.1', level: 'L1', checkpoint_commit: 'abc123', files_changed: [] }]);
   });
 
   it('returns structured info for completed and not-yet-automated modes', async () => {

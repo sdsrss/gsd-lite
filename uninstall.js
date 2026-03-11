@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 // Plugin uninstaller for GSD-Lite
 
-import { existsSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
-const CLAUDE_DIR = join(homedir(), '.claude');
+const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 
 function log(msg) { console.log(msg); }
+
+function atomicWriteSync(filePath, content) {
+  const tmp = filePath + `.${process.pid}-${Date.now()}.tmp`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, filePath);
+}
 
 function removeDir(path, label) {
   if (existsSync(path)) {
@@ -54,7 +60,7 @@ export function main() {
       const data = JSON.parse(readFileSync(filePath, 'utf-8'));
       if (key in data) {
         delete data[key];
-        writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+        atomicWriteSync(filePath, JSON.stringify(data, null, 2) + '\n');
         log(`  ✓ Removed '${key}' from ${label}`);
       }
     } catch {}
@@ -64,7 +70,7 @@ export function main() {
       const data = JSON.parse(readFileSync(filePath, 'utf-8'));
       if (data[parentKey] && key in data[parentKey]) {
         delete data[parentKey][key];
-        writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+        atomicWriteSync(filePath, JSON.stringify(data, null, 2) + '\n');
         log(`  ✓ Removed '${key}' from ${label}`);
       }
     } catch {}
@@ -128,7 +134,7 @@ export function main() {
       }
     }
     if (changed) {
-      writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+      atomicWriteSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
       log('  ✓ MCP server + hooks + plugin entries deregistered from settings.json');
     }
   } catch {}

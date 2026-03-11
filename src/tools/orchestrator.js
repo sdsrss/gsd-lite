@@ -386,6 +386,7 @@ async function resumeExecutingTask(state, basePath) {
   if (state.current_task) {
     const currentTask = getTaskById(phase, state.current_task);
     if (currentTask?.lifecycle === 'running') {
+      const isRetrying = (currentTask.retry_count || 0) > 0;
       const persistError = await persist(basePath, {
         workflow_mode: 'executing_task',
         current_task: currentTask.id,
@@ -394,7 +395,12 @@ async function resumeExecutingTask(state, basePath) {
       if (persistError) return persistError;
       return buildExecutorDispatch(state, phase, currentTask, {
         resumed: true,
-        interruption_recovered: true,
+        interruption_recovered: !isRetrying,
+        ...(isRetrying ? {
+          retry_after_failure: true,
+          retry_count: currentTask.retry_count,
+          last_failure_summary: currentTask.last_failure_summary,
+        } : {}),
       });
     }
   }
@@ -567,6 +573,7 @@ export async function resumeWorkflow({ basePath = process.cwd() } = {}) {
           id: task.id,
           level: task.level,
           checkpoint_commit: task.checkpoint_commit || null,
+          files_changed: task.files_changed || [],
         })),
       };
     }
@@ -885,6 +892,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
 
   const taskPatches = [];
   let doneIncrement = 0;
+  let doneDecrement = 0;
 
   // Accept tasks
   for (const taskId of (result.accepted_tasks || [])) {
@@ -901,6 +909,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     const task = getTaskById(phase, taskId);
     if (!task) continue;
     if (task.lifecycle === 'checkpointed' || task.lifecycle === 'accepted') {
+      if (task.lifecycle === 'accepted') doneDecrement += 1;
       taskPatches.push({ id: taskId, lifecycle: 'needs_revalidation', evidence_refs: [] });
     }
   }
@@ -924,7 +933,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
 
   const phaseUpdates = {
     id: phase.id,
-    done: (phase.done || 0) + doneIncrement,
+    done: Math.max(0, (phase.done || 0) + doneIncrement - doneDecrement),
     phase_review: {
       status: reviewStatus,
       ...(hasCritical ? { retry_count: (phase.phase_review?.retry_count || 0) + 1 } : {}),
