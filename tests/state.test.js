@@ -150,6 +150,126 @@ describe('state tools', () => {
   });
 });
 
+describe('concurrent withStateLock serialization', () => {
+  let tempDir;
+
+  before(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-concurrent-'));
+    await init({
+      project: 'concurrent-test',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'Task A' },
+        { index: 2, name: 'Task B' },
+        { index: 3, name: 'Task C' },
+      ] }],
+      basePath: tempDir,
+    });
+  });
+
+  after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('serializes concurrent update() calls and produces consistent final state', async () => {
+    // Fire 3 concurrent updates that each transition a different task to running.
+    // If withStateLock does NOT serialize, some updates may be lost due to TOCTOU.
+    const results = await Promise.all([
+      update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir }),
+      update({ updates: { phases: [{ id: 1, todo: [{ id: '1.2', lifecycle: 'running' }] }] }, basePath: tempDir }),
+      update({ updates: { phases: [{ id: 1, todo: [{ id: '1.3', lifecycle: 'running' }] }] }, basePath: tempDir }),
+    ]);
+
+    // All 3 should succeed
+    for (const r of results) {
+      assert.equal(r.success, true, `Expected success, got: ${JSON.stringify(r)}`);
+    }
+
+    // Final state should have all 3 tasks as running (serialized, not interleaved)
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'running');
+    assert.equal(state.phases[0].todo[1].lifecycle, 'running');
+    assert.equal(state.phases[0].todo[2].lifecycle, 'running');
+  });
+
+  it('serializes concurrent addEvidence() calls without data loss', async () => {
+    const { addEvidence } = await import('../src/tools/state.js');
+
+    const results = await Promise.all([
+      addEvidence({ id: 'ev:concurrent:1', data: { scope: 'task:1.1', summary: 'first' }, basePath: tempDir }),
+      addEvidence({ id: 'ev:concurrent:2', data: { scope: 'task:1.2', summary: 'second' }, basePath: tempDir }),
+      addEvidence({ id: 'ev:concurrent:3', data: { scope: 'task:1.3', summary: 'third' }, basePath: tempDir }),
+    ]);
+
+    for (const r of results) {
+      assert.equal(r.success, true);
+    }
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.evidence['ev:concurrent:1'].summary, 'first');
+    assert.equal(state.evidence['ev:concurrent:2'].summary, 'second');
+    assert.equal(state.evidence['ev:concurrent:3'].summary, 'third');
+  });
+});
+
+describe('init force reinitialize', () => {
+  let tempDir;
+
+  before(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-force-init-'));
+  });
+
+  after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('rejects re-initialization without force flag', async () => {
+    const first = await init({
+      project: 'first-project',
+      phases: [{ name: 'Phase 1', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    assert.equal(first.success, true);
+
+    const second = await init({
+      project: 'second-project',
+      phases: [{ name: 'Phase 2', tasks: [{ index: 1, name: 'Task B' }] }],
+      basePath: tempDir,
+    });
+    assert.equal(second.error, true);
+    assert.match(second.message, /already exists/);
+
+    // Original state should be unchanged
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.project, 'first-project');
+  });
+
+  it('succeeds with force: true and creates fresh state', async () => {
+    const result = await init({
+      project: 'fresh-project',
+      phases: [
+        { name: 'Alpha', tasks: [{ index: 1, name: 'New Task' }] },
+        { name: 'Beta', tasks: [{ index: 1, name: 'Another Task' }] },
+      ],
+      force: true,
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.project, 'fresh-project');
+    assert.equal(state.phases.length, 2);
+    assert.equal(state.total_phases, 2);
+    assert.equal(state.phases[0].name, 'Alpha');
+    assert.equal(state.phases[0].lifecycle, 'active');
+    assert.equal(state.phases[1].name, 'Beta');
+    assert.equal(state.phases[1].lifecycle, 'pending');
+    // Fresh state should have clean defaults
+    assert.equal(state.current_task, null);
+    assert.equal(state.current_review, null);
+    assert.equal(state.workflow_mode, 'executing_task');
+  });
+});
+
 describe('matchDecisionForBlocker edge cases', () => {
   it('returns null when overlap is below MIN_OVERLAP (single token)', () => {
     const decisions = [{ id: 'd1', summary: 'Use React frontend' }];

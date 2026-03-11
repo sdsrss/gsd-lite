@@ -132,6 +132,55 @@ describe('phase handoff gate', () => {
     assert.equal(state.phases[0].phase_handoff.direction_ok, true);
   });
 
+  it('fails handoff with run_verify: true when no package manager exists in temp dir', async () => {
+    await prepareReviewingAcceptedPhase(tempDir);
+    const reviewAccepted = await update({
+      updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+    assert.equal(reviewAccepted.success, true);
+
+    // run_verify: true will call runAll() which needs a package.json — temp dir has none
+    const result = await phaseComplete({
+      phase_id: 1,
+      basePath: tempDir,
+      run_verify: true,
+      direction_ok: true,
+    });
+
+    assert.equal(result.error, true);
+    // runAll returns { error: true, message: 'Could not detect package manager' }
+    // This means verification failed, so the gate should fail
+    assert.match(result.message, /verification checks failed/i);
+  });
+
+  it('completes phase when verification object is provided directly with all passing exit codes', async () => {
+    await prepareReviewingAcceptedPhase(tempDir);
+    const reviewAccepted = await update({
+      updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+    assert.equal(reviewAccepted.success, true);
+
+    // Provide verification directly (not run_verify), all exit codes 0
+    const result = await phaseComplete({
+      phase_id: 1,
+      basePath: tempDir,
+      verification: {
+        lint: { exit_code: 0 },
+        typecheck: { exit_code: 0 },
+        test: { exit_code: 0 },
+      },
+      direction_ok: true,
+    });
+
+    assert.equal(result.success, true);
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].lifecycle, 'accepted');
+    assert.equal(state.phases[0].phase_handoff.tests_passed, true);
+  });
+
   it('activates the next phase lifecycle when current phase completes', async () => {
     await init({
       project: 'handoff-next-phase',

@@ -1342,4 +1342,89 @@ describe('orchestrator skeleton', () => {
     // Should trigger review or idle, depending on selectRunnableTask logic
     assert.equal(result.success, true);
   });
+
+  it('multi-round rework propagation: rework A invalidates B and C, then rework B invalidates C again', async () => {
+    // Setup: Phase with 3 tasks A -> B -> C (chain dependency), all accepted
+    await init({
+      project: 'multi-round-rework',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'Task A' },
+        { index: 2, name: 'Task B', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }] },
+        { index: 3, name: 'Task C', requires: [{ kind: 'task', id: '1.2', gate: 'accepted' }] },
+      ] }],
+      basePath: tempDir,
+    });
+
+    // Move all tasks through lifecycle: pending -> running -> checkpointed -> accepted
+    for (const taskId of ['1.1', '1.2', '1.3']) {
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'checkpointed', checkpoint_commit: `commit-${taskId}` }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    }
+    await update({ updates: { phases: [{ id: 1, done: 3 }] }, basePath: tempDir });
+
+    // Round 1: Reviewer reworks A with invalidates_downstream: true
+    const round1 = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase', scope_id: 1, review_level: 'L1-batch',
+        spec_passed: false, quality_passed: false,
+        critical_issues: [{ task_id: '1.1', reason: 'broken contract', invalidates_downstream: true }],
+        important_issues: [], minor_issues: [],
+        accepted_tasks: [], rework_tasks: ['1.1'], evidence: [],
+      },
+    });
+
+    assert.equal(round1.success, true);
+    assert.equal(round1.action, 'rework_required');
+
+    let state = await read({ basePath: tempDir });
+    // A should be needs_revalidation (rework_tasks)
+    assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation');
+    // B and C should also be needs_revalidation (propagated from A)
+    assert.equal(state.phases[0].todo[1].lifecycle, 'needs_revalidation');
+    assert.equal(state.phases[0].todo[2].lifecycle, 'needs_revalidation');
+    // done counter should be decremented: 3 tasks were accepted, all 3 now need revalidation
+    assert.equal(state.phases[0].done, 0);
+
+    // Fix A and B: move them back through lifecycle
+    for (const taskId of ['1.1', '1.2']) {
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'pending' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'checkpointed', checkpoint_commit: `fix-${taskId}` }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    }
+    await update({ updates: { phases: [{ id: 1, done: 2 }] }, basePath: tempDir });
+    // Fix C too
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.3', lifecycle: 'pending' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.3', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.3', lifecycle: 'checkpointed', checkpoint_commit: 'fix-1.3' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.3', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, done: 3 }] }, basePath: tempDir });
+
+    // Round 2: Reviewer reworks B with invalidates_downstream: true
+    const round2 = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase', scope_id: 1, review_level: 'L1-batch',
+        spec_passed: false, quality_passed: false,
+        critical_issues: [{ task_id: '1.2', reason: 'API change', invalidates_downstream: true }],
+        important_issues: [], minor_issues: [],
+        accepted_tasks: [], rework_tasks: ['1.2'], evidence: [],
+      },
+    });
+
+    assert.equal(round2.success, true);
+    assert.equal(round2.action, 'rework_required');
+
+    state = await read({ basePath: tempDir });
+    // A should still be accepted (not downstream of B)
+    assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
+    // B should be needs_revalidation (rework_tasks)
+    assert.equal(state.phases[0].todo[1].lifecycle, 'needs_revalidation');
+    // C should be needs_revalidation again (propagated from B)
+    assert.equal(state.phases[0].todo[2].lifecycle, 'needs_revalidation');
+    // done counter: was 3, B and C invalidated = -2 = 1
+    assert.equal(state.phases[0].done, 1);
+  });
 });

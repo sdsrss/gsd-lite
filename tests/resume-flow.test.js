@@ -160,6 +160,25 @@ describe('resume flow matrix', () => {
     });
   });
 
+  it('preflight returns pending_issues hints when multiple issues exist', async () => {
+    await withProject('resume-multi-preflight', async (tempDir) => {
+      // Set up git drift + direction drift simultaneously
+      await update({
+        updates: {
+          git_head: 'deadbeef',
+          phases: [{ id: 1, phase_handoff: { direction_ok: false } }],
+        },
+        basePath: tempDir,
+      });
+      const result = await resumeWorkflow({ basePath: tempDir });
+      // Primary issue should be git drift (first checked)
+      assert.equal(result.workflow_mode, 'reconcile_workspace');
+      // Should include hints about remaining issues
+      assert.ok(Array.isArray(result.pending_issues));
+      assert.ok(result.pending_issues.length >= 1);
+    }, { git: true });
+  });
+
   it('covers research_refresh_needed by refreshing research and resuming execution', async () => {
     await withProject('resume-research', async (tempDir) => {
       await update({
@@ -204,5 +223,16 @@ describe('resume flow matrix', () => {
       assert.equal(state.workflow_mode, 'executing_task');
       assert.equal(state.research.decision_index['decision:jwt-rotation'].summary, 'Use refresh token rotation');
     }, { research: true });
+  });
+
+  it('returns await_manual_intervention for planning workflow mode', async () => {
+    await withProject('resume-planning', async (tempDir) => {
+      await update({ updates: { workflow_mode: 'planning' }, basePath: tempDir });
+      const result = await resumeWorkflow({ basePath: tempDir });
+      assert.equal(result.success, true);
+      assert.equal(result.action, 'await_manual_intervention');
+      assert.equal(result.workflow_mode, 'planning');
+      assert.match(result.message, /not yet automated/);
+    });
   });
 });
