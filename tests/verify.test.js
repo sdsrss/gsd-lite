@@ -115,8 +115,10 @@ describe('verify tools', () => {
         scripts: { lint: 'node --eval "console.log(\'lint ok\')"' },
       }));
       const result = await runLint('node', dir);
-      // Will run `node run lint` which will fail, but we exercise the branch
-      assert.ok(typeof result.exit_code === 'number');
+      // `node run lint` is invalid (node doesn't have 'run'), so it fails
+      assert.ok(result.exit_code !== 0);
+      assert.ok(typeof result.summary === 'string');
+      assert.ok(result.summary.length > 0);
     });
 
     it('handles missing package.json gracefully', async () => {
@@ -141,9 +143,10 @@ describe('verify tools', () => {
       const dir = join(tempDir, 'tc-has-tsconfig');
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'tsconfig.json'), '{}');
-      // npx tsc --noEmit will fail (no ts files), but the branch is exercised
-      const result = await runTypeCheck(dir);
-      assert.ok(typeof result.exit_code === 'number');
+      // npx tsc --noEmit will fail (no ts installed), confirming the command was attempted
+      const result = await runTypeCheck('npm', dir);
+      assert.ok(result.exit_code !== 0);
+      assert.ok(typeof result.summary === 'string');
     });
   });
 
@@ -155,9 +158,10 @@ describe('verify tools', () => {
         name: 'test',
         scripts: { test: 'node --eval "process.exit(0)"' },
       }));
-      // This will pass the pattern through but the command likely fails; we test the code path
+      // `node test -- some-pattern` fails because node doesn't have a 'test' subcommand
       const result = await runTests('node', dir, 'some-pattern');
-      assert.ok(typeof result.exit_code === 'number');
+      assert.ok(result.exit_code !== 0);
+      assert.ok(typeof result.summary === 'string');
     });
   });
 
