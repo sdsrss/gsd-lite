@@ -383,7 +383,7 @@ describe('TC12: Pre-flight — git HEAD mismatch → reconcile_workspace', () =>
 
   it('overrides to reconcile_workspace when git HEAD differs from stored value', async () => {
     // Create a git repo in tempDir so getGitHead returns a real commit
-    execSync('git init && git commit --allow-empty -m "init"', { cwd: dir, stdio: 'ignore' });
+    execSync('git init && git -c user.name="test" -c user.email="test@test" commit --allow-empty -m "init"', { cwd: dir, stdio: 'ignore' });
 
     await initProject(dir);
 
