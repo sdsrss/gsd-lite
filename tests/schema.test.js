@@ -4,6 +4,7 @@ import {
   validateTransition,
   CANONICAL_FIELDS,
   WORKFLOW_MODES,
+  TASK_LEVELS,
   validateState,
   createInitialState,
   validateExecutorResult,
@@ -521,12 +522,40 @@ describe('schema', () => {
       assert.ok(result.errors.some(e => e.includes('invalid lifecycle')));
     });
 
+    it('exports TASK_LEVELS constant with L0-L3', () => {
+      assert.deepEqual(TASK_LEVELS, ['L0', 'L1', 'L2', 'L3']);
+    });
+
+    it('accepts tasks with valid levels L0-L3', () => {
+      for (const level of ['L0', 'L1', 'L2', 'L3']) {
+        const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1', level }] }] });
+        const result = validateState(state);
+        assert.equal(result.valid, true, `level ${level} should be valid`);
+      }
+    });
+
+    it('rejects task with invalid level string', () => {
+      const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }] });
+      state.phases[0].todo[0].level = 'L5';
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('level must be one of')));
+    });
+
+    it('rejects task with arbitrary string level', () => {
+      const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }] });
+      state.phases[0].todo[0].level = 'foo';
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('level must be one of')));
+    });
+
     it('rejects task with non-string level', () => {
       const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }] });
       state.phases[0].todo[0].level = 42;
       const result = validateState(state);
       assert.equal(result.valid, false);
-      assert.ok(result.errors.some(e => e.includes('level must be a string')));
+      assert.ok(result.errors.some(e => e.includes('level must be one of')));
     });
 
     it('rejects task with non-array requires', () => {

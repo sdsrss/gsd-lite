@@ -36,6 +36,8 @@ export const PHASE_LIFECYCLE = {
   failed:     [],
 };
 
+export const TASK_LEVELS = ['L0', 'L1', 'L2', 'L3'];
+
 export const PHASE_REVIEW_STATUS = ['pending', 'reviewing', 'accepted', 'rework_required'];
 
 export const CANONICAL_FIELDS = [
@@ -387,8 +389,8 @@ export function validateState(state) {
         if (!TASK_LIFECYCLE[task.lifecycle]) {
           errors.push(`Task ${task.id}: invalid lifecycle ${task.lifecycle}`);
         }
-        if (typeof task.level !== 'string') {
-          errors.push(`Task ${task.id}: level must be a string`);
+        if (!TASK_LEVELS.includes(task.level)) {
+          errors.push(`Task ${task.id}: level must be one of ${TASK_LEVELS.join(', ')}`);
         }
         if (!Array.isArray(task.requires)) {
           errors.push(`Task ${task.id}: requires must be an array`);
