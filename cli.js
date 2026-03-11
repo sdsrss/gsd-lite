@@ -4,11 +4,11 @@ function printHelp() {
   console.log(`GSD-Lite — AI orchestration tool for Claude Code
 
 Usage:
-  gsd-lite              # Start MCP stdio server (default)
-  gsd-lite serve        # Start MCP stdio server (explicit)
-  gsd-lite install      # Install hooks/commands into Claude Code
-  gsd-lite uninstall    # Remove hooks/commands from Claude Code
-  gsd-lite help         # Show this help
+  gsd              # Start MCP stdio server (default)
+  gsd serve        # Start MCP stdio server (explicit)
+  gsd install      # Install hooks/commands into Claude Code
+  gsd uninstall    # Remove hooks/commands from Claude Code
+  gsd help         # Show this help
 `);
 }
 

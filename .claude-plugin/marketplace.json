@@ -1,5 +1,5 @@
 {
-  "name": "gsd-lite",
+  "name": "gsd",
   "owner": {
     "name": "sdsrss",
     "email": "sdsrss@users.noreply.github.com"
@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "gsd-lite",
+      "name": "gsd",
       "source": "./",
       "description": "AI orchestration tool — GSD management shell + Superpowers quality core. 5 commands, 4 agents, 5 workflows, MCP server, context monitoring.",
       "version": "0.1.0",

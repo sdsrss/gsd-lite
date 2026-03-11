@@ -1,5 +1,5 @@
 ---
-name: gsd-executor
+name: executor
 description: Execute one task with TDD/self-review and return structured result
 tools: Read, Write, Edit, Bash, Grep, Glob
 ---

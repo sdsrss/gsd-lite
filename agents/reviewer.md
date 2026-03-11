@@ -1,5 +1,5 @@
 ---
-name: gsd-reviewer
+name: reviewer
 description: Two-stage code review after executor completes
 tools: Read, Bash, Grep, Glob
 ---

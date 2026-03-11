@@ -51,14 +51,14 @@ argument-hint: File path to requirements doc, or inline description text
 - 使用 references/questioning.md 的提问技巧 (如可用)
 - 用户回答后，可适当追问直到需求清晰
 
-<!-- 以下 STEP 5-12 同 gsd-start.md -->
+<!-- 以下 STEP 5-12 同 start.md -->
 
 ## STEP 5: 智能判断是否需要研究
 
 - 新项目 / 涉及新技术栈 → 必须研究
 - 简单 bug 修复 / 已有研究且未过期 → 跳过
 - 用户明确要求 → 研究
-- 需要时 → 派发 gsd-researcher 子代理 → 展示关键发现
+- 需要时 → 派发 researcher 子代理 → 展示关键发现
 - 不需要 → 跳过，进入下一步
 
 ## STEP 6: 深度思考
@@ -123,10 +123,10 @@ argument-hint: File path to requirements doc, or inline description text
 
 ## STEP 11: 进入自动执行主路径
 
-加载并严格遵循 gsd-start.md STEP 11 `<execution_loop>` 中的完整执行循环 (11.1–11.9)，包括:
+加载并严格遵循 start.md STEP 11 `<execution_loop>` 中的完整执行循环 (11.1–11.9)，包括:
 - 11.1 加载 phase 计划 + todo DAG
 - 11.2 选择 runnable task (gate-aware 依赖校验)
-- 11.3 构建 executor 上下文 → 串行派发 gsd-executor
+- 11.3 构建 executor 上下文 → 串行派发 executor
 - 11.4 处理 executor 结果 (checkpointed/blocked/failed + debugger 触发 + decisions 累积)
 - 11.5 分层审查 (L0/L1/L2 + 运行时重分类)
 - 11.6 处理 reviewer 结果 (返工失效传播)
@@ -134,7 +134,7 @@ argument-hint: File path to requirements doc, or inline description text
 - 11.8 批量更新 state.json + evidence 归档
 - 11.9 上下文健康度检查 (< 40% → 保存状态暂停)
 
-**重要:** 使用 Read 工具读取 `commands/gsd-start.md` STEP 11 获取完整执行细节，不要依赖此处的概要。
+**重要:** 使用 Read 工具读取 `commands/start.md` STEP 11 获取完整执行细节，不要依赖此处的概要。
 
 ## STEP 12: 全部完成
 

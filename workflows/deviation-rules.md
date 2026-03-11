@@ -1,7 +1,7 @@
 # 偏差处理规则
 
 > 本文档是 executor 内联 `<deviation_rules>` 的扩展指南，按需加载。
-> 冲突时以 `gsd-executor.md` 内联规则为准。
+> 冲突时以 `executor.md` 内联规则为准。
 
 ---
 

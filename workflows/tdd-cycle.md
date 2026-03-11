@@ -1,7 +1,7 @@
 # TDD 循环: RED-GREEN-REFACTOR
 
 > 本文档是 executor 内联 TDD 铁律的扩展指南，按需加载。
-> 冲突时以 `gsd-executor.md` 内联规则为准。
+> 冲突时以 `executor.md` 内联规则为准。
 
 ---
 

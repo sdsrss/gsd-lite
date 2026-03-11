@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 const CLAUDE_DIR = join(homedir(), '.claude');
-const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd-lite');
+const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 
 function log(msg) { console.log(msg); }
 
@@ -28,7 +28,8 @@ export function main() {
   removeDir(join(CLAUDE_DIR, 'agents', 'gsd'), 'agents/gsd/');
   removeDir(join(CLAUDE_DIR, 'workflows', 'gsd'), 'workflows/gsd/');
   removeDir(join(CLAUDE_DIR, 'references', 'gsd'), 'references/gsd/');
-  removeDir(RUNTIME_DIR, 'gsd-lite runtime/');
+  removeDir(RUNTIME_DIR, 'gsd runtime/');
+  removeDir(join(CLAUDE_DIR, 'gsd-lite'), 'legacy gsd-lite runtime/');
 
   // Remove hook files (both legacy and current names)
   for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-session-init.cjs']) {
@@ -40,6 +41,9 @@ export function main() {
   }
 
   // Clean up plugin system directories (from /plugin install)
+  removeDir(join(CLAUDE_DIR, 'plugins', 'marketplaces', 'gsd'), 'plugins/marketplaces/gsd/');
+  removeDir(join(CLAUDE_DIR, 'plugins', 'cache', 'gsd'), 'plugins/cache/gsd/');
+  // Legacy "gsd-lite" plugin directories
   removeDir(join(CLAUDE_DIR, 'plugins', 'marketplaces', 'gsd-lite'), 'plugins/marketplaces/gsd-lite/');
   removeDir(join(CLAUDE_DIR, 'plugins', 'cache', 'gsd-lite'), 'plugins/cache/gsd-lite/');
 
@@ -65,29 +69,34 @@ export function main() {
       }
     } catch {}
   }
-  removeJsonEntry(join(pluginsDir, 'known_marketplaces.json'), 'gsd-lite', 'known_marketplaces.json');
-  removeNestedEntry(join(pluginsDir, 'installed_plugins.json'), 'plugins', 'gsd-lite@gsd-lite', 'installed_plugins.json');
+  for (const name of ['gsd', 'gsd-lite']) {
+    removeJsonEntry(join(pluginsDir, 'known_marketplaces.json'), name, 'known_marketplaces.json');
+    removeNestedEntry(join(pluginsDir, 'installed_plugins.json'), 'plugins', `${name}@${name}`, 'installed_plugins.json');
+  }
 
   // Deregister MCP server, hooks, and plugin entries from settings.json
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
   try {
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     let changed = false;
-    if (settings.mcpServers && settings.mcpServers['gsd-lite']) {
-      delete settings.mcpServers['gsd-lite'];
-      changed = true;
-    }
-    // Remove plugin system entries
-    if (settings.enabledPlugins && 'gsd-lite@gsd-lite' in settings.enabledPlugins) {
-      delete settings.enabledPlugins['gsd-lite@gsd-lite'];
-      changed = true;
-    }
-    if (settings.extraKnownMarketplaces && settings.extraKnownMarketplaces['gsd-lite']) {
-      delete settings.extraKnownMarketplaces['gsd-lite'];
-      if (Object.keys(settings.extraKnownMarketplaces).length === 0) {
-        delete settings.extraKnownMarketplaces;
+    // Remove both current and legacy MCP server + plugin entries
+    for (const name of ['gsd', 'gsd-lite']) {
+      if (settings.mcpServers?.[name]) {
+        delete settings.mcpServers[name];
+        changed = true;
       }
-      changed = true;
+      const pluginKey = `${name}@${name}`;
+      if (settings.enabledPlugins?.[pluginKey]) {
+        delete settings.enabledPlugins[pluginKey];
+        changed = true;
+      }
+      if (settings.extraKnownMarketplaces?.[name]) {
+        delete settings.extraKnownMarketplaces[name];
+        changed = true;
+      }
+    }
+    if (settings.extraKnownMarketplaces && Object.keys(settings.extraKnownMarketplaces).length === 0) {
+      delete settings.extraKnownMarketplaces;
     }
     // Remove top-level statusLine if GSD's (match both old and new patterns)
     if (settings.statusLine?.command?.includes('gsd-statusline') ||

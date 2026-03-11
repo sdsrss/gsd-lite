@@ -1,7 +1,7 @@
 # 研究工作流
 
 > 本文档是 researcher 内联规则的扩展指南，按需加载。
-> 冲突时以 `gsd-researcher.md` 内联规则为准。
+> 冲突时以 `researcher.md` 内联规则为准。
 
 ---
 

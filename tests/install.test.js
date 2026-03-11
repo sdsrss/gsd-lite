@@ -28,9 +28,9 @@ describe('install and uninstall scripts', () => {
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
       const statuslinePath = join(claudeDir, 'hooks', 'gsd-statusline.cjs');
       const contextMonitorPath = join(claudeDir, 'hooks', 'gsd-context-monitor.cjs');
-      const serverPath = join(claudeDir, 'gsd-lite', 'src', 'server.js');
-      const sdkPath = join(claudeDir, 'gsd-lite', 'node_modules', '@modelcontextprotocol', 'sdk');
-      const runtimePackagePath = join(claudeDir, 'gsd-lite', 'package.json');
+      const serverPath = join(claudeDir, 'gsd', 'src', 'server.js');
+      const sdkPath = join(claudeDir, 'gsd', 'node_modules', '@modelcontextprotocol', 'sdk');
+      const runtimePackagePath = join(claudeDir, 'gsd', 'package.json');
       // StatusLine is registered as top-level statusLine setting
       assert.deepEqual(settings.statusLine, {
         type: 'command',
@@ -43,8 +43,8 @@ describe('install and uninstall scripts', () => {
         e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
       assert.ok(gsdHook);
       assert.equal(gsdHook.hooks[0].command, `node ${JSON.stringify(contextMonitorPath)}`);
-      assert.ok(settings.mcpServers['gsd-lite']);
-      assert.equal(settings.mcpServers['gsd-lite'].args[0], serverPath);
+      assert.ok(settings.mcpServers.gsd);
+      assert.equal(settings.mcpServers.gsd.args[0], serverPath);
       const statuslineStat = await stat(statuslinePath);
       const contextMonitorStat = await stat(contextMonitorPath);
       const serverStat = await stat(serverPath);
@@ -88,12 +88,12 @@ describe('install and uninstall scripts', () => {
       runScript('install.js', home);
       runScript('uninstall.js', home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.equal(settings.mcpServers?.['gsd-lite'], undefined);
+      assert.equal(settings.mcpServers?.gsd, undefined);
       assert.equal(settings.statusLine, undefined);
       const gsdHook = settings.hooks?.PostToolUse?.find(e =>
         e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
       assert.equal(gsdHook, undefined);
-      await assert.rejects(stat(join(claudeDir, 'gsd-lite')));
+      await assert.rejects(stat(join(claudeDir, 'gsd')));
     } finally {
       await rm(home, { recursive: true, force: true });
     }

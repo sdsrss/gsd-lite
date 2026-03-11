@@ -57,7 +57,7 @@ argument-hint: Optional feature or project description
 ```
 
 需要研究时:
-1. 派发 `gsd-researcher` 子代理 (新鲜上下文)
+1. 派发 `researcher` 子代理 (新鲜上下文)
 2. 研究输出写入 `.gsd/research/` (STACK.md, ARCHITECTURE.md, PITFALLS.md, SUMMARY.md)
 3. 向用户展示关键发现: 技术栈推荐 + 陷阱警告 + ⭐ 推荐方案
 
@@ -180,7 +180,7 @@ executor 上下文传递协议 (orchestrator → executor):
 └── constraints:         retry_count / level / review_required
 ```
 
-派发 `gsd-executor` 子代理执行单个 task。
+派发 `executor` 子代理执行单个 task。
 
 ### 11.4 — 处理 executor 结果
 
@@ -197,7 +197,7 @@ executor 上下文传递协议 (orchestrator → executor):
 ```
 
 **Debugger 触发流程:**
-1. 编排器派发 `gsd-debugger` 子代理，传入: 错误信息 + executor 修复尝试记录 + 相关代码路径
+1. 编排器派发 `debugger` 子代理，传入: 错误信息 + executor 修复尝试记录 + 相关代码路径
 2. debugger 返回: 根因分析 + 修复方向建议
 3. 编排器决定:
    - 带修复方向重新派发 executor
@@ -215,9 +215,9 @@ executor 上下文传递协议 (orchestrator → executor):
 ```
 ├── L0: checkpoint commit 后可直接 accepted (无需 reviewer)
 ├── L1: phase 结束后批量 reviewer 审查
-│       → 派发 gsd-reviewer 子代理，scope = phase
+│       → 派发 reviewer 子代理，scope = phase
 └── L2: checkpoint commit 后立即独立审查
-        → 派发 gsd-reviewer 子代理，scope = task
+        → 派发 reviewer 子代理，scope = task
         → 未 accepted 前不释放其下游依赖
 ```
 

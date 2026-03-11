@@ -1,5 +1,5 @@
 ---
-name: gsd-researcher
+name: researcher
 description: Research domain ecosystem before planning
 tools: Read, Write, Bash, WebSearch, WebFetch, mcp__context7__*
 ---

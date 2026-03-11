@@ -16,13 +16,13 @@ import {
 } from './tools/orchestrator.js';
 
 const server = new Server(
-  { name: 'gsd-lite', version: PKG_VERSION },
+  { name: 'gsd', version: PKG_VERSION },
   { capabilities: { tools: {} } }
 );
 
 const TOOLS = [
   {
-    name: 'gsd-health',
+    name: 'health',
     description: 'Health check: returns server status and whether .gsd state exists',
     inputSchema: {
       type: 'object',
@@ -30,7 +30,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-state-init',
+    name: 'state-init',
     description: 'Initialize .gsd/ directory with state.json, plan.md, and phases/*.md',
     inputSchema: {
       type: 'object',
@@ -69,7 +69,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-state-read',
+    name: 'state-read',
     description: 'Read state.json, optionally filtering to specific fields',
     inputSchema: {
       type: 'object',
@@ -83,7 +83,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-state-update',
+    name: 'state-update',
     description: 'Update state.json canonical fields with lifecycle validation',
     inputSchema: {
       type: 'object',
@@ -97,7 +97,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-phase-complete',
+    name: 'phase-complete',
     description: 'Mark a phase as complete after verifying handoff gate conditions',
     inputSchema: {
       type: 'object',
@@ -120,7 +120,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-orchestrator-resume',
+    name: 'orchestrator-resume',
     description: 'Resume the minimal orchestration loop from workflow_mode/current_phase state',
     inputSchema: {
       type: 'object',
@@ -128,7 +128,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-orchestrator-handle-executor-result',
+    name: 'orchestrator-handle-executor-result',
     description: 'Persist an executor result and determine the next orchestration action',
     inputSchema: {
       type: 'object',
@@ -139,7 +139,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-orchestrator-handle-debugger-result',
+    name: 'orchestrator-handle-debugger-result',
     description: 'Persist a debugger result and determine the next orchestration action',
     inputSchema: {
       type: 'object',
@@ -150,7 +150,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-orchestrator-handle-researcher-result',
+    name: 'orchestrator-handle-researcher-result',
     description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration',
     inputSchema: {
       type: 'object',
@@ -163,7 +163,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'gsd-orchestrator-handle-reviewer-result',
+    name: 'orchestrator-handle-reviewer-result',
     description: 'Persist a reviewer result, update task lifecycles, and determine next orchestration action',
     inputSchema: {
       type: 'object',
@@ -182,11 +182,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 async function dispatchToolCall(name, args) {
   let result;
   switch (name) {
-    case 'gsd-health': {
+    case 'health': {
       const stateResult = await read(args || {});
       result = {
         status: 'ok',
-        server: 'gsd-lite',
+        server: 'gsd',
         version: PKG_VERSION,
         state_exists: !stateResult.error,
         ...(stateResult.error ? {} : {
@@ -198,31 +198,31 @@ async function dispatchToolCall(name, args) {
       };
       break;
     }
-    case 'gsd-state-init':
+    case 'state-init':
       result = await init(args);
       break;
-    case 'gsd-state-read':
+    case 'state-read':
       result = await read(args || {});
       break;
-    case 'gsd-state-update':
+    case 'state-update':
       result = await update(args);
       break;
-    case 'gsd-phase-complete':
+    case 'phase-complete':
       result = await phaseComplete(args);
       break;
-    case 'gsd-orchestrator-resume':
+    case 'orchestrator-resume':
       result = await resumeWorkflow(args || {});
       break;
-    case 'gsd-orchestrator-handle-executor-result':
+    case 'orchestrator-handle-executor-result':
       result = await handleExecutorResult(args || {});
       break;
-    case 'gsd-orchestrator-handle-debugger-result':
+    case 'orchestrator-handle-debugger-result':
       result = await handleDebuggerResult(args || {});
       break;
-    case 'gsd-orchestrator-handle-researcher-result':
+    case 'orchestrator-handle-researcher-result':
       result = await handleResearcherResult(args || {});
       break;
-    case 'gsd-orchestrator-handle-reviewer-result':
+    case 'orchestrator-handle-reviewer-result':
       result = await handleReviewerResult(args || {});
       break;
     default:

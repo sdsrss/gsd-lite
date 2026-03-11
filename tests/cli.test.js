@@ -19,7 +19,7 @@ describe('cli', () => {
     try {
       const output = runCli(['help'], home);
       assert.match(output, /Usage:/);
-      assert.match(output, /gsd-lite uninstall/);
+      assert.match(output, /gsd uninstall/);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -32,13 +32,13 @@ describe('cli', () => {
       await mkdir(claudeDir, { recursive: true });
       runCli(['install'], home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.ok(settings.mcpServers['gsd-lite']);
-      await stat(join(claudeDir, 'gsd-lite', 'src', 'server.js'));
+      assert.ok(settings.mcpServers.gsd);
+      await stat(join(claudeDir, 'gsd', 'src', 'server.js'));
 
       runCli(['uninstall'], home);
       const after = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.equal(after.mcpServers?.['gsd-lite'], undefined);
-      await assert.rejects(stat(join(claudeDir, 'gsd-lite')));
+      assert.equal(after.mcpServers?.gsd, undefined);
+      await assert.rejects(stat(join(claudeDir, 'gsd')));
     } finally {
       await rm(home, { recursive: true, force: true });
     }

@@ -67,8 +67,8 @@ description: Resume project execution from saved state with workspace validation
   - lifecycle 在 {pending, needs_revalidation}
   - requires 中每个依赖都满足对应 gate
   - 未超过 retry 上限
-- 构建 executor 上下文 → 派发 gsd-executor 子代理
-- 继续自动执行主路径 (按 gsd-start.md STEP 11 执行循环)
+- 构建 executor 上下文 → 派发 executor 子代理
+- 继续自动执行主路径 (按 start.md STEP 11 执行循环)
 
 ---
 
@@ -76,7 +76,7 @@ description: Resume project execution from saved state with workspace validation
 
 - 读取 `current_review` (scope=task, scope_id, stage)
 - 加载对应 task 的 checkpoint 信息
-- 派发 gsd-reviewer 子代理，传递:
+- 派发 reviewer 子代理，传递:
   - task_id + checkpoint_commit + files_changed
   - 当前审查阶段 (spec / quality)
 - 审查完成后恢复正常调度
@@ -87,7 +87,7 @@ description: Resume project execution from saved state with workspace validation
 
 - 读取 `current_review` (scope=phase, scope_id)
 - 收集该 phase 中所有 L1 task 的 checkpoint 信息
-- 派发 gsd-reviewer 子代理进行批量审查
+- 派发 reviewer 子代理进行批量审查
 - 审查完成后:
   - 全部通过 → phase handoff gate 校验
   - 有 Critical → 标记返工 task + 失效传播 → 重新派发 executor
@@ -157,7 +157,7 @@ description: Resume project execution from saved state with workspace validation
   - 过期的研究内容摘要
   - 过期时间
   - 可能受影响的 task (引用了过期 decision 的 task)
-- 自动派发 gsd-researcher 子代理刷新研究
+- 自动派发 researcher 子代理刷新研究
 - 刷新后处理 decision ID 变更:
   - 结论一致 → 保留引用，更新 expires_at
   - 结论变了 → 标记引用 task 为 needs_revalidation

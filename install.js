@@ -9,7 +9,7 @@ import { execSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLAUDE_DIR = join(homedir(), '.claude');
-const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd-lite');
+const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
 
 function log(msg) { console.log(msg); }
@@ -85,6 +85,13 @@ export function main() {
 
   log('Installing files...');
 
+  // Clean up legacy "gsd-lite" runtime directory from older versions
+  const LEGACY_RUNTIME_DIR = join(CLAUDE_DIR, 'gsd-lite');
+  if (!DRY_RUN && existsSync(LEGACY_RUNTIME_DIR)) {
+    rmSync(LEGACY_RUNTIME_DIR, { recursive: true, force: true });
+    log('  ✓ Removed legacy gsd-lite runtime');
+  }
+
   // Reset managed runtime directory to avoid stale files on reinstall
   if (!DRY_RUN && existsSync(RUNTIME_DIR)) {
     rmSync(RUNTIME_DIR, { recursive: true, force: true });
@@ -106,8 +113,8 @@ export function main() {
   copyDir(join(__dirname, 'hooks'), join(CLAUDE_DIR, 'hooks'), 'hooks → ~/.claude/hooks/');
 
   // 6. Stable runtime for MCP server
-  copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd-lite/src/');
-  copyFile(join(__dirname, 'package.json'), join(RUNTIME_DIR, 'package.json'), 'runtime/package.json → ~/.claude/gsd-lite/package.json');
+  copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
+  copyFile(join(__dirname, 'package.json'), join(RUNTIME_DIR, 'package.json'), 'runtime/package.json → ~/.claude/gsd/package.json');
 
   // 7. Runtime dependencies — copy local node_modules or install fresh (npx hoists deps)
   const localNM = join(__dirname, 'node_modules');
@@ -130,7 +137,9 @@ export function main() {
     } catch {}
 
     if (!settings.mcpServers) settings.mcpServers = {};
-    settings.mcpServers['gsd-lite'] = {
+    // Remove legacy "gsd-lite" server entry from older versions
+    delete settings.mcpServers['gsd-lite'];
+    settings.mcpServers.gsd = {
       command: 'node',
       args: [join(RUNTIME_DIR, 'src', 'server.js')],
     };
