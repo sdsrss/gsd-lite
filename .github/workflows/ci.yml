@@ -43,3 +43,6 @@ jobs:
             echo "Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1
           fi
+
+      - name: Security audit
+        run: npm audit --omit=dev

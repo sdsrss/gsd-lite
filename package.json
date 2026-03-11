@@ -11,7 +11,9 @@
     "test:coverage": "c8 --check-coverage --lines 80 --branches 75 --reporter=text --reporter=lcov node --test tests/*.test.js",
     "lint": "biome check src/ tests/ hooks/",
     "lint:fix": "biome check --write src/ tests/ hooks/",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "version": "node scripts/sync-versions.js",
+    "prepublishOnly": "node scripts/sync-versions.js && npm run lint && npm test"
   },
   "repository": {
     "type": "git",

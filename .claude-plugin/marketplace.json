@@ -13,8 +13,13 @@
       "name": "gsd",
       "source": "./",
       "description": "AI orchestration tool — GSD management shell + Superpowers quality core. 5 commands, 4 agents, 5 workflows, MCP server, context monitoring.",
-      "version": "0.3.6",
-      "keywords": ["orchestration", "mcp", "tdd", "task-management"],
+      "version": "0.3.11",
+      "keywords": [
+        "orchestration",
+        "mcp",
+        "tdd",
+        "task-management"
+      ],
       "category": "Development workflows"
     }
   ]
