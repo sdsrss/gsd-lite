@@ -15,6 +15,7 @@ import { validateDebuggerResult, validateExecutorResult, validateResearcherResul
 import { getGitHead, getGsdDir } from '../utils.js';
 
 const MAX_DEBUG_RETRY = 3;
+const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
 
 function isTerminalWorkflowMode(workflowMode) {
@@ -482,7 +483,11 @@ async function resumeExecutingTask(state, basePath) {
   };
 }
 
-export async function resumeWorkflow({ basePath = process.cwd() } = {}) {
+export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = {}) {
+  if (_depth >= MAX_RESUME_DEPTH) {
+    return { error: true, message: `resumeWorkflow recursive depth limit exceeded (max ${MAX_RESUME_DEPTH})` };
+  }
+
   const state = await read({ basePath });
   if (state.error) {
     return state;
@@ -540,7 +545,7 @@ export async function resumeWorkflow({ basePath = process.cwd() } = {}) {
           current_review: null,
         });
         if (persistError) return persistError;
-        const resumed = await resumeWorkflow({ basePath });
+        const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
         if (resumed.error) return resumed;
         return { ...resumed, auto_unblocked: autoUnblock.autoUnblocked };
       }

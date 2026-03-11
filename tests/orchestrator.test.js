@@ -1438,4 +1438,30 @@ describe('orchestrator skeleton', () => {
     // done counter: was 3, B and C invalidated = -2 = 1
     assert.equal(state.phases[0].done, 1);
   });
+
+  it('returns error when resumeWorkflow recursive depth exceeds MAX_RESUME_DEPTH', async () => {
+    await init({
+      project: 'orchestrator-depth-limit',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    // Call with _depth at the limit (3) — should be rejected immediately
+    const result = await resumeWorkflow({ basePath: tempDir, _depth: 3 });
+    assert.equal(result.error, true);
+    assert.ok(result.message.includes('depth'), `Expected depth-related error, got: ${result.message}`);
+  });
+
+  it('allows resumeWorkflow recursive calls below MAX_RESUME_DEPTH', async () => {
+    await init({
+      project: 'orchestrator-depth-ok',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    // Call with _depth=2 (below limit of 3) — should succeed normally
+    const result = await resumeWorkflow({ basePath: tempDir, _depth: 2 });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'dispatch_executor');
+  });
 });
