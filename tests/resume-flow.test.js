@@ -225,6 +225,45 @@ describe('resume flow matrix', () => {
     }, { research: true });
   });
 
+  it('paused_by_user with phase review returns resume_to=reviewing_phase', async () => {
+    await withProject('resume-paused-review-phase', async (tempDir) => {
+      await update({
+        updates: {
+          workflow_mode: 'paused_by_user',
+          current_review: { scope: 'phase', scope_id: 1 },
+        },
+        basePath: tempDir,
+      });
+      const result = await resumeWorkflow({ basePath: tempDir });
+      assert.equal(result.action, 'await_manual_intervention');
+      assert.equal(result.resume_to, 'reviewing_phase');
+    });
+  });
+
+  it('paused_by_user with task review returns resume_to=reviewing_task', async () => {
+    await withProject('resume-paused-review-task', async (tempDir) => {
+      await update({
+        updates: {
+          workflow_mode: 'paused_by_user',
+          current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' },
+        },
+        basePath: tempDir,
+      });
+      const result = await resumeWorkflow({ basePath: tempDir });
+      assert.equal(result.action, 'await_manual_intervention');
+      assert.equal(result.resume_to, 'reviewing_task');
+    });
+  });
+
+  it('paused_by_user without review returns resume_to=executing_task', async () => {
+    await withProject('resume-paused-no-review', async (tempDir) => {
+      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: tempDir });
+      const result = await resumeWorkflow({ basePath: tempDir });
+      assert.equal(result.action, 'await_manual_intervention');
+      assert.equal(result.resume_to, 'executing_task');
+    });
+  });
+
   it('returns await_manual_intervention for planning workflow mode', async () => {
     await withProject('resume-planning', async (tempDir) => {
       await update({ updates: { workflow_mode: 'planning' }, basePath: tempDir });

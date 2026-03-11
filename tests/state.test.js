@@ -114,6 +114,65 @@ describe('state tools', () => {
     });
   });
 
+  describe('update terminal state guard', () => {
+    it('rejects workflow_mode change from completed to paused_by_user', async () => {
+      // First set up completed state: need phase accepted first
+      const dir = await (await import('node:fs/promises')).mkdtemp(join((await import('node:os')).tmpdir(), 'gsd-terminal-'));
+      try {
+        await init({
+          project: 'terminal-test',
+          phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }],
+          basePath: dir,
+        });
+        // Walk lifecycle: pending→running→checkpointed→accepted
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: dir });
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: dir });
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: dir });
+        // Phase: active→reviewing→accepted
+        await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: dir });
+        await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: dir });
+        // Set completed
+        await update({ updates: { workflow_mode: 'completed' }, basePath: dir });
+        // Now try to change to paused_by_user — should be rejected
+        const result = await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+        assert.equal(result.error, true);
+        assert.match(result.message, /terminal state/);
+      } finally {
+        await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects workflow_mode change from failed to paused_by_user', async () => {
+      const dir = await (await import('node:fs/promises')).mkdtemp(join((await import('node:os')).tmpdir(), 'gsd-terminal-'));
+      try {
+        await init({
+          project: 'terminal-fail-test',
+          phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }],
+          basePath: dir,
+        });
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: dir });
+        await update({ updates: { phases: [{ id: 1, lifecycle: 'failed', todo: [{ id: '1.1', lifecycle: 'failed' }] }] }, basePath: dir });
+        await update({ updates: { workflow_mode: 'failed' }, basePath: dir });
+        // Now try to change to paused_by_user — should be rejected
+        const result = await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+        assert.equal(result.error, true);
+        assert.match(result.message, /terminal state/);
+      } finally {
+        await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('allows workflow_mode change from executing_task to paused_by_user (regression)', async () => {
+      // tempDir already has executing_task from prior tests
+      const result = await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: tempDir });
+      assert.equal(result.success, true);
+      const state = await read({ basePath: tempDir });
+      assert.equal(state.workflow_mode, 'paused_by_user');
+      // Restore for subsequent tests
+      await update({ updates: { workflow_mode: 'executing_task' }, basePath: tempDir });
+    });
+  });
+
   describe('update lifecycle validation', () => {
     it('rejects illegal task lifecycle transition (pending → accepted)', async () => {
       const state = await read({ basePath: tempDir });
