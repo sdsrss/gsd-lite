@@ -68,7 +68,7 @@ description: Resume project execution from saved state with workspace validation
   - requires 中每个依赖都满足对应 gate
   - 未超过 retry 上限
 - 构建 executor 上下文 → 派发 executor 子代理
-- 继续自动执行主路径 (按 start.md STEP 11 执行循环)
+- 继续自动执行主路径 (按 references/execution-loop.md 执行循环)
 
 ---
 
