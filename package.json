@@ -1,6 +1,6 @@
 {
   "name": "gsd-lite",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "AI orchestration tool for Claude Code — GSD management shell + Superpowers quality core",
   "type": "module",
   "bin": {
