@@ -7,6 +7,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
+/**
+ * Walk from startDir up to filesystem root looking for a .gsd directory.
+ * Returns the absolute path to .gsd if found, or null.
+ */
+function findGsdDir(startDir) {
+  let dir = startDir;
+  while (true) {
+    const candidate = path.join(dir, '.gsd');
+    try {
+      fs.statSync(candidate);
+      return candidate;
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return null; // reached filesystem root
+      dir = parent;
+    }
+  }
+}
+
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
 process.stdin.setEncoding('utf8');
@@ -24,7 +43,7 @@ process.stdin.on('end', () => {
     // Current GSD task from state.json
     let task = '';
     let hasGsd = false;
-    const gsdDir = path.join(cwd, '.gsd');
+    const gsdDir = findGsdDir(cwd);
     try {
       const state = JSON.parse(fs.readFileSync(path.join(gsdDir, 'state.json'), 'utf8'));
       hasGsd = true;
@@ -71,21 +90,24 @@ process.stdin.on('end', () => {
       }
 
       // Also write to .gsd/.context-health for MCP server reads (atomic, skip if unchanged)
-      try {
-        const healthPath = path.join(gsdDir, '.context-health');
-        let needsHealthWrite = true;
+      // Only write if a .gsd directory was found — never create .gsd from the hook
+      if (gsdDir) {
         try {
-          const current = fs.readFileSync(healthPath, 'utf8').trim();
-          if (current === String(remaining)) needsHealthWrite = false;
-        } catch { /* file doesn't exist yet */ }
-        if (needsHealthWrite) {
-          fs.mkdirSync(gsdDir, { recursive: true });
-          const tmpHealth = path.join(gsdDir, `.context-health.${process.pid}-${Date.now()}.tmp`);
-          fs.writeFileSync(tmpHealth, String(remaining));
-          fs.renameSync(tmpHealth, healthPath);
+          const healthPath = path.join(gsdDir, '.context-health');
+          let needsHealthWrite = true;
+          try {
+            const current = fs.readFileSync(healthPath, 'utf8').trim();
+            if (current === String(remaining)) needsHealthWrite = false;
+          } catch { /* file doesn't exist yet */ }
+          if (needsHealthWrite) {
+            fs.mkdirSync(gsdDir, { recursive: true });
+            const tmpHealth = path.join(gsdDir, `.context-health.${process.pid}-${Date.now()}.tmp`);
+            fs.writeFileSync(tmpHealth, String(remaining));
+            fs.renameSync(tmpHealth, healthPath);
+          }
+        } catch (e) {
+          if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: context-health write failed: ${e.message}\n`);
         }
-      } catch (e) {
-        if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: context-health write failed: ${e.message}\n`);
       }
 
       // Progress bar (10 segments)
