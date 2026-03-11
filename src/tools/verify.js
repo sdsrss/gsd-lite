@@ -65,13 +65,16 @@ export async function runLint(pm, cwd) {
   return runCommand(pm, ['run', 'lint'], cwd);
 }
 
-export async function runTypeCheck(cwd) {
+export async function runTypeCheck(pm, cwd) {
   // M-8: Only run tsc if tsconfig.json exists
   try {
     await stat(join(cwd, 'tsconfig.json'));
   } catch {
     return { exit_code: 0, summary: 'skipped: no tsconfig.json found' };
   }
+  if (pm === 'pnpm') return runCommand('pnpm', ['exec', 'tsc', '--noEmit'], cwd);
+  if (pm === 'yarn') return runCommand('yarn', ['tsc', '--noEmit'], cwd);
+  if (pm === 'bun') return runCommand('bun', ['run', 'tsc', '--noEmit'], cwd);
   return runCommand('npx', ['tsc', '--noEmit'], cwd);
 }
 
@@ -83,7 +86,7 @@ export async function runAll(cwd = process.cwd()) {
   }
   const [lint, typecheck, test] = await Promise.all([
     runLint(pm, cwd),
-    runTypeCheck(cwd),
+    runTypeCheck(pm, cwd),
     runTests(pm, cwd),
   ]);
   return { lint, typecheck, test };

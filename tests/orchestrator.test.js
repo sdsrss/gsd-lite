@@ -1158,11 +1158,68 @@ describe('orchestrator skeleton', () => {
 
     assert.equal(result.success, true);
     assert.equal(result.action, 'task_failed');
-    assert.equal(result.workflow_mode, 'executing_task');
+    // No progressable tasks remain → escalates to awaiting_user
+    assert.equal(result.workflow_mode, 'awaiting_user');
 
     const state = await read({ basePath: tempDir });
     assert.equal(state.phases[0].todo[0].lifecycle, 'failed');
     assert.equal(state.phases[0].lifecycle, 'active'); // Phase not failed when no architecture_concern
+  });
+
+  it('debugger task_failed stays executing_task when other tasks remain', async () => {
+    await init({
+      project: 'debugger-partial-fail',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }, { index: 2, name: 'B' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        current_review: { scope: 'task', scope_id: '1.1', stage: 'debugging' },
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running', retry_count: 3 }] }],
+      },
+      basePath: tempDir,
+    });
+    const result = await handleDebuggerResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1', outcome: 'failed', root_cause: 'unfixable',
+        evidence: [], hypothesis_tested: [], fix_direction: 'none',
+        fix_attempts: 3, blockers: [], architecture_concern: false,
+      },
+    });
+    assert.equal(result.workflow_mode, 'executing_task');
+  });
+
+  it('reviewer propagation decrements done for accepted downstream tasks', async () => {
+    // Setup: A (checkpointed) → B depends on A (accepted, done=1), critical issue invalidates A downstream
+    await init({
+      project: 'done-counter-propagation',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'A', review_required: false },
+        { index: 2, name: 'B', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], review_required: false },
+      ] }],
+      basePath: tempDir,
+    });
+    // Transition tasks through valid lifecycle: pending→running→checkpointed→accepted
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed' }, { id: '1.2', lifecycle: 'checkpointed' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, done: 1, todo: [{ id: '1.2', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase', scope_id: 1, review_level: 'L1-batch',
+        spec_passed: false, quality_passed: false,
+        critical_issues: [{ task_id: '1.1', reason: 'contract broken', invalidates_downstream: true }],
+        important_issues: [], minor_issues: [],
+        accepted_tasks: [], rework_tasks: ['1.1'], evidence: [],
+      },
+    });
+    assert.equal(result.success, true);
+    const state = await read({ basePath: tempDir });
+    // B was accepted (done=1), propagated to needs_revalidation → doneDecrement should include B
+    assert.equal(state.phases[0].done, 0);
+    assert.equal(state.phases[0].todo[1].lifecycle, 'needs_revalidation');
   });
 
   it('rejects debugger result with non-object input', async () => {

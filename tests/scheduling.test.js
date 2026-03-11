@@ -191,4 +191,10 @@ describe('selectRunnableTask', () => {
     assert.ok(Array.isArray(result.diagnostics));
     assert.equal(result.diagnostics.length, 0);
   });
+
+  it('triggers review for zero-task phase', () => {
+    const phase = { id: 1, lifecycle: 'active', todo: [], phase_review: { status: 'pending' } };
+    const result = selectRunnableTask(phase, { phases: [phase] });
+    assert.equal(result.mode, 'trigger_review');
+  });
 });

@@ -1112,3 +1112,45 @@ describe('validateResearchArtifacts edge cases', () => {
     assert.equal(result.valid, true);
   });
 });
+
+describe('createInitialState — duplicate task ID', () => {
+  it('rejects duplicate task index within a phase', () => {
+    const result = createInitialState({
+      project: 'dup-test',
+      phases: [{ name: 'P1', tasks: [{ name: 'A', index: 1 }, { name: 'B', index: 1 }] }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /Duplicate task ID/);
+  });
+});
+
+describe('validateState — current_task and current_review types', () => {
+  it('rejects numeric current_task', () => {
+    const state = createInitialState({ project: 'test', phases: [{ name: 'P1', tasks: [{ name: 'T' }] }] });
+    state.current_task = 42;
+    const result = validateState(state);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('current_task')));
+  });
+
+  it('rejects string current_review', () => {
+    const state = createInitialState({ project: 'test', phases: [{ name: 'P1', tasks: [{ name: 'T' }] }] });
+    state.current_review = 'bad';
+    const result = validateState(state);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('current_review')));
+  });
+});
+
+describe('validateReviewerResult — disjoint check', () => {
+  it('rejects overlapping accepted_tasks and rework_tasks', () => {
+    const result = validateReviewerResult({
+      scope: 'phase', scope_id: 1, review_level: 'L1-batch',
+      spec_passed: true, quality_passed: true,
+      critical_issues: [], important_issues: [], minor_issues: [],
+      accepted_tasks: ['1.1', '1.2'], rework_tasks: ['1.2'], evidence: [],
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('disjoint')));
+  });
+});

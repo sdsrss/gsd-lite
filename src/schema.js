@@ -212,6 +212,12 @@ export function validateState(state) {
       errors.push(...decisionIndexValidation.errors.map((error) => `research.${error}`));
     }
   }
+  if (state.current_task !== null && typeof state.current_task !== 'string') {
+    errors.push('current_task must be a string or null');
+  }
+  if (state.current_review !== null && !isPlainObject(state.current_review)) {
+    errors.push('current_review must be an object or null');
+  }
   if (!isPlainObject(state.evidence)) {
     errors.push('evidence must be an object');
   }
@@ -354,6 +360,12 @@ export function validateReviewerResult(r) {
   if (!Array.isArray(r.rework_tasks)) errors.push('rework_tasks must be array');
   if (!Array.isArray(r.evidence)) errors.push('evidence must be array');
 
+  if (Array.isArray(r.accepted_tasks) && Array.isArray(r.rework_tasks)) {
+    const overlap = r.accepted_tasks.filter(id => r.rework_tasks.includes(id));
+    if (overlap.length > 0) {
+      errors.push(`accepted_tasks and rework_tasks must be disjoint; overlap: ${overlap.join(', ')}`);
+    }
+  }
   for (const issue of r.critical_issues || []) {
     if (!isPlainObject(issue)) {
       errors.push('critical_issues entries must be objects');
@@ -421,12 +433,18 @@ export function validateDebuggerResult(r) {
 }
 
 export function createInitialState({ project, phases }) {
-  // Validate task names before creating state
+  // Validate task names and uniqueness before creating state
+  const seenIds = new Set();
   for (const [pi, p] of (phases || []).entries()) {
     for (const [ti, t] of (p.tasks || []).entries()) {
       if (!t.name || typeof t.name !== 'string') {
         return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: name is required (got ${JSON.stringify(t.name)})` };
       }
+      const id = `${pi + 1}.${t.index || ti + 1}`;
+      if (seenIds.has(id)) {
+        return { error: true, message: `Duplicate task ID: ${id} in phase ${pi + 1}` };
+      }
+      seenIds.add(id);
     }
   }
   return {

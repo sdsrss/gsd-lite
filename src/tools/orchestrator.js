@@ -700,8 +700,9 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       }
     }
 
-    // L0 auto-accept: promote checkpointed → accepted in a second persist
-    if (isL0) {
+    // Auto-accept: L0 tasks or tasks with review_required: false
+    const autoAccept = isL0 || task.review_required === false;
+    if (autoAccept) {
       const acceptError = await persist(basePath, {
         phases: [{
           id: phase.id,
@@ -719,7 +720,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       task_id: task.id,
       review_level: reviewLevel,
       current_review,
-      auto_accepted: isL0,
+      auto_accepted: autoAccept,
     };
   }
 
@@ -825,6 +826,18 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
 
   if (result.outcome === 'failed' || result.architecture_concern === true) {
     const phaseFailed = result.architecture_concern === true;
+
+    // Determine effective workflow mode: if no tasks can make progress, escalate
+    let effectiveWorkflowMode;
+    if (phaseFailed) {
+      effectiveWorkflowMode = 'failed';
+    } else {
+      const hasProgressable = (phase.todo || []).some(t =>
+        t.id !== task.id && !['accepted', 'failed'].includes(t.lifecycle),
+      );
+      effectiveWorkflowMode = hasProgressable ? 'executing_task' : 'awaiting_user';
+    }
+
     const phasePatch = { id: phase.id };
     if (phaseFailed) {
       phasePatch.lifecycle = 'failed';
@@ -832,7 +845,7 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
     phasePatch.todo = [{ id: task.id, lifecycle: 'failed', debug_context }];
 
     const persistError = await persist(basePath, {
-      workflow_mode: phaseFailed ? 'failed' : 'executing_task',
+      workflow_mode: effectiveWorkflowMode,
       current_task: null,
       current_review: null,
       phases: [phasePatch],
@@ -842,7 +855,7 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
     return {
       success: true,
       action: phaseFailed ? 'phase_failed' : 'task_failed',
-      workflow_mode: phaseFailed ? 'failed' : 'executing_task',
+      workflow_mode: effectiveWorkflowMode,
       phase_id: phase.id,
       task_id: task.id,
     };
@@ -914,6 +927,11 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     }
   }
 
+  // Snapshot accepted task IDs before propagation (for done counter adjustment)
+  const acceptedBeforePropagation = new Set(
+    (phase.todo || []).filter(t => t.lifecycle === 'accepted').map(t => t.id),
+  );
+
   // Propagation for critical issues with invalidates_downstream
   for (const issue of (result.critical_issues || [])) {
     if (issue.invalidates_downstream && issue.task_id) {
@@ -925,6 +943,9 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   for (const task of (phase.todo || [])) {
     if (task.lifecycle === 'needs_revalidation' && !taskPatches.some((p) => p.id === task.id)) {
       taskPatches.push({ id: task.id, lifecycle: 'needs_revalidation', evidence_refs: [] });
+      if (acceptedBeforePropagation.has(task.id)) {
+        doneDecrement += 1;
+      }
     }
   }
 

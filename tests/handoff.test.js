@@ -96,7 +96,8 @@ describe('phase handoff gate', () => {
       direction_ok: false,
     });
 
-    assert.equal(result.error, true);
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'direction_drift');
     assert.equal(result.workflow_mode, 'awaiting_user');
 
     const state = await read({ basePath: tempDir });

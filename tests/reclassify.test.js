@@ -31,4 +31,11 @@ describe('reclassifyReviewLevel', () => {
     const newLevel = reclassifyReviewLevel(task, executorResult);
     assert.equal(newLevel, 'L2');
   });
+
+  it('upgrades on object-form [LEVEL-UP] decision', () => {
+    const task = { level: 'L1', name: 'simple task' };
+    const executorResult = { contract_changed: false, decisions: [{ summary: '[LEVEL-UP] needs broader review' }] };
+    const newLevel = reclassifyReviewLevel(task, executorResult);
+    assert.equal(newLevel, 'L2');
+  });
 });

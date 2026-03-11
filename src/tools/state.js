@@ -358,10 +358,11 @@ export async function phaseComplete({
       }
       await writeJson(statePath, state);
       return {
-        error: true,
-        message: 'Handoff gate not met: direction drift detected, awaiting user decision',
+        success: true,
+        action: 'direction_drift',
         workflow_mode: 'awaiting_user',
         phase_id: phase.id,
+        message: 'Direction drift detected; awaiting user decision before phase can complete',
       };
     }
 
@@ -521,6 +522,11 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
   if (!phase || !Array.isArray(phase.todo)) {
     return { error: true, message: 'Phase todo must be an array' };
   }
+  // D-4: Zero-task phase — immediately trigger review so phase can advance
+  if (phase.todo.length === 0) {
+    return { mode: 'trigger_review' };
+  }
+
   const runnableTasks = [];
 
   for (const task of phase.todo) {
@@ -723,7 +729,8 @@ export function reclassifyReviewLevel(task, executorResult) {
 
   // Check for explicit [LEVEL-UP] in decisions
   const hasLevelUp = (executorResult.decisions || []).some(d =>
-    typeof d === 'string' && d.includes('[LEVEL-UP]')
+    (typeof d === 'string' && d.includes('[LEVEL-UP]'))
+    || (d && typeof d === 'object' && typeof d.summary === 'string' && d.summary.includes('[LEVEL-UP]'))
   );
   if (hasLevelUp) return 'L2';
 
@@ -901,10 +908,12 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       ? applyResearchRefresh(state, nextResearch)
       : { warnings: [] };
 
+    // D-2: Compute merged decision_index explicitly before spread to avoid key-ordering fragility
+    const mergedDecisionIndex = state.research?.decision_index || decision_index;
     state.research = {
       ...(state.research || {}),
       ...nextResearch,
-      decision_index: state.research?.decision_index || decision_index,
+      decision_index: mergedDecisionIndex,
     };
 
     if (state.workflow_mode === 'research_refresh_needed') {
