@@ -80,10 +80,14 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 ### Method 1: Claude Code Plugin (Recommended)
 
 ```bash
-claude /plugin install sdsrss/gsd-lite
+# Step 1: Add the marketplace
+/plugin marketplace add sdsrss/gsd-lite
+
+# Step 2: Install the plugin
+/plugin install gsd@sdsrss-gsd-lite
 ```
 
-Automatically registers all commands, agents, workflows, MCP server, and hooks.
+Automatically registers all commands, agents, workflows, MCP server, and hooks. Run these commands inside a Claude Code session.
 
 ### Method 2: npx
 
@@ -106,7 +110,7 @@ Uninstall: `node cli.js uninstall` or `npx gsd-lite uninstall`
 
 ```bash
 # Plugin
-claude /plugin update gsd
+/plugin update gsd@sdsrss-gsd-lite
 
 # npx
 npx gsd-lite install
