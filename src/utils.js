@@ -1,7 +1,10 @@
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFileCb);
 
 export function getGsdDir(startDir = process.cwd()) {
   let dir = resolve(startDir);
@@ -23,16 +26,20 @@ export function getStatePath(startDir = process.cwd()) {
   return join(gsdDir, 'state.json');
 }
 
-export function getGitHead(cwd = process.cwd()) {
+export async function getGitHead(cwd = process.cwd()) {
   try {
-    return execSync('git rev-parse --short HEAD', {
+    const { stdout } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
       cwd,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+      timeout: 5000,
+    });
+    return stdout.trim();
   } catch {
     return null;
   }
+}
+
+export function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function ensureDir(dirPath) {
@@ -56,7 +63,7 @@ export async function readJson(filePath) {
  * Atomically write JSON data (write to .tmp then rename).
  */
 export async function writeJson(filePath, data) {
-  const tmpPath = filePath + '.tmp';
+  const tmpPath = `${filePath}.${process.pid}-${Date.now()}.tmp`;
   await ensureDir(dirname(filePath));
   await writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
   await rename(tmpPath, filePath);
@@ -66,7 +73,7 @@ export async function writeJson(filePath, data) {
  * Atomically write text content (write to .tmp then rename). [I-3]
  */
 export async function writeAtomic(filePath, content) {
-  const tmpPath = filePath + '.tmp';
+  const tmpPath = `${filePath}.${process.pid}-${Date.now()}.tmp`;
   await ensureDir(dirname(filePath));
   await writeFile(tmpPath, content, 'utf-8');
   await rename(tmpPath, filePath);

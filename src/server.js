@@ -2,7 +2,11 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { init, read, update, phaseComplete } from './tools/state.js';
+
+const _require = createRequire(import.meta.url);
+const PKG_VERSION = _require('../package.json').version;
 import {
   handleDebuggerResult,
   handleExecutorResult,
@@ -12,7 +16,7 @@ import {
 } from './tools/orchestrator.js';
 
 const server = new Server(
-  { name: 'gsd-lite', version: '0.2.0' },
+  { name: 'gsd-lite', version: PKG_VERSION },
   { capabilities: { tools: {} } }
 );
 
@@ -183,7 +187,7 @@ async function dispatchToolCall(name, args) {
       result = {
         status: 'ok',
         server: 'gsd-lite',
-        version: '0.2.0',
+        version: PKG_VERSION,
         state_exists: !stateResult.error,
         ...(stateResult.error ? {} : {
           project: stateResult.project,

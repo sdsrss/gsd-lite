@@ -81,9 +81,10 @@ export async function runAll(cwd = process.cwd()) {
     const errResult = { exit_code: -1, summary: 'No package manager detected' };
     return { lint: errResult, typecheck: errResult, test: errResult };
   }
-  return {
-    lint: await runLint(pm, cwd),
-    typecheck: await runTypeCheck(cwd),
-    test: await runTests(pm, cwd),
-  };
+  const [lint, typecheck, test] = await Promise.all([
+    runLint(pm, cwd),
+    runTypeCheck(cwd),
+    runTests(pm, cwd),
+  ]);
+  return { lint, typecheck, test };
 }

@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
+
+const _require = createRequire(import.meta.url);
+const PKG_VERSION = _require('../package.json').version;
 
 describe('server tool handling', () => {
   it('returns structured errors for invalid tool input', async () => {
@@ -322,7 +326,7 @@ describe('gsd-health tool', () => {
     const result = await handleToolCall('gsd-health', { basePath: fakePath });
     assert.equal(result.status, 'ok');
     assert.equal(result.server, 'gsd-lite');
-    assert.equal(result.version, '0.2.0');
+    assert.equal(result.version, PKG_VERSION);
     assert.equal(result.state_exists, false);
   });
 

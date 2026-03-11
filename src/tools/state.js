@@ -2,7 +2,7 @@
 
 import { join, dirname } from 'node:path';
 import { stat } from 'node:fs/promises';
-import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead } from '../utils.js';
+import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject } from '../utils.js';
 import {
   CANONICAL_FIELDS,
   TASK_LIFECYCLE,
@@ -23,10 +23,6 @@ function withStateLock(fn) {
   const p = _mutationQueue.then(fn);
   _mutationQueue = p.catch(() => {});
   return p;
-}
-
-function isPlainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function inferWorkflowModeAfterResearch(state) {
@@ -72,13 +68,9 @@ export async function init({ project, phases, research, force = false, basePath 
     await ensureDir(join(gsdDir, 'research'));
   }
 
-  let state;
-  try {
-    state = createInitialState({ project, phases });
-  } catch (err) {
-    return { error: true, message: err.message };
-  }
-  state.git_head = getGitHead(basePath);
+  const state = createInitialState({ project, phases });
+  if (state.error) return state;
+  state.git_head = await getGitHead(basePath);
 
   // Create plan.md placeholder (atomic write)
   await writeAtomic(
@@ -393,7 +385,7 @@ export async function phaseComplete({
 
     // Update git_head to current commit
     const gsdDir = dirname(statePath);
-    state.git_head = getGitHead(dirname(gsdDir));
+    state.git_head = await getGitHead(dirname(gsdDir));
 
     // Prune evidence from old phases (in-memory to avoid double read/write)
     await _pruneEvidenceFromState(state, state.current_phase, gsdDir);

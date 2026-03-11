@@ -31,10 +31,10 @@ export function postToolUse(basePath) {
     const gsdDir = join(basePath || process.cwd(), '.gsd');
     const health = parseInt(readFileSync(join(gsdDir, '.context-health'), 'utf-8'), 10);
 
-    if (health < 20) {
+    if (health < 25) {
       return `🛑 CONTEXT EMERGENCY (${health}% remaining): Save state NOW. Set workflow_mode = awaiting_clear. Tell user to /clear then /gsd:resume.`;
     }
-    if (health < 40) {
+    if (health < 35) {
       return `⚠️ CONTEXT LOW (${health}% remaining): Complete current task, save state, set workflow_mode = awaiting_clear. Tell user to /clear then /gsd:resume.`;
     }
   } catch (err) {

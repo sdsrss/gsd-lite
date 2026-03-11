@@ -54,13 +54,15 @@ process.stdin.on('end', () => {
             if (existing.remaining_percentage === remaining) needsWrite = false;
           } catch { /* no existing file */ }
           if (needsWrite) {
-            fs.writeFileSync(bridgePath, JSON.stringify({
+            const tmpBridge = bridgePath + '.tmp';
+            fs.writeFileSync(tmpBridge, JSON.stringify({
               session_id: session,
               remaining_percentage: remaining,
               used_pct: used,
               has_gsd: hasGsd,
               timestamp: Math.floor(Date.now() / 1000),
             }));
+            fs.renameSync(tmpBridge, bridgePath);
           }
         } catch {
           // Silent fail — bridge is best-effort
@@ -75,8 +77,11 @@ process.stdin.on('end', () => {
           fs.writeFileSync(healthPath, String(remaining));
         }
       } catch {
-        // File doesn't exist yet or .gsd/ missing — try writing
-        try { fs.writeFileSync(path.join(gsdDir, '.context-health'), String(remaining)); } catch { /* silent */ }
+        // File doesn't exist yet or .gsd/ missing — ensure dir exists then write
+        try {
+          fs.mkdirSync(gsdDir, { recursive: true });
+          fs.writeFileSync(path.join(gsdDir, '.context-health'), String(remaining));
+        } catch { /* silent */ }
       }
 
       // Progress bar (10 segments)

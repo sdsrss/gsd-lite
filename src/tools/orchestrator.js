@@ -106,7 +106,7 @@ async function evaluatePreflight(state, basePath) {
     return { override: null };
   }
 
-  const currentGitHead = getGitHead(basePath);
+  const currentGitHead = await getGitHead(basePath);
   if (state.git_head && currentGitHead && state.git_head !== currentGitHead) {
     return {
       override: {

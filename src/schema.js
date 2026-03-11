@@ -1,5 +1,7 @@
 // State schema + lifecycle validation
 
+import { isPlainObject } from './utils.js';
+
 export const WORKFLOW_MODES = [
   'planning',
   'executing_task',
@@ -51,10 +53,6 @@ export const CANONICAL_FIELDS = [
   'research',
   'evidence',
 ];
-
-function isPlainObject(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function validateResearchSourcesArray(sources, errors, path = 'sources') {
   if (!Array.isArray(sources)) {
@@ -427,7 +425,7 @@ export function createInitialState({ project, phases }) {
   for (const [pi, p] of (phases || []).entries()) {
     for (const [ti, t] of (p.tasks || []).entries()) {
       if (!t.name || typeof t.name !== 'string') {
-        throw new Error(`Phase ${pi + 1} task ${ti + 1}: name is required (got ${JSON.stringify(t.name)})`);
+        return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: name is required (got ${JSON.stringify(t.name)})` };
       }
     }
   }

@@ -14,6 +14,20 @@ const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.cla
 const settingsPath = path.join(claudeDir, 'settings.json');
 const statuslineScript = path.join(pluginRoot, 'hooks', 'gsd-statusline.cjs');
 
+// Clean up stale bridge/debounce files from previous sessions (older than 24h)
+try {
+  const tmpDir = os.tmpdir();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  for (const entry of fs.readdirSync(tmpDir)) {
+    if (!entry.startsWith('gsd-ctx-')) continue;
+    try {
+      const fullPath = path.join(tmpDir, entry);
+      if (now - fs.statSync(fullPath).mtimeMs > DAY_MS) fs.unlinkSync(fullPath);
+    } catch { /* skip */ }
+  }
+} catch { /* silent */ }
+
 try {
   // Verify the statusline script exists (sanity check)
   if (!fs.existsSync(statuslineScript)) {

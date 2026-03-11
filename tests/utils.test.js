@@ -79,8 +79,8 @@ describe('utils', () => {
   });
 
   describe('getGitHead', () => {
-    it('returns a commit hash or null', () => {
-      const head = getGitHead();
+    it('returns a commit hash or null', async () => {
+      const head = await getGitHead();
       if (head !== null) {
         assert.match(head, /^[0-9a-f]{7,40}$/);
       }
@@ -89,7 +89,7 @@ describe('utils', () => {
     it('returns null for non-git directory', async () => {
       const isolatedDir = await mkdtemp('/tmp/gsd-no-git-');
       try {
-        const head = getGitHead(isolatedDir);
+        const head = await getGitHead(isolatedDir);
         assert.equal(head, null);
       } finally {
         await rm(isolatedDir, { recursive: true, force: true });
