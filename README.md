@@ -39,10 +39,10 @@ GSD-Lite 是一个面向 Claude Code 的 AI 编排工具，将 [GSD](https://git
 
 | Agent | 职责 | 内置纪律 |
 |-------|------|---------|
-| **gsd-executor** | 执行单 task (TDD + 自审 + checkpoint) | 铁律 + 红旗 + 偏差规则 |
-| **gsd-reviewer** | 双阶段审查 (规格→质量) | 独立验证 + HARD-GATE |
-| **gsd-researcher** | 生态系统研究 (Context7→官方文档→WebSearch) | 置信度标注 |
-| **gsd-debugger** | 4 阶段系统性根因分析 | 根因铁律 |
+| **executor** | 执行单 task (TDD + 自审 + checkpoint) | 铁律 + 红旗 + 偏差规则 |
+| **reviewer** | 双阶段审查 (规格→质量) | 独立验证 + HARD-GATE |
+| **researcher** | 生态系统研究 (Context7→官方文档→WebSearch) | 置信度标注 |
+| **debugger** | 4 阶段系统性根因分析 | 根因铁律 |
 
 ## 核心能力
 
@@ -60,7 +60,7 @@ GSD-Lite 是一个面向 Claude Code 的 AI 编排工具，将 [GSD](https://git
 ```bash
 # 方式一：Claude Code 插件市场 (推荐)
 /plugin marketplace add sdsrss/gsd-lite
-/plugin install gsd-lite
+/plugin install gsd
 
 # 方式二：npx
 npx gsd-lite install
@@ -78,7 +78,7 @@ cd gsd-lite && npm install && node cli.js install
 
 ```bash
 # 插件方式
-/plugin update gsd-lite
+/plugin update gsd
 
 # 源码方式
 git pull && npm install && node cli.js install
@@ -88,6 +88,7 @@ npx gsd-lite install
 ```
 
 - 安装器支持重复执行，通常**不需要先卸载**
+- 从旧版 (gsd-lite) 升级会自动清理旧文件
 - 更新后建议重启 Claude Code 或重开会话，以加载最新 MCP server / hooks
 
 ## 快速开始
