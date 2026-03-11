@@ -35,16 +35,17 @@ description: Resume project execution from saved state with workspace validation
      - 不一致 → 覆写 `workflow_mode = reconcile_workspace`
 
 2. **计划版本校验:**
-   - 如果本地 plan.md 或 phases/*.md 被手动修改，且 `plan_version` 不匹配
+   - 如果本地 plan.md 或 phases/*.md 被手动修改 (mtime > last_session)
    - → 覆写 `workflow_mode = replan_required`
 
-3. **研究过期校验:**
-   - 如果 `research.expires_at` 已过期 (早于当前时间)
-   - → 覆写 `workflow_mode = research_refresh_needed`
+3. **方向漂移校验:**
+   - 如果当前或任何未完成 phase 的 `phase_handoff.direction_ok === false`
+   - → 覆写 `workflow_mode = awaiting_user`
 
-4. **工作区冲突校验:**
-   - 运行 `git status` 检查是否存在冲突或脏工作区
-   - 存在未解决的合并冲突 → 覆写 `workflow_mode = awaiting_user`
+4. **研究过期校验:**
+   - 如果 `research.expires_at` 已过期 (早于当前时间)
+   - 或 research.decision_index 中有条目的 expires_at 已过期
+   - → 覆写 `workflow_mode = research_refresh_needed`
 
 5. **全部通过:**
    - 保持原 `workflow_mode` 不变

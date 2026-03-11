@@ -11,8 +11,11 @@ description: Save current state and pause project execution
 
 ## STEP 1: 保存完整状态
 
-读取并更新 `.gsd/state.json`:
+读取 `.gsd/state.json`:
 - 如果文件不存在 → 告知用户 "未找到 GSD 项目状态，无需停止"，停止
+- 如果 `workflow_mode` 已是 `completed` 或 `failed` → 告知用户 "项目已终结 ({workflow_mode})，无需停止"，停止
+
+更新 state.json:
 
 确保以下信息已保存到 state.json:
 - `current_phase` / `current_task` — 当前执行位置
