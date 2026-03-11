@@ -1473,14 +1473,9 @@ describe('orchestrator skeleton', () => {
   it('handleReviewerResult returns error for non-existent phase scope_id', async () => {
     await init({
       project: 'reviewer-no-phase',
-      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      phases: [],
       basePath: tempDir,
     });
-    // Transition phase through lifecycle to accepted so getCurrentPhase fallback returns null
-    await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
-    await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
-    // Set current_phase to non-existent value — no active phases remain
-    await update({ updates: { current_phase: 99 }, basePath: tempDir });
 
     const result = await handleReviewerResult({
       result: {

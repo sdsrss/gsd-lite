@@ -223,11 +223,11 @@ describe('evidence store', () => {
       assert.ok(state.evidence['ev:scope:global'], 'non-task scope evidence should be retained');
     });
 
-    it('retains evidence with missing scope (null → never archived)', async () => {
+    it('retains evidence with non-task scope (global → never archived)', async () => {
       const { update, pruneEvidence, read } = await import('../src/tools/state.js');
-      // Bypass addEvidence validation to inject entry without scope
+      // Use a non-task scope that parseScopePhase can't extract a phase from
       const state = await read({ basePath: scopeDir });
-      state.evidence['ev:scope:noscope'] = { command: 'test', exit_code: 0, timestamp: new Date().toISOString(), summary: 'no scope' };
+      state.evidence['ev:scope:noscope'] = { command: 'test', exit_code: 0, timestamp: new Date().toISOString(), summary: 'global scope', scope: 'global' };
       await update({ updates: { evidence: state.evidence }, basePath: scopeDir });
 
       const result = await pruneEvidence({ currentPhase: 3, basePath: scopeDir });

@@ -75,15 +75,15 @@ node --test tests/state.test.js  # 运行单个测试文件
 <!-- claude-mem-lite: auto-updated context. To avoid git noise, add CLAUDE.md to .gitignore -->
 <claude-mem-context>
 ### Last Session
-Request: Fix tautological assertions in verify.test.js and related test failures in the GSD-Lite orchestration tool
-Completed: Fixed tautological assertions in verify.test.js (commit 256d152), fixed orchestrator to return structured recovery opti…
-Next: Review remaining test coverage gaps (currently 94.31% lines / 81.96% branches), verify all 518 tests passing, evaluate …
+Request: Fix test failures and harden validation in GSD-Lite state management system (v0.3.6 release cycle)
+Completed: Fixed 4 test descriptions in incremental-validation.test.js and evidence.test.js; created check-versions.js verificatio…
+Next: Run full test suite (npm test) to verify all 573+ tests pass with ≥80% coverage; validate schema version consistency wi…
 
 ### Key Context
-- [bugfix] Refactor evidence pruning and failed phase handling in orchestrator (#2324)
-- [bugfix] Error while working on gsd-statusline.cjs, state.js, orchestrator.js (#2321)
-- [bugfix] Error while working on orchestrator.js, state.js (#2320)
-- [bugfix] Error while working on gsd (#2319)
-- [bugfix] Replace tautological assertions in verify.test.js (#2318)
+- [bugfix] Removed unused rm import from error-codes.test.js (#2415)
+- [bugfix] Error while working on orchestrator.test.js, incremental-validation.test.js, sc… (#2414)
+- [bugfix] Error while working on schema.js (#2410)
+- [bugfix] Fix misleading test descriptions in validation suite (#2407)
+- [bugfix] Test failures in incremental-validation and evidence handling (#2406)
 
 </claude-mem-context>

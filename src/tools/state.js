@@ -21,6 +21,18 @@ const RESEARCH_FILES = ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.m
 const MAX_EVIDENCE_ENTRIES = 200;
 const MAX_ARCHIVE_ENTRIES = 1000;
 
+// M-10: Structured error codes
+export const ERROR_CODES = {
+  NO_PROJECT_DIR: 'NO_PROJECT_DIR',
+  INVALID_INPUT: 'INVALID_INPUT',
+  VALIDATION_FAILED: 'VALIDATION_FAILED',
+  STATE_EXISTS: 'STATE_EXISTS',
+  NOT_FOUND: 'NOT_FOUND',
+  TERMINAL_STATE: 'TERMINAL_STATE',
+  TRANSITION_ERROR: 'TRANSITION_ERROR',
+  HANDOFF_GATE: 'HANDOFF_GATE',
+};
+
 // C-1: Serialize all state mutations to prevent TOCTOU races
 // C-2: Layer cross-process advisory file lock on top of in-process queue
 let _mutationQueue = Promise.resolve();
@@ -61,10 +73,10 @@ function normalizeResearchArtifacts(artifacts) {
  */
 export async function init({ project, phases, research, force = false, basePath = process.cwd() }) {
   if (!project || typeof project !== 'string') {
-    return { error: true, message: 'project must be a non-empty string' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'project must be a non-empty string' };
   }
   if (!Array.isArray(phases)) {
-    return { error: true, message: 'phases must be an array' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'phases must be an array' };
   }
   const gsdDir = join(basePath, '.gsd');
   const statePath = join(gsdDir, 'state.json');
@@ -74,7 +86,7 @@ export async function init({ project, phases, research, force = false, basePath 
     if (!force) {
       try {
         await stat(statePath);
-        return { error: true, message: 'state.json already exists; pass force: true to reinitialize' };
+        return { error: true, code: ERROR_CODES.STATE_EXISTS, message: 'state.json already exists; pass force: true to reinitialize' };
       } catch {} // File doesn't exist, proceed
     } else {
       // H-8: Backup existing state before force overwrite
@@ -130,12 +142,12 @@ export async function init({ project, phases, research, force = false, basePath 
 export async function read({ fields, basePath = process.cwd(), validate = false } = {}) {
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
 
   const result = await readJson(statePath);
   if (!result.ok) {
-    return { error: true, message: result.error };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
   }
   const state = migrateState(result.data);
 
@@ -143,7 +155,7 @@ export async function read({ fields, basePath = process.cwd(), validate = false 
   if (validate) {
     const validation = validateState(state);
     if (!validation.valid) {
-      return { error: true, message: `State validation failed: ${validation.errors.join('; ')}` };
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
     }
   }
 
@@ -165,7 +177,7 @@ export async function read({ fields, basePath = process.cwd(), validate = false 
  */
 export async function update({ updates, basePath = process.cwd() } = {}) {
   if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
-    return { error: true, message: 'updates must be a non-null object' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'updates must be a non-null object' };
   }
   // Guard: reject non-canonical fields
   const nonCanonical = Object.keys(updates).filter(
@@ -174,13 +186,14 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
   if (nonCanonical.length > 0) {
     return {
       error: true,
+      code: ERROR_CODES.INVALID_INPUT,
       message: `Non-canonical fields rejected: ${nonCanonical.join(', ')}`,
     };
   }
 
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
   // C-2: Initialize cross-process lock path on first mutation
   if (!_fileLockPath) _fileLockPath = join(dirname(statePath), 'state.lock');
@@ -188,7 +201,7 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
     const state = result.data;
 
@@ -197,7 +210,7 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
       const currentMode = state.workflow_mode;
       if ((currentMode === 'completed' || currentMode === 'failed')
           && updates.workflow_mode !== currentMode) {
-        return { error: true, message: `Cannot change workflow_mode from terminal state '${currentMode}'` };
+        return { error: true, code: ERROR_CODES.TERMINAL_STATE, message: `Cannot change workflow_mode from terminal state '${currentMode}'` };
       }
     }
 
@@ -210,7 +223,7 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
         // Check phase lifecycle transition
         if (newPhase.lifecycle && newPhase.lifecycle !== oldPhase.lifecycle) {
           const tr = validateTransition('phase', oldPhase.lifecycle, newPhase.lifecycle);
-          if (!tr.valid) return { error: true, message: tr.error };
+          if (!tr.valid) return { error: true, code: ERROR_CODES.TRANSITION_ERROR, message: tr.error };
         }
 
         // Check task lifecycle transitions
@@ -220,7 +233,7 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
             if (!oldTask) continue;
             if (newTask.lifecycle && newTask.lifecycle !== oldTask.lifecycle) {
               const tr = validateTransition('task', oldTask.lifecycle, newTask.lifecycle);
-              if (!tr.valid) return { error: true, message: tr.error };
+              if (!tr.valid) return { error: true, code: ERROR_CODES.TRANSITION_ERROR, message: tr.error };
             }
           }
         }
@@ -270,6 +283,7 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
     if (!validation.valid) {
       return {
         error: true,
+        code: ERROR_CODES.VALIDATION_FAILED,
         message: `Validation failed: ${validation.errors.join('; ')}`,
       };
     }
@@ -307,20 +321,20 @@ export async function phaseComplete({
   direction_ok,
 } = {}) {
   if (typeof phase_id !== 'number') {
-    return { error: true, message: 'phase_id must be a number' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'phase_id must be a number' };
   }
   if (verification != null && (typeof verification !== 'object' || Array.isArray(verification))) {
-    return { error: true, message: 'verification must be an object when provided' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'verification must be an object when provided' };
   }
   if (typeof run_verify !== 'boolean') {
-    return { error: true, message: 'run_verify must be a boolean' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'run_verify must be a boolean' };
   }
   if (direction_ok !== undefined && typeof direction_ok !== 'boolean') {
-    return { error: true, message: 'direction_ok must be a boolean when provided' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'direction_ok must be a boolean when provided' };
   }
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
 
   return withStateLock(async () => {
@@ -332,13 +346,13 @@ export async function phaseComplete({
 
     const phase = state.phases.find((p) => p.id === phase_id);
     if (!phase) {
-      return { error: true, message: `Phase ${phase_id} not found` };
+      return { error: true, code: ERROR_CODES.NOT_FOUND, message: `Phase ${phase_id} not found` };
     }
     if (!Array.isArray(phase.todo)) {
-      return { error: true, message: `Phase ${phase_id} has invalid todo list` };
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Phase ${phase_id} has invalid todo list` };
     }
     if (!phase.phase_handoff || typeof phase.phase_handoff !== 'object') {
-      return { error: true, message: `Phase ${phase_id} is missing phase_handoff metadata` };
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Phase ${phase_id} is missing phase_handoff metadata` };
     }
 
     // Validate phase lifecycle transition FIRST (fail-fast) [I-4]
@@ -348,7 +362,7 @@ export async function phaseComplete({
       'accepted',
     );
     if (!transitionResult.valid) {
-      return { error: true, message: transitionResult.error };
+      return { error: true, code: ERROR_CODES.TRANSITION_ERROR, message: transitionResult.error };
     }
 
     // Check handoff gate: all tasks must be accepted
@@ -356,6 +370,7 @@ export async function phaseComplete({
     if (pendingTasks.length > 0) {
       return {
         error: true,
+        code: ERROR_CODES.HANDOFF_GATE,
         message: `Handoff gate not met: ${pendingTasks.length} task(s) not accepted — ${pendingTasks.map((t) => `${t.id}:${t.lifecycle}`).join(', ')}`,
       };
     }
@@ -364,6 +379,7 @@ export async function phaseComplete({
     if (phase.phase_handoff.critical_issues_open > 0) {
       return {
         error: true,
+        code: ERROR_CODES.HANDOFF_GATE,
         message: `Handoff gate not met: ${phase.phase_handoff.critical_issues_open} critical issue(s) open`,
       };
     }
@@ -373,6 +389,7 @@ export async function phaseComplete({
     if (!reviewPassed) {
       return {
         error: true,
+        code: ERROR_CODES.HANDOFF_GATE,
         message: 'Handoff gate not met: required reviews not passed',
       };
     }
@@ -384,6 +401,7 @@ export async function phaseComplete({
     if (!testsPassed) {
       return {
         error: true,
+        code: ERROR_CODES.HANDOFF_GATE,
         message: `Handoff gate not met: verification checks failed — ${verificationSummary(verificationResult)}`,
       };
     }
@@ -401,7 +419,7 @@ export async function phaseComplete({
       phase.phase_handoff.direction_ok = false;
       const driftValidation = validateState(state);
       if (!driftValidation.valid) {
-        return { error: true, message: `Validation failed: ${driftValidation.errors.join('; ')}` };
+        return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${driftValidation.errors.join('; ')}` };
       }
       await writeJson(statePath, state);
       return {
@@ -453,18 +471,18 @@ export async function phaseComplete({
 export async function addEvidence({ id, data, basePath = process.cwd() }) {
   // I-8: Validate inputs
   if (!id || typeof id !== 'string') {
-    return { error: true, message: 'id must be a non-empty string' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'id must be a non-empty string' };
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return { error: true, message: 'data must be a non-null object' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'data must be a non-null object' };
   }
   if (typeof data.scope !== 'string') {
-    return { error: true, message: 'data.scope must be a string' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'data.scope must be a string' };
   }
 
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
 
   return withStateLock(async () => {
@@ -539,11 +557,11 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
  */
 export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) {
   if (typeof currentPhase !== 'number' || !Number.isFinite(currentPhase)) {
-    return { error: true, message: 'currentPhase must be a finite number' };
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'currentPhase must be a finite number' };
   }
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
 
   return withStateLock(async () => {
@@ -928,7 +946,7 @@ export function applyResearchRefresh(state, newResearch) {
 export async function storeResearch({ result, artifacts, decision_index, basePath = process.cwd() } = {}) {
   const resultValidation = validateResearcherResult(result || {});
   if (!resultValidation.valid) {
-    return { error: true, message: `Invalid researcher result: ${resultValidation.errors.join('; ')}` };
+    return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Invalid researcher result: ${resultValidation.errors.join('; ')}` };
   }
 
   const artifactsValidation = validateResearchArtifacts(artifacts, {
@@ -937,17 +955,17 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     expiresAt: result.expires_at,
   });
   if (!artifactsValidation.valid) {
-    return { error: true, message: `Invalid research artifacts: ${artifactsValidation.errors.join('; ')}` };
+    return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Invalid research artifacts: ${artifactsValidation.errors.join('; ')}` };
   }
 
   const decisionIndexValidation = validateResearchDecisionIndex(decision_index, result.decision_ids);
   if (!decisionIndexValidation.valid) {
-    return { error: true, message: `Invalid research decision_index: ${decisionIndexValidation.errors.join('; ')}` };
+    return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Invalid research decision_index: ${decisionIndexValidation.errors.join('; ')}` };
   }
 
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
 
   return withStateLock(async () => {
@@ -1010,7 +1028,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
 
     const validation = validateState(state);
     if (!validation.valid) {
-      return { error: true, message: `State validation failed: ${validation.errors.join('; ')}` };
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
     }
 
     await writeJson(statePath, state);

@@ -634,6 +634,46 @@ describe('schema', () => {
       const result = validateState(state);
       assert.equal(result.valid, true);
     });
+
+    // M-4: Cross-field validation
+    it('rejects current_phase > total_phases (M-4)', () => {
+      const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }] });
+      state.current_phase = 5;
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('must not exceed total_phases')));
+    });
+
+    it('accepts current_phase equal to total_phases (M-4)', () => {
+      const state = createInitialState({ project: 'test', phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }] });
+      state.current_phase = 1;
+      const result = validateState(state);
+      assert.equal(result.valid, true);
+    });
+
+    // M-5: Evidence entry structure validation
+    it('rejects evidence entry without scope (M-5)', () => {
+      const state = createInitialState({ project: 'test', phases: [] });
+      state.evidence = { 'ev:1': { command: 'test' } };
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('evidence["ev:1"].scope')));
+    });
+
+    it('rejects non-object evidence entry (M-5)', () => {
+      const state = createInitialState({ project: 'test', phases: [] });
+      state.evidence = { 'ev:1': 'bad' };
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('evidence["ev:1"] must be an object')));
+    });
+
+    it('accepts valid evidence entries with scope (M-5)', () => {
+      const state = createInitialState({ project: 'test', phases: [] });
+      state.evidence = { 'ev:1': { scope: 'task:1.1' }, 'ev:2': { scope: 'global' } };
+      const result = validateState(state);
+      assert.equal(result.valid, true);
+    });
   });
 
   describe('createInitialState', () => {

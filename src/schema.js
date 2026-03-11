@@ -225,6 +225,17 @@ export function validateStateUpdate(state, updates) {
       case 'evidence':
         if (!isPlainObject(updates.evidence)) {
           errors.push('evidence must be an object');
+        } else {
+          // M-5: Validate evidence entry structure
+          for (const [id, entry] of Object.entries(updates.evidence)) {
+            if (!isPlainObject(entry)) {
+              errors.push(`evidence["${id}"] must be an object`);
+              continue;
+            }
+            if (typeof entry.scope !== 'string' || entry.scope.length === 0) {
+              errors.push(`evidence["${id}"].scope must be a non-empty string`);
+            }
+          }
         }
         break;
       case 'research':
@@ -235,6 +246,14 @@ export function validateStateUpdate(state, updates) {
       default:
         errors.push(`Unknown canonical field: ${key}`);
     }
+  }
+
+  // M-4: Cross-field check — current_phase ≤ total_phases (skip degenerate 0-phase case)
+  const effectivePhase = 'current_phase' in updates ? updates.current_phase : state.current_phase;
+  const effectiveTotal = 'total_phases' in updates ? updates.total_phases : state.total_phases;
+  if (Number.isFinite(effectivePhase) && Number.isFinite(effectiveTotal)
+      && effectiveTotal > 0 && effectivePhase > effectiveTotal) {
+    errors.push(`current_phase (${effectivePhase}) must not exceed total_phases (${effectiveTotal})`);
   }
 
   return { valid: errors.length === 0, errors };
@@ -320,6 +339,22 @@ export function validateState(state) {
   }
   if (!isPlainObject(state.evidence)) {
     errors.push('evidence must be an object');
+  } else {
+    // M-5: Validate evidence entry structure
+    for (const [id, entry] of Object.entries(state.evidence)) {
+      if (!isPlainObject(entry)) {
+        errors.push(`evidence["${id}"] must be an object`);
+        continue;
+      }
+      if (typeof entry.scope !== 'string' || entry.scope.length === 0) {
+        errors.push(`evidence["${id}"].scope must be a non-empty string`);
+      }
+    }
+  }
+  // M-4: Cross-field check — current_phase ≤ total_phases (skip degenerate 0-phase case)
+  if (Number.isFinite(state.current_phase) && Number.isFinite(state.total_phases)
+      && state.total_phases > 0 && state.current_phase > state.total_phases) {
+    errors.push(`current_phase (${state.current_phase}) must not exceed total_phases (${state.total_phases})`);
   }
   if (Array.isArray(state.phases)) {
     if (typeof state.total_phases === 'number' && state.total_phases !== state.phases.length) {

@@ -47,7 +47,8 @@ describe('validateStateUpdate', () => {
   describe('current_phase validation', () => {
     it('accepts valid current_phase', () => {
       const state = baseState();
-      const result = validateStateUpdate(state, { current_phase: 2 });
+      // current_phase must not exceed total_phases (which is 1 for baseState)
+      const result = validateStateUpdate(state, { current_phase: 1 });
       assert.equal(result.valid, true);
     });
 
@@ -290,6 +291,66 @@ describe('validateStateUpdate', () => {
       const result = validateStateUpdate(state, { workflow_mode: 'bad', current_phase: 'x' });
       assert.equal(result.valid, false);
       assert.ok(result.errors.length >= 2);
+    });
+  });
+
+  describe('M-4: cross-field current_phase ≤ total_phases', () => {
+    it('rejects current_phase exceeding total_phases', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { current_phase: 5 });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('must not exceed total_phases')));
+    });
+
+    it('rejects when updating total_phases below current_phase', () => {
+      const state = baseState();
+      state.current_phase = 3;
+      state.total_phases = 5;
+      const result = validateStateUpdate(state, { total_phases: 2 });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('must not exceed total_phases')));
+    });
+
+    it('accepts current_phase equal to total_phases', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { current_phase: 1, total_phases: 1 });
+      assert.equal(result.valid, true);
+    });
+
+    it('skips check when total_phases is 0 (degenerate case)', () => {
+      const state = baseState();
+      state.total_phases = 0;
+      const result = validateStateUpdate(state, { current_phase: 1 });
+      assert.equal(result.valid, true);
+    });
+  });
+
+  describe('M-5: evidence entry structure validation', () => {
+    it('rejects evidence entry without scope', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { evidence: { 'ev:1': { command: 'test' } } });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('evidence["ev:1"].scope must be a non-empty string')));
+    });
+
+    it('rejects evidence entry with empty scope', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { evidence: { 'ev:1': { scope: '' } } });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('scope must be a non-empty string')));
+    });
+
+    it('rejects non-object evidence entry', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { evidence: { 'ev:1': 'bad' } });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('evidence["ev:1"] must be an object')));
+    });
+
+    it('accepts valid evidence entries with scope', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { evidence: { 'ev:1': { scope: 'task:1.1' }, 'ev:2': { scope: 'global' } } });
+      assert.equal(result.valid, true);
     });
   });
 });
