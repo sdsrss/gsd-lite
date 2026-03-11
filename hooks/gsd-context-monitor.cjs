@@ -9,7 +9,10 @@
 // 3. When remaining context drops below thresholds, injects a warning
 //    via hookSpecificOutput.additionalContext
 //
-// Thresholds:
+// Only active when GSD project is running (has_gsd = true in bridge file).
+// Non-GSD sessions exit early — Claude's auto-compaction handles context.
+//
+// Thresholds (GSD sessions only):
 //   WARNING  (remaining <= 35%): Agent should wrap up current task
 //   CRITICAL (remaining <= 25%): Agent must stop and save state
 //
@@ -97,20 +100,19 @@ process.stdin.on('end', () => {
     // Use bridge data to avoid extra filesystem check
     const isGsdActive = metrics.has_gsd === true;
 
+    // Non-GSD sessions: don't interfere — let Claude's auto-compaction handle it
+    if (!isGsdActive) {
+      process.exit(0);
+    }
+
     let message;
     if (isCritical) {
-      message = isGsdActive
-        ? `CONTEXT CRITICAL: Usage at ${usedPct}%. Remaining: ${remaining}%. `
-          + 'Context is nearly exhausted. Complete current task checkpoint immediately, '
-          + 'set workflow_mode = awaiting_clear via gsd-state-update, and tell user to /clear then /gsd:resume.'
-        : `CONTEXT CRITICAL: Usage at ${usedPct}%. Remaining: ${remaining}%. `
-          + 'Context is nearly exhausted. Inform the user that context is low and ask how they want to proceed.';
+      message = `CONTEXT CRITICAL: Usage at ${usedPct}%. Remaining: ${remaining}%. `
+        + 'Context is nearly exhausted. Complete current task checkpoint immediately, '
+        + 'set workflow_mode = awaiting_clear via gsd-state-update, and tell user to /clear then /gsd:resume.';
     } else {
-      message = isGsdActive
-        ? `CONTEXT WARNING: Usage at ${usedPct}%. Remaining: ${remaining}%. `
-          + 'Context is getting limited. Avoid starting new complex work. Complete current task then save state.'
-        : `CONTEXT WARNING: Usage at ${usedPct}%. Remaining: ${remaining}%. `
-          + 'Be aware that context is getting limited. Avoid unnecessary exploration or starting new complex work.';
+      message = `CONTEXT WARNING: Usage at ${usedPct}%. Remaining: ${remaining}%. `
+        + 'Context is getting limited. Avoid starting new complex work. Complete current task then save state.';
     }
 
     const output = {
