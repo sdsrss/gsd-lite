@@ -181,6 +181,71 @@ describe('phase handoff gate', () => {
     assert.equal(state.phases[0].phase_handoff.tests_passed, true);
   });
 
+  it('sets workflow_mode to completed when the final phase completes', async () => {
+    // Single-phase project: phase 1 is both first and last
+    await prepareReviewingAcceptedPhase(tempDir);
+    const reviewAccepted = await update({
+      updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+    assert.equal(reviewAccepted.success, true);
+
+    const result = await phaseComplete({
+      phase_id: 1,
+      basePath: tempDir,
+      verification: { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } },
+      direction_ok: true,
+    });
+
+    assert.equal(result.success, true);
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].lifecycle, 'accepted');
+    assert.equal(state.workflow_mode, 'completed', 'workflow_mode should be completed after final phase');
+  });
+
+  it('does not set workflow_mode to completed when a non-final phase completes', async () => {
+    await init({
+      project: 'handoff-non-final',
+      phases: [
+        { name: 'Phase 1', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Phase 2', tasks: [{ index: 1, name: 'Task B' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // Transition task through lifecycle
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, lifecycle: 'reviewing', phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+
+    const result = await phaseComplete({
+      phase_id: 1,
+      basePath: tempDir,
+      verification: { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } },
+      direction_ok: true,
+    });
+
+    assert.equal(result.success, true);
+
+    const state = await read({ basePath: tempDir });
+    assert.notEqual(state.workflow_mode, 'completed', 'workflow_mode should NOT be completed for non-final phase');
+    assert.equal(state.current_phase, 2);
+  });
+
   it('activates the next phase lifecycle when current phase completes', async () => {
     await init({
       project: 'handoff-next-phase',

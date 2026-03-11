@@ -388,6 +388,9 @@ export async function phaseComplete({
       if (nextPhase && nextPhase.lifecycle === 'pending') {
         nextPhase.lifecycle = 'active';
       }
+    } else if (state.current_phase === phase_id && phase_id >= state.total_phases) {
+      // Final phase completed — mark workflow as completed
+      state.workflow_mode = 'completed';
     }
 
     // Update git_head to current commit
