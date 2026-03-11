@@ -88,6 +88,25 @@ describe('evidence store', () => {
     assert.equal(state.evidence['ev:test:old-phase-1'], undefined, 'archived evidence should be removed from state');
   });
 
+  it('prunes phase 1 evidence when currentPhase=2 (off-by-one regression)', async () => {
+    const { addEvidence, pruneEvidence, read } = await import('../src/tools/state.js');
+
+    // Add evidence scoped to phase 1
+    await addEvidence({
+      id: 'ev:test:phase1-prune-at-2',
+      data: { command: 'test', scope: 'task:1.1', exit_code: 0, timestamp: new Date().toISOString(), summary: 'p1 at cp2' },
+      basePath: tempDir,
+    });
+
+    // When currentPhase=2, phase 1 evidence should be pruned (keep only current phase)
+    const result = await pruneEvidence({ currentPhase: 2, basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.ok(result.archived >= 1, 'should archive phase 1 evidence when currentPhase=2');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.evidence['ev:test:phase1-prune-at-2'], undefined, 'phase 1 evidence should be archived when currentPhase=2');
+  });
+
   it('auto-prunes evidence when exceeding MAX_EVIDENCE_ENTRIES', async () => {
     const { addEvidence, read, update } = await import('../src/tools/state.js');
 
@@ -155,7 +174,7 @@ describe('evidence store', () => {
       assert.equal(state.evidence['ev:scope:phase1'], undefined, 'phase 1 evidence should be archived');
     });
 
-    it('retains standard scope "task:2.3" when currentPhase=3', async () => {
+    it('archives standard scope "task:2.3" when currentPhase=3 (keep only current phase)', async () => {
       const { addEvidence, pruneEvidence, read } = await import('../src/tools/state.js');
       await addEvidence({
         id: 'ev:scope:phase2',
@@ -163,12 +182,13 @@ describe('evidence store', () => {
         basePath: scopeDir,
       });
 
+      // threshold = currentPhase = 3, so phase 2 (2 < 3) is archived
       const result = await pruneEvidence({ currentPhase: 3, basePath: scopeDir });
       assert.equal(result.success, true);
-      assert.equal(result.archived, 0);
+      assert.equal(result.archived, 1);
 
       const state = await read({ basePath: scopeDir });
-      assert.ok(state.evidence['ev:scope:phase2'], 'phase 2 evidence should be retained');
+      assert.equal(state.evidence['ev:scope:phase2'], undefined, 'phase 2 evidence should be archived when currentPhase=3');
     });
 
     it('retains multi-digit scope "task:10.5" when currentPhase=3', async () => {

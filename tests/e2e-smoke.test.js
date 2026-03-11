@@ -233,14 +233,14 @@ describe('E2E smoke: full project lifecycle', () => {
 
   // Step 11
   it('evidence pruning archived phase 1 evidence', async () => {
-    // After phaseComplete with current_phase=2, evidence from phase 1
-    // gets archived when threshold = current_phase - 1 = 1, so phase < 1 is archived.
-    // Phase 1 evidence (scope "task:1.x") has phase=1, threshold=1, so 1 < 1 is false.
-    // We need to call pruneEvidence explicitly with a higher phase to archive phase 1.
+    // After phaseComplete with current_phase=2, threshold=2.
+    // Phase 1 evidence (scope "task:1.x") has phase=1, 1 < 2 = true -> auto-archived by phaseComplete.
+    // Explicit pruneEvidence call finds nothing left to archive.
     const result = await pruneEvidence({ currentPhase: 3, basePath: tempDir });
     assert.equal(result.success, true);
-    assert.ok(result.archived > 0, 'should have archived phase 1 evidence');
+    assert.equal(result.archived, 0, 'phase 1 evidence already archived by phaseComplete');
 
+    // Verify archive was created by phaseComplete auto-pruning
     const archiveResult = await readJson(join(tempDir, '.gsd', 'evidence-archive.json'));
     assert.equal(archiveResult.ok, true);
     assert.ok(archiveResult.data['ev:1.1'], 'ev:1.1 should be in archive');

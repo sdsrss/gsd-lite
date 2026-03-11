@@ -466,7 +466,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
 async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
   if (!state.evidence) return 0;
 
-  const threshold = currentPhase - 1;
+  const threshold = currentPhase;
   const toArchive = {};
   const toKeep = {};
 
@@ -495,7 +495,7 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
 }
 
 /**
- * Prune evidence: archive entries from phases older than currentPhase - 1.
+ * Prune evidence: archive entries from phases before currentPhase (keep only current phase).
  * Scope format is "task:X.Y" where X is the phase number.
  */
 export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) {

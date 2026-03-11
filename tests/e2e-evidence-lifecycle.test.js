@@ -59,19 +59,20 @@ describe('E2E evidence lifecycle: archival across phase transitions', () => {
 
     after(async () => { await removeTempDir(basePath); });
 
-    it('ev:1.1 archived, ev:2.1 still in state', async () => {
-      // After phase 2 complete: current_phase=3, threshold=2
-      // Phase 1 evidence (phase=1) < 2 -> archived
-      // Phase 2 evidence (phase=2) >= 2 -> kept
+    it('ev:1.1 and ev:2.1 both archived (keep only current phase)', async () => {
+      // After phase 2 complete: current_phase=3, threshold=3
+      // Phase 1 evidence (phase=1) < 3 -> archived
+      // Phase 2 evidence (phase=2) < 3 -> archived
       const state = await read({ basePath });
       assert.equal(state.current_phase, 3);
-      assert.equal(state.evidence['ev:1.1'], undefined, 'ev:1.1 should be gone from state');
-      assert.ok(state.evidence['ev:2.1'], 'ev:2.1 should still be in state');
+      assert.equal(state.evidence['ev:1.1'], undefined, 'ev:1.1 should be archived');
+      assert.equal(state.evidence['ev:2.1'], undefined, 'ev:2.1 should be archived');
 
       const archive = await readJson(join(basePath, '.gsd', 'evidence-archive.json'));
       assert.equal(archive.ok, true);
       assert.ok(archive.data['ev:1.1'], 'ev:1.1 should be in archive');
       assert.equal(archive.data['ev:1.1'].scope, 'task:1.1');
+      assert.ok(archive.data['ev:2.1'], 'ev:2.1 should be in archive');
     });
   });
 
@@ -108,19 +109,20 @@ describe('E2E evidence lifecycle: archival across phase transitions', () => {
 
     after(async () => { await removeTempDir(basePath); });
 
-    it('phase 1+2 evidence in archive, phase 3 kept in state', async () => {
-      // After phase 3 complete: current_phase=4, threshold=3
+    it('phase 1+2+3 evidence all in archive (keep only current phase)', async () => {
+      // After phase 3 complete: current_phase=4, threshold=4
+      // All phases 1,2,3 (< 4) are archived
       const state = await read({ basePath });
       assert.equal(state.current_phase, 4);
       assert.equal(state.evidence['ev:1.1'], undefined, 'ev:1.1 should be archived');
       assert.equal(state.evidence['ev:2.1'], undefined, 'ev:2.1 should be archived');
-      assert.ok(state.evidence['ev:3.1'], 'ev:3.1 should still be in state');
+      assert.equal(state.evidence['ev:3.1'], undefined, 'ev:3.1 should be archived');
 
       const archive = await readJson(join(basePath, '.gsd', 'evidence-archive.json'));
       assert.equal(archive.ok, true);
       assert.ok(archive.data['ev:1.1'], 'ev:1.1 in archive');
       assert.ok(archive.data['ev:2.1'], 'ev:2.1 in archive');
-      assert.equal(archive.data['ev:3.1'], undefined, 'ev:3.1 should NOT be in archive');
+      assert.ok(archive.data['ev:3.1'], 'ev:3.1 in archive');
     });
   });
 
@@ -135,44 +137,42 @@ describe('E2E evidence lifecycle: archival across phase transitions', () => {
       await addEvidence({ id: 'ev:1.1', data: { scope: 'task:1.1', type: 'test', data: { p: 1 } }, basePath });
       await acceptAndCountDone(basePath, 1, '1.1', 1);
       await completePhase(basePath, 1);
-      // current_phase=2, threshold=1. Phase 1 evidence: phase=1, 1 < 1 = false -> NOT archived yet
+      // current_phase=2, threshold=2. Phase 1 evidence: phase=1, 1 < 2 = true -> archived
 
       // Phase 2: add evidence, accept, complete
       await addEvidence({ id: 'ev:2.1', data: { scope: 'task:2.1', type: 'test', data: { p: 2 } }, basePath });
       await acceptAndCountDone(basePath, 2, '2.1', 1);
       await completePhase(basePath, 2);
-      // current_phase=3, threshold=2. Phase 1 (1 < 2) -> archived. Phase 2 (2 < 2) = false -> kept
+      // current_phase=3, threshold=3. Phase 2 (2 < 3) -> archived
     });
 
     after(async () => { await removeTempDir(basePath); });
 
-    it('archive contains phase 1 evidence after phase 2 complete', async () => {
+    it('archive contains phase 1 and phase 2 evidence after phase 2 complete', async () => {
       const state = await read({ basePath });
       assert.equal(state.current_phase, 3);
 
-      // Phase 1 evidence archived, phase 2 evidence kept
+      // Both phase 1 and phase 2 evidence archived (threshold=currentPhase)
       assert.equal(state.evidence['ev:1.1'], undefined, 'ev:1.1 should be archived');
-      assert.ok(state.evidence['ev:2.1'], 'ev:2.1 should be in state');
+      assert.equal(state.evidence['ev:2.1'], undefined, 'ev:2.1 should be archived');
 
       const archive = await readJson(join(basePath, '.gsd', 'evidence-archive.json'));
       assert.equal(archive.ok, true);
       assert.ok(archive.data['ev:1.1'], 'ev:1.1 in archive');
+      assert.ok(archive.data['ev:2.1'], 'ev:2.1 in archive (merged from phase 2 complete)');
     });
 
-    it('manually prune again to archive phase 2 evidence too (merge check)', async () => {
-      // Manual prune with currentPhase=4 so threshold=3 archives both phase 1 and 2
+    it('manually prune again finds nothing left to archive (merge check)', async () => {
+      // Manual prune with currentPhase=4: all evidence already archived by phaseComplete calls
       const result = await pruneEvidence({ currentPhase: 4, basePath });
       assert.equal(result.success, true);
-      assert.equal(result.archived, 1); // only ev:2.1 remaining to archive
+      assert.equal(result.archived, 0); // nothing left to archive
 
-      const state = await read({ basePath });
-      assert.equal(state.evidence['ev:2.1'], undefined, 'ev:2.1 should now be archived');
-
-      // Archive should have BOTH phase 1 and phase 2 evidence (merged, not overwritten)
+      // Archive should still have BOTH phase 1 and phase 2 evidence
       const archive = await readJson(join(basePath, '.gsd', 'evidence-archive.json'));
       assert.equal(archive.ok, true);
-      assert.ok(archive.data['ev:1.1'], 'ev:1.1 still in archive after merge');
-      assert.ok(archive.data['ev:2.1'], 'ev:2.1 now in archive after merge');
+      assert.ok(archive.data['ev:1.1'], 'ev:1.1 still in archive');
+      assert.ok(archive.data['ev:2.1'], 'ev:2.1 still in archive');
     });
   });
 
@@ -234,8 +234,8 @@ describe('E2E evidence lifecycle: archival across phase transitions', () => {
 
     after(async () => { await removeTempDir(basePath); });
 
-    it('pruneEvidence with currentPhase=2 archives nothing (threshold=1)', async () => {
-      // threshold = 2 - 1 = 1. Phase 2 (2 < 1 = false), Phase 3 (3 < 1 = false) -> both kept
+    it('pruneEvidence with currentPhase=2 archives nothing (evidence is phase 2+3)', async () => {
+      // threshold = 2. Phase 2 (2 < 2 = false), Phase 3 (3 < 2 = false) -> both kept
       const result = await pruneEvidence({ currentPhase: 2, basePath });
       assert.equal(result.success, true);
       assert.equal(result.archived, 0);
@@ -257,34 +257,39 @@ describe('E2E evidence lifecycle: archival across phase transitions', () => {
       await addEvidence({ id: 'ev:1.1', data: { scope: 'task:1.1', type: 'test', data: { p: 1 } }, basePath });
       await addEvidence({ id: 'ev:2.1', data: { scope: 'task:2.1', type: 'test', data: { p: 2 } }, basePath });
 
-      // Complete phase 1 -> current_phase=2, threshold=1. Phase 1 (1 < 1) = false -> stays
+      // Complete phase 1 -> current_phase=2, threshold=2. Phase 1 (1 < 2) = true -> archived
       await acceptAndCountDone(basePath, 1, '1.1', 1);
       await completePhase(basePath, 1);
     });
 
     after(async () => { await removeTempDir(basePath); });
 
-    it('after phase 1 complete, phase 1 evidence stays (threshold=1, 1 < 1 = false)', async () => {
+    it('after phase 1 complete, phase 1 evidence is archived (threshold=2, 1 < 2 = true)', async () => {
       const state = await read({ basePath });
       assert.equal(state.current_phase, 2);
-      assert.ok(state.evidence['ev:1.1'], 'ev:1.1 should still be in state');
+      assert.equal(state.evidence['ev:1.1'], undefined, 'ev:1.1 should be archived');
       assert.ok(state.evidence['ev:2.1'], 'ev:2.1 should still be in state');
+
+      const archive = await readJson(join(basePath, '.gsd', 'evidence-archive.json'));
+      assert.equal(archive.ok, true);
+      assert.ok(archive.data['ev:1.1'], 'ev:1.1 should be in archive');
     });
 
-    it('after phase 2 complete, phase 1 evidence auto-archived via phaseComplete', async () => {
-      // Complete phase 2 -> current_phase=3, threshold=2. Phase 1 (1 < 2) = true -> archived
+    it('after phase 2 complete, phase 2 evidence also auto-archived via phaseComplete', async () => {
+      // Complete phase 2 -> current_phase=3, threshold=3. Phase 2 (2 < 3) = true -> archived
       await acceptAndCountDone(basePath, 2, '2.1', 1);
       await completePhase(basePath, 2);
 
       const state = await read({ basePath });
       assert.equal(state.current_phase, 3);
-      assert.equal(state.evidence['ev:1.1'], undefined, 'ev:1.1 should be auto-archived');
-      assert.ok(state.evidence['ev:2.1'], 'ev:2.1 should still be in state (phase=2, 2 < 2 = false)');
+      assert.equal(state.evidence['ev:1.1'], undefined, 'ev:1.1 still archived');
+      assert.equal(state.evidence['ev:2.1'], undefined, 'ev:2.1 should be auto-archived');
 
-      // Verify archive file created by phaseComplete
+      // Verify archive file has both entries
       const archive = await readJson(join(basePath, '.gsd', 'evidence-archive.json'));
       assert.equal(archive.ok, true);
       assert.ok(archive.data['ev:1.1'], 'ev:1.1 should be in archive');
+      assert.ok(archive.data['ev:2.1'], 'ev:2.1 should be in archive');
     });
   });
 
