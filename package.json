@@ -12,7 +12,7 @@
     "lint": "biome check src/ tests/ hooks/",
     "lint:fix": "biome check --write src/ tests/ hooks/",
     "start": "node src/server.js",
-    "version": "node scripts/sync-versions.js",
+    "version": "node scripts/sync-versions.js && git add .claude-plugin/plugin.json .claude-plugin/marketplace.json",
     "prepublishOnly": "node scripts/sync-versions.js && npm run lint && npm test"
   },
   "repository": {
