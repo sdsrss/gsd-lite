@@ -49,6 +49,18 @@ describe('utils', () => {
     });
   });
 
+  it('concurrent writeJson calls produce unique tmp paths (no collision)', async () => {
+    const filePath = join(tempDir, 'concurrent.json');
+    // Run multiple writes in parallel — should not collide
+    await Promise.all([
+      writeJson(filePath, { a: 1 }),
+      writeJson(filePath, { b: 2 }),
+      writeJson(filePath, { c: 3 }),
+    ]);
+    const result = await readJson(filePath);
+    assert.equal(result.ok, true);
+  });
+
   describe('ensureDir', () => {
     it('creates nested directories', async () => {
       const nested = join(tempDir, 'a', 'b', 'c');
@@ -62,7 +74,7 @@ describe('utils', () => {
     it('finds .gsd directory from cwd', async () => {
       const gsdDir = join(tempDir, '.gsd');
       await mkdir(gsdDir);
-      const result = getGsdDir(tempDir);
+      const result = await getGsdDir(tempDir);
       assert.equal(result, gsdDir);
     });
 
@@ -70,7 +82,7 @@ describe('utils', () => {
       // Use /tmp directly to avoid ancestor .gsd dirs (tmpdir() may be under $HOME)
       const isolatedDir = await mkdtemp('/tmp/gsd-no-gsd-');
       try {
-        const result = getGsdDir(isolatedDir);
+        const result = await getGsdDir(isolatedDir);
         assert.equal(result, null);
       } finally {
         await rm(isolatedDir, { recursive: true, force: true });

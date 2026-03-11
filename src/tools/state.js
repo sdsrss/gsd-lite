@@ -101,7 +101,7 @@ export async function init({ project, phases, research, force = false, basePath 
  * Read state.json, optionally filtering to specific fields.
  */
 export async function read({ fields, basePath = process.cwd() } = {}) {
-  const statePath = getStatePath(basePath);
+  const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
@@ -143,7 +143,7 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
     };
   }
 
-  const statePath = getStatePath(basePath);
+  const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
@@ -236,7 +236,6 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
  */
 function verificationPassed(verification) {
   if (!verification || typeof verification !== 'object') return false;
-  if ('passed' in verification) return verification.passed === true;
   return ['lint', 'typecheck', 'test'].every((key) => (
     verification[key]
     && typeof verification[key].exit_code === 'number'
@@ -271,7 +270,7 @@ export async function phaseComplete({
   if (direction_ok !== undefined && typeof direction_ok !== 'boolean') {
     return { error: true, message: 'direction_ok must be a boolean when provided' };
   }
-  const statePath = getStatePath(basePath);
+  const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
@@ -411,7 +410,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
     return { error: true, message: 'data.scope must be a string' };
   }
 
-  const statePath = getStatePath(basePath);
+  const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
@@ -473,7 +472,7 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
  * Scope format is "task:X.Y" where X is the phase number.
  */
 export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) {
-  const statePath = getStatePath(basePath);
+  const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }
@@ -874,7 +873,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     return { error: true, message: `Invalid research decision_index: ${decisionIndexValidation.errors.join('; ')}` };
   }
 
-  const statePath = getStatePath(basePath);
+  const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, message: 'No .gsd directory found' };
   }

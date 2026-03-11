@@ -1,17 +1,16 @@
-import { readFile, writeFile, rename, mkdir, unlink } from 'node:fs/promises';
-import { statSync } from 'node:fs';
+import { readFile, writeFile, rename, mkdir, unlink, stat } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFileCb);
 
-export function getGsdDir(startDir = process.cwd()) {
+export async function getGsdDir(startDir = process.cwd()) {
   let dir = resolve(startDir);
   while (true) {
     const candidate = join(dir, '.gsd');
     try {
-      const s = statSync(candidate);
+      const s = await stat(candidate);
       if (s.isDirectory()) return candidate;
     } catch {}
     const parent = dirname(dir);
@@ -20,8 +19,8 @@ export function getGsdDir(startDir = process.cwd()) {
   }
 }
 
-export function getStatePath(startDir = process.cwd()) {
-  const gsdDir = getGsdDir(startDir);
+export async function getStatePath(startDir = process.cwd()) {
+  const gsdDir = await getGsdDir(startDir);
   if (!gsdDir) return null;
   return join(gsdDir, 'state.json');
 }
@@ -36,6 +35,11 @@ export async function getGitHead(cwd = process.cwd()) {
   } catch {
     return null;
   }
+}
+
+let _tmpCounter = 0;
+function tmpPath(filePath) {
+  return `${filePath}.${process.pid}-${Date.now()}-${_tmpCounter++}.tmp`;
 }
 
 export function isPlainObject(value) {
@@ -63,13 +67,13 @@ export async function readJson(filePath) {
  * Atomically write JSON data (write to .tmp then rename).
  */
 export async function writeJson(filePath, data) {
-  const tmpPath = `${filePath}.${process.pid}-${Date.now()}.tmp`;
+  const tmp = tmpPath(filePath);
   await ensureDir(dirname(filePath));
   try {
-    await writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-    await rename(tmpPath, filePath);
+    await writeFile(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+    await rename(tmp, filePath);
   } catch (err) {
-    try { await unlink(tmpPath); } catch {}
+    try { await unlink(tmp); } catch {}
     throw err;
   }
 }
@@ -78,13 +82,13 @@ export async function writeJson(filePath, data) {
  * Atomically write text content (write to .tmp then rename). [I-3]
  */
 export async function writeAtomic(filePath, content) {
-  const tmpPath = `${filePath}.${process.pid}-${Date.now()}.tmp`;
+  const tmp = tmpPath(filePath);
   await ensureDir(dirname(filePath));
   try {
-    await writeFile(tmpPath, content, 'utf-8');
-    await rename(tmpPath, filePath);
+    await writeFile(tmp, content, 'utf-8');
+    await rename(tmp, filePath);
   } catch (err) {
-    try { await unlink(tmpPath); } catch {}
+    try { await unlink(tmp); } catch {}
     throw err;
   }
 }

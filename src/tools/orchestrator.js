@@ -27,7 +27,7 @@ function parseTimestamp(value) {
 }
 
 async function readContextHealth(basePath) {
-  const gsdDir = getGsdDir(basePath);
+  const gsdDir = await getGsdDir(basePath);
   if (!gsdDir) return null;
   try {
     const raw = await readFile(join(gsdDir, '.context-health'), 'utf-8');
@@ -75,7 +75,7 @@ async function detectPlanDrift(basePath, lastSession) {
   const lastSessionTs = parseTimestamp(lastSession);
   if (lastSessionTs === null) return [];
 
-  const gsdDir = getGsdDir(basePath);
+  const gsdDir = await getGsdDir(basePath);
   if (!gsdDir) return [];
 
   const candidates = [join(gsdDir, 'plan.md')];
@@ -106,41 +106,37 @@ async function evaluatePreflight(state, basePath) {
     return { override: null };
   }
 
+  const hints = [];
+
   const currentGitHead = await getGitHead(basePath);
   if (state.git_head && currentGitHead && state.git_head !== currentGitHead) {
-    return {
-      override: {
-        workflow_mode: 'reconcile_workspace',
-        action: 'await_manual_intervention',
-        updates: { workflow_mode: 'reconcile_workspace' },
-        saved_git_head: state.git_head,
-        current_git_head: currentGitHead,
-        message: 'Saved git_head does not match the current workspace HEAD',
-      },
-    };
+    hints.push({
+      workflow_mode: 'reconcile_workspace',
+      action: 'await_manual_intervention',
+      updates: { workflow_mode: 'reconcile_workspace' },
+      saved_git_head: state.git_head,
+      current_git_head: currentGitHead,
+      message: 'Saved git_head does not match the current workspace HEAD',
+    });
   }
 
   const changed_files = await detectPlanDrift(basePath, state.context?.last_session);
   if (changed_files.length > 0) {
-    return {
-      override: {
-        workflow_mode: 'replan_required',
-        action: 'await_manual_intervention',
-        updates: { workflow_mode: 'replan_required' },
-        changed_files,
-        message: 'Plan artifacts changed after the last recorded session',
-      },
-    };
+    hints.push({
+      workflow_mode: 'replan_required',
+      action: 'await_manual_intervention',
+      updates: { workflow_mode: 'replan_required' },
+      changed_files,
+      message: 'Plan artifacts changed after the last recorded session',
+    });
   }
 
-  if (state.workflow_mode === 'awaiting_user' && state.current_review?.stage === 'direction_drift') {
-    return { override: null };
-  }
-
-  const driftPhase = getDirectionDriftPhase(state);
-  if (driftPhase) {
-    return {
-      override: {
+  const skipDirectionDrift = state.workflow_mode === 'awaiting_user'
+    && state.current_review?.stage === 'direction_drift';
+  if (!skipDirectionDrift) {
+    const driftPhase = getDirectionDriftPhase(state);
+    if (driftPhase) {
+      hints.push({
         workflow_mode: 'awaiting_user',
         action: 'awaiting_user',
         updates: {
@@ -155,24 +151,27 @@ async function evaluatePreflight(state, basePath) {
         },
         drift_phase: { id: driftPhase.id, name: driftPhase.name },
         message: `Direction drift detected for phase ${driftPhase.id}; user decision required before resuming`,
-      },
-    };
+      });
+    }
   }
 
   const expired_research = collectExpiredResearch(state);
   if (expired_research.length > 0) {
-    return {
-      override: {
-        workflow_mode: 'research_refresh_needed',
-        action: 'dispatch_researcher',
-        updates: { workflow_mode: 'research_refresh_needed' },
-        expired_research,
-        message: 'Research cache expired and must be refreshed before execution resumes',
-      },
-    };
+    hints.push({
+      workflow_mode: 'research_refresh_needed',
+      action: 'dispatch_researcher',
+      updates: { workflow_mode: 'research_refresh_needed' },
+      expired_research,
+      message: 'Research cache expired and must be refreshed before execution resumes',
+    });
   }
 
-  return { override: null };
+  if (hints.length === 0) return { override: null };
+
+  return {
+    override: hints[0],
+    hints: hints.length > 1 ? hints.map(h => h.message) : undefined,
+  };
 }
 
 function getCurrentPhase(state) {
@@ -503,6 +502,7 @@ export async function resumeWorkflow({ basePath = process.cwd() } = {}) {
       ...(preflight.override.current_git_head ? { current_git_head: preflight.override.current_git_head } : {}),
       ...(preflight.override.changed_files ? { changed_files: preflight.override.changed_files } : {}),
       ...(preflight.override.expired_research ? { expired_research: preflight.override.expired_research } : {}),
+      ...(preflight.hints ? { pending_issues: preflight.hints } : {}),
     };
   }
 
