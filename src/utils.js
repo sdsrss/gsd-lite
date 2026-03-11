@@ -5,18 +5,33 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFileCb);
 
+const _gsdDirCache = new Map();
+
 export async function getGsdDir(startDir = process.cwd()) {
-  let dir = resolve(startDir);
+  const resolved = resolve(startDir);
+  if (_gsdDirCache.has(resolved)) return _gsdDirCache.get(resolved);
+
+  let dir = resolved;
   while (true) {
     const candidate = join(dir, '.gsd');
     try {
       const s = await stat(candidate);
-      if (s.isDirectory()) return candidate;
+      if (s.isDirectory()) {
+        _gsdDirCache.set(resolved, candidate);
+        return candidate;
+      }
     } catch {}
     const parent = dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) {
+      _gsdDirCache.set(resolved, null);
+      return null;
+    }
     dir = parent;
   }
+}
+
+export function clearGsdDirCache() {
+  _gsdDirCache.clear();
 }
 
 export async function getStatePath(startDir = process.cwd()) {

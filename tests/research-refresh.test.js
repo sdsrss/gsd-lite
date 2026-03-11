@@ -47,6 +47,20 @@ describe('applyResearchRefresh', () => {
     assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
   });
 
+  it('does not mutate the original decision_index (copy-on-write)', () => {
+    const originalDecision = { summary: 'Use JWT', expires_at: '2026-03-10' };
+    const state = {
+      research: { decision_index: { 'decision:jwt': originalDecision } },
+      phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted', research_basis: ['decision:jwt'] }] }],
+    };
+    const newResearch = { decision_index: { 'decision:jwt': { summary: 'Use JWT', expires_at: '2026-03-20' } } };
+    applyResearchRefresh(state, newResearch);
+    // The original object should NOT be mutated (copy-on-write creates new object)
+    assert.equal(originalDecision.expires_at, '2026-03-10', 'original decision object should not be mutated');
+    // But the state should reflect the updated value
+    assert.equal(state.research.decision_index['decision:jwt'].expires_at, '2026-03-20');
+  });
+
   it('does NOT invalidate tasks in running/pending/failed states (C-3)', () => {
     const state = {
       research: { decision_index: { 'decision:x': { summary: 'Old' } } },

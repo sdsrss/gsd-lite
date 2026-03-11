@@ -18,6 +18,7 @@ process.stdin.on('end', () => {
     const model = data.model?.display_name || 'Claude';
     const cwd = data.workspace?.current_dir || process.cwd();
     const session = String(data.session_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!session) process.exit(0); // Reject empty session ID to avoid bridge file collision
     const remaining = data.context_window?.remaining_percentage;
 
     // Current GSD task from state.json
@@ -64,26 +65,27 @@ process.stdin.on('end', () => {
             }));
             fs.renameSync(tmpBridge, bridgePath);
           }
-        } catch {
-          // Silent fail — bridge is best-effort
+        } catch (e) {
+          if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: bridge write failed: ${e.message}\n`);
         }
       }
 
-      // Also write to .gsd/.context-health for MCP server reads (skip if unchanged)
+      // Also write to .gsd/.context-health for MCP server reads (atomic, skip if unchanged)
       try {
         const healthPath = path.join(gsdDir, '.context-health');
-        const current = fs.readFileSync(healthPath, 'utf8').trim();
-        if (current !== String(remaining)) {
-          fs.writeFileSync(healthPath, String(remaining));
-        }
-      } catch {
-        // File doesn't exist yet or .gsd/ missing — ensure dir exists then atomic write
+        let needsHealthWrite = true;
         try {
+          const current = fs.readFileSync(healthPath, 'utf8').trim();
+          if (current === String(remaining)) needsHealthWrite = false;
+        } catch { /* file doesn't exist yet */ }
+        if (needsHealthWrite) {
           fs.mkdirSync(gsdDir, { recursive: true });
-          const tmpHealth = path.join(gsdDir, `.context-health.${process.pid}.tmp`);
+          const tmpHealth = path.join(gsdDir, `.context-health.${process.pid}-${Date.now()}.tmp`);
           fs.writeFileSync(tmpHealth, String(remaining));
-          fs.renameSync(tmpHealth, path.join(gsdDir, '.context-health'));
-        } catch { /* silent */ }
+          fs.renameSync(tmpHealth, healthPath);
+        }
+      } catch (e) {
+        if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: context-health write failed: ${e.message}\n`);
       }
 
       // Progress bar (10 segments)
@@ -108,7 +110,7 @@ process.stdin.on('end', () => {
     } else {
       process.stdout.write(`\x1b[2m${model}\x1b[0m \u2502 \x1b[2m${dirname}\x1b[0m${ctx}`);
     }
-  } catch {
-    // Silent fail
+  } catch (e) {
+    if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: ${e.message}\n`);
   }
 });

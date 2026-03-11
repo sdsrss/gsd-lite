@@ -58,9 +58,10 @@ process.stdin.on('end', () => {
       process.exit(0);
     }
 
-    // Ignore stale metrics
+    // Ignore stale metrics (treat missing timestamp as stale)
     const now = Math.floor(Date.now() / 1000);
-    if (metrics.timestamp && (now - metrics.timestamp) > STALE_SECONDS) {
+    const metricAge = now - (metrics.timestamp || 0);
+    if (metricAge > STALE_SECONDS) {
       process.exit(0);
     }
 
@@ -120,7 +121,8 @@ process.stdin.on('end', () => {
     };
 
     process.stdout.write(JSON.stringify(output));
-  } catch {
+  } catch (e) {
+    if (process.env.GSD_DEBUG) process.stderr.write(`gsd-context-monitor: ${e.message}\n`);
     process.exit(0);
   }
 });

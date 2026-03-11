@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir, stat, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readJson, writeJson, writeAtomic, ensureDir, getGsdDir, getGitHead } from '../src/utils.js';
+import { readJson, writeJson, writeAtomic, ensureDir, getGsdDir, getGitHead, clearGsdDirCache } from '../src/utils.js';
 
 describe('utils', () => {
   let tempDir;
@@ -13,6 +13,7 @@ describe('utils', () => {
   });
 
   after(async () => {
+    clearGsdDirCache();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -76,6 +77,38 @@ describe('utils', () => {
       await mkdir(gsdDir);
       const result = await getGsdDir(tempDir);
       assert.equal(result, gsdDir);
+    });
+
+    it('caches result and returns same value on second call', async () => {
+      clearGsdDirCache();
+      const gsdDir = join(tempDir, '.gsd');
+      await mkdir(gsdDir, { recursive: true });
+      const first = await getGsdDir(tempDir);
+      const second = await getGsdDir(tempDir);
+      assert.equal(first, second);
+      assert.equal(first, gsdDir);
+    });
+
+    it('clearGsdDirCache invalidates cache', async () => {
+      clearGsdDirCache();
+      const isolatedDir = await mkdtemp('/tmp/gsd-cache-test-');
+      try {
+        // First call: no .gsd → null
+        const first = await getGsdDir(isolatedDir);
+        assert.equal(first, null);
+        // Create .gsd
+        await mkdir(join(isolatedDir, '.gsd'));
+        // Still returns null (cached)
+        const cached = await getGsdDir(isolatedDir);
+        assert.equal(cached, null);
+        // Clear cache
+        clearGsdDirCache();
+        // Now finds .gsd
+        const fresh = await getGsdDir(isolatedDir);
+        assert.equal(fresh, join(isolatedDir, '.gsd'));
+      } finally {
+        await rm(isolatedDir, { recursive: true, force: true });
+      }
     });
 
     it('returns null when no .gsd found', async () => {

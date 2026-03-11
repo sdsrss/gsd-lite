@@ -1,8 +1,8 @@
 // State CRUD tools
 
 import { join, dirname } from 'node:path';
-import { stat } from 'node:fs/promises';
-import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject } from '../utils.js';
+import { stat, writeFile, rename, unlink } from 'node:fs/promises';
+import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject, clearGsdDirCache } from '../utils.js';
 import {
   CANONICAL_FIELDS,
   TASK_LIFECYCLE,
@@ -16,6 +16,7 @@ import {
 import { runAll } from './verify.js';
 
 const RESEARCH_FILES = ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md'];
+const MAX_EVIDENCE_ENTRIES = 200;
 
 // C-1: Serialize all state mutations to prevent TOCTOU races
 let _mutationQueue = Promise.resolve();
@@ -64,6 +65,7 @@ export async function init({ project, phases, research, force = false, basePath 
 
     const phasesDir = join(gsdDir, 'phases');
 
+    clearGsdDirCache(); // Invalidate cache since we're creating .gsd/
     await ensureDir(phasesDir);
     if (research) {
       await ensureDir(join(gsdDir, 'research'));
@@ -429,6 +431,14 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
     }
 
     state.evidence[id] = data;
+
+    // Auto-prune when evidence exceeds limit
+    const entries = Object.keys(state.evidence);
+    if (entries.length > MAX_EVIDENCE_ENTRIES) {
+      const gsdDir = dirname(statePath);
+      await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
+    }
+
     await writeJson(statePath, state);
     return { success: true };
   });
@@ -800,6 +810,9 @@ export function applyResearchRefresh(state, newResearch) {
   const oldIndex = state.research?.decision_index || {};
   const newIndex = newResearch?.decision_index || {};
 
+  // Copy-on-write: build merged index without mutating oldIndex
+  const mergedIndex = { ...oldIndex };
+
   // Collect IDs of decisions that changed or were removed
   const invalidatedIds = new Set();
 
@@ -808,11 +821,11 @@ export function applyResearchRefresh(state, newResearch) {
     if (id in newIndex) {
       const newDecision = newIndex[id];
       if (oldDecision.summary === newDecision.summary) {
-        // Rule 1: same conclusion — update metadata in place
-        Object.assign(oldIndex[id], newDecision);
+        // Rule 1: same conclusion — update metadata
+        mergedIndex[id] = { ...oldDecision, ...newDecision };
       } else {
         // Rule 2: changed conclusion — replace and invalidate
-        oldIndex[id] = newDecision;
+        mergedIndex[id] = newDecision;
         invalidatedIds.add(id);
       }
     } else {
@@ -825,13 +838,13 @@ export function applyResearchRefresh(state, newResearch) {
   // Rule 4: brand new IDs — just add them
   for (const [id, newDecision] of Object.entries(newIndex)) {
     if (!(id in oldIndex)) {
-      oldIndex[id] = newDecision;
+      mergedIndex[id] = newDecision;
     }
   }
 
-  // Ensure decision_index is set on state
+  // Assign merged index to state (atomic replacement)
   if (!state.research) state.research = {};
-  state.research.decision_index = oldIndex;
+  state.research.decision_index = mergedIndex;
 
   // C-3: Only invalidate tasks whose lifecycle allows needs_revalidation
   if (invalidatedIds.size > 0) {
@@ -891,9 +904,27 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     const researchDir = join(gsdDir, 'research');
     await ensureDir(researchDir);
 
+    // Atomic multi-file write: write all artifacts first, then rename in batch
     const normalizedArtifacts = normalizeResearchArtifacts(artifacts);
-    for (const fileName of RESEARCH_FILES) {
-      await writeAtomic(join(researchDir, fileName), normalizedArtifacts[fileName]);
+    const tmpSuffix = `.${process.pid}-${Date.now()}.tmp`;
+    const tmpPaths = [];
+    try {
+      for (const fileName of RESEARCH_FILES) {
+        const finalPath = join(researchDir, fileName);
+        const tmpFile = finalPath + tmpSuffix;
+        tmpPaths.push({ tmp: tmpFile, final: finalPath });
+        await writeFile(tmpFile, normalizedArtifacts[fileName], 'utf-8');
+      }
+      // All writes succeeded — rename in batch
+      for (const { tmp, final: finalPath } of tmpPaths) {
+        await rename(tmp, finalPath);
+      }
+    } catch (err) {
+      // Cleanup any temp files on failure
+      for (const { tmp } of tmpPaths) {
+        try { await unlink(tmp); } catch {}
+      }
+      throw err;
     }
 
     const { decision_index: _, ...nextResearchBase } = {

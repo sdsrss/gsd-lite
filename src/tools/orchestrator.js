@@ -170,7 +170,8 @@ async function evaluatePreflight(state, basePath) {
 
   return {
     override: hints[0],
-    hints: hints.length > 1 ? hints.map(h => h.message) : undefined,
+    // Always report all hint messages so caller can surface pending issues
+    hints: hints.map(h => h.message),
   };
 }
 
@@ -502,7 +503,7 @@ export async function resumeWorkflow({ basePath = process.cwd() } = {}) {
       ...(preflight.override.current_git_head ? { current_git_head: preflight.override.current_git_head } : {}),
       ...(preflight.override.changed_files ? { changed_files: preflight.override.changed_files } : {}),
       ...(preflight.override.expired_research ? { expired_research: preflight.override.expired_research } : {}),
-      ...(preflight.hints ? { pending_issues: preflight.hints } : {}),
+      ...(preflight.hints && preflight.hints.length > 1 ? { pending_issues: preflight.hints.slice(1) } : {}),
     };
   }
 

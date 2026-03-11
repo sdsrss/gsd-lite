@@ -88,6 +88,36 @@ describe('evidence store', () => {
     assert.equal(state.evidence['ev:test:old-phase-1'], undefined, 'archived evidence should be removed from state');
   });
 
+  it('auto-prunes evidence when exceeding MAX_EVIDENCE_ENTRIES', async () => {
+    const { addEvidence, read, update } = await import('../src/tools/state.js');
+
+    // Pre-fill evidence with 200 entries (the MAX) scoped to phase 1
+    const bulkEvidence = {};
+    for (let i = 0; i < 200; i++) {
+      bulkEvidence[`ev:bulk:${i}`] = {
+        command: 'test',
+        scope: 'task:1.1',
+        exit_code: 0,
+        timestamp: new Date().toISOString(),
+        summary: `bulk-${i}`,
+      };
+    }
+    await update({ updates: { evidence: bulkEvidence, current_phase: 2 }, basePath: tempDir });
+
+    // Adding one more should trigger auto-prune
+    const result = await addEvidence({
+      id: 'ev:trigger-prune',
+      data: { command: 'test', scope: 'task:2.1', exit_code: 0, timestamp: new Date().toISOString(), summary: 'trigger' },
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+
+    const state = await read({ basePath: tempDir });
+    // Phase-1 evidence should have been auto-archived, only phase-2+ should remain
+    assert.ok(Object.keys(state.evidence).length <= 201, 'evidence count should be reduced after auto-prune');
+    assert.ok(state.evidence['ev:trigger-prune'], 'newly added evidence should be present');
+  });
+
   describe('parseScopePhase via pruneEvidence', () => {
     let scopeDir;
 
