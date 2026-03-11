@@ -10,6 +10,7 @@ import {
   validateResearchDecisionIndex,
   validateResearcherResult,
   validateState,
+  validateStateUpdate,
   validateTransition,
   createInitialState,
 } from '../schema.js';
@@ -221,8 +222,10 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
       }
     }
 
-    // Validate full state after merge
-    const validation = validateState(merged);
+    // Use incremental validation for simple updates (no phases changes)
+    const validation = !updates.phases
+      ? validateStateUpdate(state, updates)
+      : validateState(merged);
     if (!validation.valid) {
       return {
         error: true,

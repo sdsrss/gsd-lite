@@ -40,6 +40,7 @@ export const PHASE_REVIEW_STATUS = ['pending', 'reviewing', 'accepted', 'rework_
 
 export const CANONICAL_FIELDS = [
   'project',
+  'schema_version',
   'workflow_mode',
   'plan_version',
   'git_head',
@@ -146,10 +147,104 @@ export function validateTransition(entity, from, to) {
   return { valid: true };
 }
 
+/**
+ * Incremental validation: only validate changed fields + their relationships.
+ * Falls back to full validateState() for complex updates (phases).
+ */
+export function validateStateUpdate(state, updates) {
+  // For phases updates, fall back to full validation
+  if ('phases' in updates) {
+    return validateState({ ...state, ...updates });
+  }
+
+  const errors = [];
+
+  for (const key of Object.keys(updates)) {
+    switch (key) {
+      case 'workflow_mode':
+        if (!WORKFLOW_MODES.includes(updates.workflow_mode)) {
+          errors.push(`Invalid workflow_mode: ${updates.workflow_mode}`);
+        }
+        break;
+      case 'current_phase':
+        if (!Number.isFinite(updates.current_phase)) {
+          errors.push('current_phase must be a finite number');
+        }
+        break;
+      case 'current_task':
+        if (updates.current_task !== null && typeof updates.current_task !== 'string') {
+          errors.push('current_task must be a string or null');
+        }
+        break;
+      case 'current_review':
+        if (updates.current_review !== null && !isPlainObject(updates.current_review)) {
+          errors.push('current_review must be an object or null');
+        }
+        break;
+      case 'git_head':
+        if (updates.git_head !== null && typeof updates.git_head !== 'string') {
+          errors.push('git_head must be a string or null');
+        }
+        break;
+      case 'plan_version':
+        if (!Number.isFinite(updates.plan_version)) {
+          errors.push('plan_version must be a finite number');
+        }
+        break;
+      case 'schema_version':
+        if (!Number.isFinite(updates.schema_version)) {
+          errors.push('schema_version must be a finite number');
+        }
+        break;
+      case 'total_phases':
+        if (!Number.isFinite(updates.total_phases)) {
+          errors.push('total_phases must be a finite number');
+        }
+        break;
+      case 'project':
+        if (!updates.project || typeof updates.project !== 'string') {
+          errors.push('project must be a non-empty string');
+        }
+        break;
+      case 'decisions':
+        if (!Array.isArray(updates.decisions)) {
+          errors.push('decisions must be an array');
+        }
+        break;
+      case 'context':
+        if (!isPlainObject(updates.context)) {
+          errors.push('context must be an object');
+        } else {
+          const ctx = { ...state.context, ...updates.context };
+          if (typeof ctx.last_session !== 'string') errors.push('context.last_session must be a string');
+          if (!Number.isFinite(ctx.remaining_percentage)) errors.push('context.remaining_percentage must be a finite number');
+        }
+        break;
+      case 'evidence':
+        if (!isPlainObject(updates.evidence)) {
+          errors.push('evidence must be an object');
+        }
+        break;
+      case 'research':
+        if (updates.research !== null && !isPlainObject(updates.research)) {
+          errors.push('research must be null or an object');
+        }
+        break;
+      default:
+        errors.push(`Unknown canonical field: ${key}`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
 export function validateState(state) {
   const errors = [];
   if (!state.project || typeof state.project !== 'string') {
     errors.push('project must be a non-empty string');
+  }
+  if (!Number.isFinite(state.schema_version)) {
+    errors.push('schema_version must be a finite number');
   }
   if (!WORKFLOW_MODES.includes(state.workflow_mode)) {
     errors.push(`Invalid workflow_mode: ${state.workflow_mode}`);
@@ -455,6 +550,7 @@ export function createInitialState({ project, phases }) {
   }
   return {
     project,
+    schema_version: 1,
     workflow_mode: 'executing_task',
     plan_version: 1,
     git_head: null,

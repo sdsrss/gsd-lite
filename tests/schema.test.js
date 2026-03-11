@@ -96,6 +96,10 @@ describe('schema', () => {
       assert.ok(CANONICAL_FIELDS.includes('workflow_mode'));
     });
 
+    it('includes schema_version', () => {
+      assert.ok(CANONICAL_FIELDS.includes('schema_version'));
+    });
+
     it('does not include derived fields', () => {
       assert.ok(!CANONICAL_FIELDS.includes('stopped_at'));
       assert.ok(!CANONICAL_FIELDS.includes('next_action'));
@@ -341,6 +345,14 @@ describe('schema', () => {
       const result = validateState(state);
       assert.equal(result.valid, false);
       assert.ok(result.errors.some(e => e.includes('summary must be a non-empty string')));
+    });
+
+    it('rejects non-number schema_version', () => {
+      const state = createInitialState({ project: 'test', phases: [] });
+      state.schema_version = 'v1';
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('schema_version must be a finite number')));
     });
 
     it('rejects non-object evidence', () => {
@@ -605,6 +617,7 @@ describe('schema', () => {
         ],
       });
       assert.equal(state.project, 'my-app');
+      assert.equal(state.schema_version, 1);
       assert.equal(state.workflow_mode, 'executing_task');
       assert.equal(state.plan_version, 1);
       assert.equal(state.total_phases, 2);
