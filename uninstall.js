@@ -38,7 +38,7 @@ export function main() {
   removeDir(join(CLAUDE_DIR, 'gsd-lite'), 'legacy gsd-lite runtime/');
 
   // Remove hook files (both legacy and current names)
-  for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-session-init.cjs']) {
+  for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-session-init.cjs', 'gsd-auto-update.cjs']) {
     const hookFile = join(CLAUDE_DIR, 'hooks', name);
     if (existsSync(hookFile)) {
       rmSync(hookFile);
@@ -118,19 +118,23 @@ export function main() {
         delete settings.hooks.StatusLine;
         changed = true;
       }
-      // Remove GSD PostToolUse entry from array (match both old and new patterns)
-      if (Array.isArray(settings.hooks.PostToolUse)) {
-        const len = settings.hooks.PostToolUse.length;
-        settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(e =>
-          !e.hooks?.some(h => h.command?.includes('gsd-context-monitor') ||
-                              h.command?.includes('context-monitor.js')));
-        if (settings.hooks.PostToolUse.length < len) changed = true;
-        if (settings.hooks.PostToolUse.length === 0) delete settings.hooks.PostToolUse;
-      } else if (typeof settings.hooks.PostToolUse === 'string'
-          && (settings.hooks.PostToolUse.includes('gsd-context-monitor') ||
-              settings.hooks.PostToolUse.includes('context-monitor.js'))) {
-        delete settings.hooks.PostToolUse;
-        changed = true;
+      // Remove GSD entries from hook arrays
+      for (const [hookType, identifier] of [
+        ['PostToolUse', 'gsd-context-monitor'],
+        ['PostToolUse', 'context-monitor.js'],
+        ['SessionStart', 'gsd-session-init'],
+      ]) {
+        if (Array.isArray(settings.hooks[hookType])) {
+          const len = settings.hooks[hookType].length;
+          settings.hooks[hookType] = settings.hooks[hookType].filter(e =>
+            !e.hooks?.some(h => h.command?.includes(identifier)));
+          if (settings.hooks[hookType].length < len) changed = true;
+          if (settings.hooks[hookType].length === 0) delete settings.hooks[hookType];
+        } else if (typeof settings.hooks[hookType] === 'string'
+            && settings.hooks[hookType].includes(identifier)) {
+          delete settings.hooks[hookType];
+          changed = true;
+        }
       }
     }
     if (changed) {

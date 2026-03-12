@@ -12,8 +12,16 @@ const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
 
-function log(msg) { console.log(msg); }
+// Single source of truth for hook files (used by copy loop and registration)
+const HOOK_FILES = ['gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-context-monitor.cjs', 'gsd-statusline.cjs'];
 
+// Hook registration config: hookType → { file identifier, matcher, timeout? }
+const HOOK_REGISTRY = [
+  { hookType: 'SessionStart', identifier: 'gsd-session-init', matcher: 'startup', timeout: 5 },
+  { hookType: 'PostToolUse', identifier: 'gsd-context-monitor', matcher: '*' },
+];
+
+function log(msg) { console.log(msg); }
 
 function registerStatusLine(settings, statuslineScriptPath) {
   const command = `node ${JSON.stringify(statuslineScriptPath)}`;
@@ -29,27 +37,31 @@ function registerStatusLine(settings, statuslineScriptPath) {
   return true;
 }
 
-function registerPostToolUseHook(hooks, contextMonitorPath) {
-  const command = `node ${JSON.stringify(contextMonitorPath)}`;
-  const entry = { matcher: '*', hooks: [{ type: 'command', command }] };
-  if (!hooks.PostToolUse) {
-    hooks.PostToolUse = [entry];
+function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
+  const scriptPath = join(CLAUDE_DIR, 'hooks', `${identifier}.cjs`);
+  const command = `node ${JSON.stringify(scriptPath)}`;
+  const hookDef = { type: 'command', command };
+  if (timeout) hookDef.timeout = timeout;
+  const entry = { matcher, hooks: [hookDef] };
+
+  if (!hooks[hookType]) {
+    hooks[hookType] = [entry];
     return true;
   }
   // Handle legacy string format
-  if (typeof hooks.PostToolUse === 'string') {
-    if (!hooks.PostToolUse.includes('gsd-context-monitor')) {
-      log('  ! Preserved existing PostToolUse hook');
+  if (typeof hooks[hookType] === 'string') {
+    if (!hooks[hookType].includes(identifier)) {
+      log(`  ! Preserved existing ${hookType} hook`);
       return false;
     }
-    hooks.PostToolUse = [entry];
+    hooks[hookType] = [entry];
     return true;
   }
-  if (Array.isArray(hooks.PostToolUse)) {
-    const idx = hooks.PostToolUse.findIndex(e =>
-      e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
-    if (idx >= 0) hooks.PostToolUse[idx] = entry;
-    else hooks.PostToolUse.push(entry);
+  if (Array.isArray(hooks[hookType])) {
+    const idx = hooks[hookType].findIndex(e =>
+      e.hooks?.some(h => h.command?.includes(identifier)));
+    if (idx >= 0) hooks[hookType][idx] = entry;
+    else hooks[hookType].push(entry);
     return true;
   }
   return false;
@@ -109,8 +121,10 @@ export function main() {
   // 4. References
   copyDir(join(__dirname, 'references'), join(CLAUDE_DIR, 'references', 'gsd'), 'references → ~/.claude/references/gsd/');
 
-  // 5. Hooks
-  copyDir(join(__dirname, 'hooks'), join(CLAUDE_DIR, 'hooks'), 'hooks → ~/.claude/hooks/');
+  // 5. Hooks (copy scripts only, skip hooks.json to avoid overwriting other plugins)
+  for (const hookFile of HOOK_FILES) {
+    copyFile(join(__dirname, 'hooks', hookFile), join(CLAUDE_DIR, 'hooks', hookFile), `hooks/${hookFile}`);
+  }
 
   // 6. Stable runtime for MCP server
   copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
@@ -148,18 +162,20 @@ export function main() {
       args: [join(RUNTIME_DIR, 'src', 'server.js')],
     };
 
-    // Register statusLine (top-level setting) and PostToolUse hook
+    // Register statusLine (top-level setting) and hooks
     if (!settings.hooks) settings.hooks = {};
     const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
-    const contextMonitorPath = join(CLAUDE_DIR, 'hooks', 'gsd-context-monitor.cjs');
     const statusLineRegistered = registerStatusLine(settings, statuslinePath);
-    const postToolUseRegistered = registerPostToolUseHook(settings.hooks, contextMonitorPath);
+    let hooksRegistered = false;
+    for (const config of HOOK_REGISTRY) {
+      if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
+    }
 
     const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;
     writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n');
     renameSync(tmpSettings, settingsPath);
     log('  ✓ MCP server registered in settings.json');
-    if (statusLineRegistered || postToolUseRegistered) {
+    if (statusLineRegistered || hooksRegistered) {
       log('  ✓ GSD-Lite hooks registered in settings.json');
     }
   } else {

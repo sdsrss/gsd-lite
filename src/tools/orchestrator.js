@@ -793,6 +793,9 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     };
   }
 
+  // Task stays in 'running' lifecycle intentionally — executor outcome 'failed' means
+  // "attempt failed, ready for retry or debugger", NOT lifecycle 'failed'. The task only
+  // transitions to lifecycle 'failed' via handleDebuggerResult when debugging is exhausted.
   const retry_count = (task.retry_count || 0) + 1;
   const error_fingerprint = typeof result.error_fingerprint === 'string' && result.error_fingerprint.length > 0
     ? result.error_fingerprint
@@ -967,7 +970,10 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     }
   }
 
-  // Snapshot accepted task IDs before propagation (for done counter adjustment)
+  // Snapshot accepted task IDs before propagation (for done counter adjustment).
+  // Note: rework_tasks patches above are NOT yet applied in-memory, so tasks demoted
+  // by the rework loop are still 'accepted' here. The guard below
+  // `!taskPatches.some(p => p.id === task.id)` prevents double-counting.
   const acceptedBeforePropagation = new Set(
     (phase.todo || []).filter(t => t.lifecycle === 'accepted').map(t => t.id),
   );

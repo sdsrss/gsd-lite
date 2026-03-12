@@ -21,7 +21,7 @@ agents/        → 4 个子代理 (executor, reviewer, researcher, debugger)
 workflows/     → 5 个工作流 (tdd-cycle, review-cycle, debugging, research, deviation-rules)
 references/    → 8 个参考文档
 hooks/         → 上下文监控 (StatusLine + PostToolUse)
-tests/         → 544 个测试 (475 单元 + 69 E2E 集成) + 11 个 E2E checklist
+tests/         → 674 个测试 (单元 + 模拟 + E2E 集成) + 11 个 E2E checklist
 docs/          → 设计文档 + 工程任务清单 + 校准记录
 ```
 
@@ -47,7 +47,7 @@ docs/          → 设计文档 + 工程任务清单 + 校准记录
 ## 测试
 
 ```bash
-npm test                    # 运行全部 544 个测试
+npm test                    # 运行全部 674 个测试
 npm run test:coverage       # 运行测试 + 覆盖率报告 (94.43% lines, 81.85% branches)
 npm run lint                # Biome lint 检查
 node --test tests/state.test.js  # 运行单个测试文件
@@ -75,15 +75,14 @@ node --test tests/state.test.js  # 运行单个测试文件
 <!-- claude-mem-lite: auto-updated context. To avoid git noise, add CLAUDE.md to .gitignore -->
 <claude-mem-context>
 ### Last Session
-Request: Session initialization and context setup for GSD-Lite project
-Completed: Context loaded, environment ready, no active coding work yet
-Next: Await user task request or verify test suite status with 'npm test'
+Request: /simplify
+Completed: Error while working on gsd-session-init.cjs; Modified uninstall.js; Modified install.js, uninstall.js; Hook timing patt…
 
 ### Key Context
-- [bugfix] Error while working on b56ll0ly8.txt (#2421)
-- [bugfix] git status (error) (#2420)
-- [bugfix] Removed unused rm import from error-codes.test.js (#2415)
-- [bugfix] Error while working on orchestrator.test.js, incremental-validation.test.js, sc… (#2414)
-- [bugfix] Error while working on schema.js (#2410)
+- [bugfix] Error while working on gsd-session-init.cjs (#2917)
+- [discovery] Hook timing patterns and auto-update interval investigation (#2906)
+- [bugfix] Error while working on gsd (#2905)
+- [discovery] find command typo in tests directory search (#2904)
+- [discovery] Explored gsd project installation and registration code structure (#2903)
 
 </claude-mem-context>

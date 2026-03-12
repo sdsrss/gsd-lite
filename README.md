@@ -228,7 +228,7 @@ gsd-lite/
 ├── workflows/              # 5 core workflows (TDD, review, debug, research, deviation)
 ├── references/             # 8 reference docs (execution loop, state diagram, evidence spec, ...)
 ├── hooks/                  # Context monitoring (StatusLine + PostToolUse)
-├── tests/                  # 575 tests (506 unit + 69 E2E)
+├── tests/                  # 674 tests (unit + simulation + E2E)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script
 └── uninstall.js            # Uninstall script
@@ -237,7 +237,7 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 575 tests
+npm test                    # Run all 674 tests
 npm run test:coverage       # Tests + coverage report (94%+ lines, 81%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file

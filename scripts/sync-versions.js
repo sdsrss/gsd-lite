@@ -5,7 +5,7 @@
  * Run automatically via `prepublishOnly` or manually: `node scripts/sync-versions.js`
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,22 +25,28 @@ let changed = false;
 for (const file of targets) {
   const content = readFileSync(file, 'utf8');
   const json = JSON.parse(content);
+  let fileChanged = false;
 
   if (file.endsWith('plugin.json')) {
     if (json.version !== version) {
       json.version = version;
-      changed = true;
+      fileChanged = true;
     }
   } else if (file.endsWith('marketplace.json')) {
     for (const plugin of json.plugins || []) {
       if (plugin.version !== version) {
         plugin.version = version;
-        changed = true;
+        fileChanged = true;
       }
     }
   }
 
-  writeFileSync(file, JSON.stringify(json, null, 2) + '\n');
+  if (fileChanged) {
+    const tmpPath = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(json, null, 2) + '\n');
+    renameSync(tmpPath, file);
+    changed = true;
+  }
 }
 
 if (changed) {
