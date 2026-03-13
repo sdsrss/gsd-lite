@@ -1,5 +1,5 @@
 ---
-description: Interactive project start — discuss requirements, research, plan, then auto-execute
+description: "Interactive project start — discuss requirements, research, plan, then auto-execute. Use when: (1) user wants to implement a new feature or complex functionality, (2) user wants to research/analyze a technology then build something, (3) user describes a multi-step task that needs planning and decomposition, (4) user says '帮我做/实现/开发/搞一个...' or 'let\\'s build/create/implement...', (5) task is too complex for a single-shot response and needs phased execution"
 argument-hint: Optional feature or project description
 ---
 

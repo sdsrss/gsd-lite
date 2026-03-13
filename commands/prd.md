@@ -1,5 +1,5 @@
 ---
-description: Start project from requirements document or description text
+description: "Start project from requirements document or description text. Use when: (1) user provides a requirements doc, PRD, spec file, or design document, (2) user pastes a detailed feature description or task list, (3) user says '按这个需求做' or 'here\\'s what I need built', (4) user has a clear written specification ready to plan and execute"
 argument-hint: File path to requirements doc, or inline description text
 ---
 
