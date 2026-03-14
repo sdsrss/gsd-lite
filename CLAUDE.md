@@ -75,14 +75,17 @@ node --test tests/state.test.js  # 运行单个测试文件
 <!-- claude-mem-lite: auto-updated context. To avoid git noise, add CLAUDE.md to .gitignore -->
 <claude-mem-context>
 ### Last Session
-Request: /simplify
-Completed: Error while working on gsd-session-init.cjs; Modified uninstall.js; Modified install.js, uninstall.js; Hook timing patt…
+Request: Update and publish version for gsd-lite project
+Completed: Attempted version update and npm publish process
+Remaining: Resolve npm publish error; fix biome lint violations in src/tests; verify test suite passes; successfully publish to np…
+Next: 1) Inspect full npm publish error output; 2) Run biome check and fix reported issues; 3) Execute npm test to confirm su…
+Lessons: npm publish fails immediately if upstream lint/test validation hasn't cleared
 
 ### Key Context
-- [bugfix] Error while working on gsd-session-init.cjs (#2917)
-- [discovery] Hook timing patterns and auto-update interval investigation (#2906)
-- [bugfix] Error while working on gsd (#2905)
-- [discovery] find command typo in tests directory search (#2904)
-- [discovery] Explored gsd project installation and registration code structure (#2903)
+- [bugfix] Error while working on bh7frxgd1.txt (#3020)
+- [bugfix] npm run lint 2>&1 | tail -5 (error) (#3019)
+- [bugfix] npm publish blocked by prepublishOnly hook in gsd-lite@0.3.14 (#2966)
+- [bugfix] Error while working on gsd-session-init.cjs (#2955)
+- [change] GitHub API authentication & rate limit tuning in gsd-auto-update.cjs (#2949)
 
 </claude-mem-context>

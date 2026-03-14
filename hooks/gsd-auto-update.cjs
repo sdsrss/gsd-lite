@@ -286,3 +286,26 @@ module.exports = {
   compareVersions,
   shouldSkipUpdateCheck,
 };
+
+// ── CLI Entry Point (for background auto-install) ─────────
+if (require.main === module) {
+  checkForUpdate({ install: true, verbose: false })
+    .then((result) => {
+      if (result?.updated) {
+        const notifPath = path.join(stateDir, 'update-notification.json');
+        fs.mkdirSync(stateDir, { recursive: true });
+        const tmpPath = notifPath + `.${process.pid}.tmp`;
+        fs.writeFileSync(
+          tmpPath,
+          JSON.stringify({
+            from: result.from,
+            to: result.to,
+            at: new Date().toISOString(),
+          }) + '\n',
+        );
+        fs.renameSync(tmpPath, notifPath);
+      }
+    })
+    .catch(() => {})
+    .finally(() => process.exit(0));
+}

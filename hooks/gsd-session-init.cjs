@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // GSD-Lite SessionStart hook
-// 1. Auto-registers statusLine in settings.json if not already configured.
-// 2. Checks for updates and notifies user (no download in hook context).
+// 1. Cleans up stale temp files (throttled to once/day).
+// 2. Auto-registers statusLine in settings.json if not already configured.
+// 3. Shows notification if a previous background auto-update completed.
+// 4. Spawns background auto-update (detached, non-blocking).
 // Idempotent: skips if statusLine already points to gsd-statusline, preserves
 // third-party statuslines.
 
@@ -64,15 +66,25 @@ setTimeout(() => process.exit(0), 4000).unref();
     }
   } catch { /* silent */ }
 
-  // ── Phase 3: Auto-update check (notify only, no download) ──
-  // checkForUpdate handles throttling internally via shouldCheck()
+  // ── Phase 3: Show notification from previous background auto-install ──
   try {
-    const { checkForUpdate } = require('./gsd-auto-update.cjs');
-    const result = await checkForUpdate({ install: false });
-    if (result?.updateAvailable) {
-      console.log(
-        `\n📦 GSD-Lite v${result.to} available (current: v${result.from}). Run: gsd update`
-      );
+    const notifPath = path.join(claudeDir, 'gsd', 'runtime', 'update-notification.json');
+    if (fs.existsSync(notifPath)) {
+      const notif = JSON.parse(fs.readFileSync(notifPath, 'utf8'));
+      console.log(`✅ GSD-Lite auto-updated: v${notif.from} → v${notif.to}`);
+      fs.unlinkSync(notifPath);
     }
+  } catch { /* silent */ }
+
+  // ── Phase 4: Spawn background auto-update (non-blocking) ──
+  // Detached child handles check + download + install; throttled by shouldCheck()
+  try {
+    const { spawn } = require('node:child_process');
+    const child = spawn(
+      process.execPath,
+      [path.join(__dirname, 'gsd-auto-update.cjs')],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.unref();
   } catch { /* silent — never block session start */ }
 })().catch(() => {});
