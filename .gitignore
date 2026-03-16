@@ -79,3 +79,4 @@ docs/
 # Evidence archive (generated at runtime)
 evidence-archive.json
 
+.code-graph/

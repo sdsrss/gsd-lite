@@ -168,6 +168,28 @@ async function evaluatePreflight(state, basePath) {
     });
   }
 
+  // P0-2: Dirty-phase detection — rollback current_phase to earliest phase
+  // that has needs_revalidation tasks, ensuring earlier invalidated work
+  // is re-executed before proceeding with later phases
+  const earliestDirtyPhase = (state.phases || []).find(p =>
+    p.id < state.current_phase
+    && (p.todo || []).some(t => t.lifecycle === 'needs_revalidation'),
+  );
+  if (earliestDirtyPhase) {
+    hints.push({
+      workflow_mode: 'executing_task',
+      action: 'rollback_to_dirty_phase',
+      updates: {
+        workflow_mode: 'executing_task',
+        current_phase: earliestDirtyPhase.id,
+        current_task: null,
+        current_review: null,
+      },
+      dirty_phase: { id: earliestDirtyPhase.id, name: earliestDirtyPhase.name },
+      message: `Phase ${earliestDirtyPhase.id} has invalidated tasks; rolling back from phase ${state.current_phase}`,
+    });
+  }
+
   if (hints.length === 0) return { override: null };
 
   return {
@@ -469,6 +491,21 @@ async function resumeExecutingTask(state, basePath) {
     };
   }
 
+  // P0-1: Auto phase completion — when all tasks accepted and review passed,
+  // signal complete_phase instead of going idle
+  const allAccepted = phase.todo.length > 0 && phase.todo.every(t => t.lifecycle === 'accepted');
+  const reviewPassed = phase.phase_review?.status === 'accepted'
+    || phase.phase_handoff?.required_reviews_passed === true;
+  if (allAccepted && reviewPassed) {
+    return {
+      success: true,
+      action: 'complete_phase',
+      workflow_mode: 'executing_task',
+      phase_id: phase.id,
+      message: 'All tasks accepted and review passed; phase ready for completion',
+    };
+  }
+
   const persistError = await persist(basePath, {
     current_task: null,
     current_review: null,
@@ -509,6 +546,7 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = 
       ...(preflight.override.current_git_head ? { current_git_head: preflight.override.current_git_head } : {}),
       ...(preflight.override.changed_files ? { changed_files: preflight.override.changed_files } : {}),
       ...(preflight.override.expired_research ? { expired_research: preflight.override.expired_research } : {}),
+      ...(preflight.override.dirty_phase ? { dirty_phase: preflight.override.dirty_phase } : {}),
       ...(preflight.hints && preflight.hints.length > 1 ? { pending_issues: preflight.hints.slice(1) } : {}),
     };
   }

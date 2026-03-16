@@ -1535,4 +1535,253 @@ describe('orchestrator skeleton', () => {
     const task = state.phases[0].todo.find(t => t.id === '1.1');
     assert.equal(task.lifecycle, 'accepted');
   });
+
+  // ── P0-1: Auto phase completion after review accepted ──
+
+  it('signals complete_phase when all tasks accepted and phase review passed', async () => {
+    await init({
+      project: 'auto-phase-complete',
+      phases: [
+        { name: 'Core', tasks: [{ index: 1, name: 'Task A' }, { index: 2, name: 'Task B' }] },
+        { name: 'Polish', tasks: [{ index: 1, name: 'Task C' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // Advance both tasks through running → checkpointed → accepted
+    for (const taskId of ['1.1', '1.2']) {
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    }
+
+    // Set phase review as accepted
+    await update({
+      updates: {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: [{
+          id: 1,
+          done: 2,
+          phase_review: { status: 'accepted' },
+          phase_handoff: { required_reviews_passed: true },
+        }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'complete_phase');
+    assert.equal(result.phase_id, 1);
+    assert.match(result.message, /phase ready for completion/i);
+  });
+
+  it('signals complete_phase for final phase (single-phase project)', async () => {
+    await init({
+      project: 'single-phase-complete',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({
+      updates: {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: [{ id: 1, done: 1, phase_review: { status: 'accepted' }, phase_handoff: { required_reviews_passed: true } }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'complete_phase');
+    assert.equal(result.phase_id, 1);
+  });
+
+  it('still returns idle when all tasks accepted but review NOT passed', async () => {
+    await init({
+      project: 'no-auto-complete-without-review',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+
+    // No phase_review.status = 'accepted', no required_reviews_passed
+    const result = await resumeWorkflow({ basePath: tempDir });
+    // Should trigger phase review first, not idle or complete_phase
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'trigger_review');
+    assert.equal(result.workflow_mode, 'reviewing_phase');
+  });
+
+  it('returns complete_phase after handleReviewerResult accepts phase review', async () => {
+    await init({
+      project: 'e2e-auto-phase-close',
+      phases: [
+        { name: 'Core', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Polish', tasks: [{ index: 1, name: 'Task B' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // Task 1.1: running → checkpointed → accepted
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+
+    // Transition to reviewing_phase
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_phase',
+        current_task: null,
+        current_review: { scope: 'phase', scope_id: 1 },
+        phases: [{ id: 1, done: 1, lifecycle: 'reviewing' }],
+      },
+      basePath: tempDir,
+    });
+
+    // Phase review accepted
+    const reviewResult = await handleReviewerResult({
+      result: {
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        spec_passed: true,
+        quality_passed: true,
+        accepted_tasks: ['1.1'],
+        rework_tasks: [],
+        critical_issues: [],
+        important_issues: [],
+        minor_issues: [],
+        evidence: [],
+      },
+      basePath: tempDir,
+    });
+    assert.equal(reviewResult.success, true);
+    assert.equal(reviewResult.action, 'review_accepted');
+
+    // Now resume — should signal complete_phase, not idle
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'complete_phase');
+    assert.equal(result.phase_id, 1);
+  });
+
+  // ── P0-2: Dirty phase detection and rollback ──
+
+  it('rolls back to earliest dirty phase when earlier phase has needs_revalidation tasks', async () => {
+    await init({
+      project: 'dirty-phase-rollback',
+      phases: [
+        { name: 'Foundation', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Features', tasks: [{ index: 1, name: 'Task B' }] },
+        { name: 'Polish', tasks: [{ index: 1, name: 'Task C' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // Complete phase 1 and phase 2, advance to phase 3
+    for (const phaseId of [1, 2]) {
+      const taskId = `${phaseId}.1`;
+      await update({ updates: { phases: [{ id: phaseId, todo: [{ id: taskId, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: phaseId, todo: [{ id: taskId, lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: phaseId, todo: [{ id: taskId, lifecycle: 'accepted' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: phaseId, lifecycle: 'accepted', done: 1, phase_review: { status: 'accepted' }, phase_handoff: { required_reviews_passed: true, tests_passed: true } }] }, basePath: tempDir });
+    }
+    await update({ updates: { current_phase: 3, phases: [{ id: 3, lifecycle: 'active' }] }, basePath: tempDir });
+
+    // Now dirty phase 1 — simulate research invalidation (only task lifecycle changes,
+    // phase stays accepted — matches applyResearchRefresh behavior)
+    await update({
+      updates: {
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'needs_revalidation', evidence_refs: [] }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'rollback_to_dirty_phase');
+    assert.deepEqual(result.dirty_phase, { id: 1, name: 'Foundation' });
+    assert.match(result.message, /Phase 1 has invalidated tasks.*rolling back from phase 3/);
+
+    // Verify state was updated
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.current_phase, 1);
+    assert.equal(state.current_task, null);
+    assert.equal(state.current_review, null);
+    assert.equal(state.workflow_mode, 'executing_task');
+  });
+
+  it('does not rollback when dirty phase is the current phase', async () => {
+    await init({
+      project: 'dirty-current-phase',
+      phases: [
+        { name: 'Foundation', tasks: [{ index: 1, name: 'Task A' }, { index: 2, name: 'Task B' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // One task accepted, one needs_revalidation — but it's the current phase
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.2', lifecycle: 'needs_revalidation' }] }] },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    // Should dispatch executor for the needs_revalidation task, not rollback
+    assert.equal(result.action, 'dispatch_executor');
+    assert.equal(result.task_id, '1.2');
+  });
+
+  it('rolls back to phase 2 (not phase 1) when only phase 2 is dirty while on phase 3', async () => {
+    await init({
+      project: 'dirty-phase-2-only',
+      phases: [
+        { name: 'Foundation', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Features', tasks: [{ index: 1, name: 'Task B' }] },
+        { name: 'Polish', tasks: [{ index: 1, name: 'Task C' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // Complete all 3 phases' tasks, advance to phase 3
+    for (const phaseId of [1, 2]) {
+      const taskId = `${phaseId}.1`;
+      await update({ updates: { phases: [{ id: phaseId, todo: [{ id: taskId, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: phaseId, todo: [{ id: taskId, lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: phaseId, todo: [{ id: taskId, lifecycle: 'accepted' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: phaseId, lifecycle: 'accepted', done: 1, phase_review: { status: 'accepted' }, phase_handoff: { required_reviews_passed: true, tests_passed: true } }] }, basePath: tempDir });
+    }
+    await update({ updates: { current_phase: 3, phases: [{ id: 3, lifecycle: 'active' }] }, basePath: tempDir });
+
+    // Dirty only phase 2 (task invalidated, phase stays accepted)
+    await update({
+      updates: {
+        phases: [{ id: 2, todo: [{ id: '2.1', lifecycle: 'needs_revalidation', evidence_refs: [] }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'rollback_to_dirty_phase');
+    assert.deepEqual(result.dirty_phase, { id: 2, name: 'Features' });
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.current_phase, 2);
+  });
 });

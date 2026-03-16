@@ -356,6 +356,26 @@ export function validateState(state) {
       && state.total_phases > 0 && state.current_phase > state.total_phases) {
     errors.push(`current_phase (${state.current_phase}) must not exceed total_phases (${state.total_phases})`);
   }
+  // P2-9: Cross-field consistency — current_task must belong to current_phase
+  if (state.current_task && Array.isArray(state.phases)) {
+    const curPhase = state.phases.find(p => p.id === state.current_phase);
+    if (curPhase && Array.isArray(curPhase.todo)) {
+      const taskExists = curPhase.todo.some(t => t.id === state.current_task);
+      if (!taskExists) {
+        errors.push(`current_task "${state.current_task}" not found in current_phase ${state.current_phase}`);
+      }
+    }
+  }
+  // P2-9: workflow_mode consistency — completed project must not have active/running tasks
+  if (state.workflow_mode === 'completed' && Array.isArray(state.phases)) {
+    for (const phase of state.phases) {
+      for (const task of (phase.todo || [])) {
+        if (task.lifecycle === 'running') {
+          errors.push(`Completed project has running task ${task.id} in phase ${phase.id}`);
+        }
+      }
+    }
+  }
   if (Array.isArray(state.phases)) {
     if (typeof state.total_phases === 'number' && state.total_phases !== state.phases.length) {
       errors.push(`total_phases (${state.total_phases}) does not match phases.length (${state.phases.length})`);

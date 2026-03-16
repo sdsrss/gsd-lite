@@ -674,6 +674,68 @@ describe('schema', () => {
       const result = validateState(state);
       assert.equal(result.valid, true);
     });
+
+    // P2-9: Cross-field consistency checks
+    it('rejects current_task not belonging to current_phase (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [
+          { name: 'p1', tasks: [{ index: 1, name: 't1' }] },
+          { name: 'p2', tasks: [{ index: 1, name: 't2' }] },
+        ],
+      });
+      state.current_phase = 1;
+      state.current_task = '2.1'; // task from phase 2, not phase 1
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('current_task "2.1" not found in current_phase 1')));
+    });
+
+    it('accepts current_task belonging to current_phase (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.current_phase = 1;
+      state.current_task = '1.1';
+      const result = validateState(state);
+      assert.equal(result.valid, true);
+    });
+
+    it('allows null current_task regardless of phase (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.current_phase = 1;
+      state.current_task = null;
+      const result = validateState(state);
+      assert.equal(result.valid, true);
+    });
+
+    it('rejects completed project with running tasks (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'completed';
+      state.phases[0].todo[0].lifecycle = 'running';
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Completed project has running task')));
+    });
+
+    it('accepts completed project with all accepted tasks (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'completed';
+      state.phases[0].todo[0].lifecycle = 'accepted';
+      state.phases[0].lifecycle = 'accepted';
+      const result = validateState(state);
+      assert.equal(result.valid, true);
+    });
   });
 
   describe('createInitialState', () => {
