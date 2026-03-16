@@ -328,7 +328,8 @@ describe('resume flow matrix', () => {
       assert.equal(result.success, true);
       assert.equal(result.action, 'await_manual_intervention');
       assert.equal(result.workflow_mode, 'planning');
-      assert.match(result.message, /not yet automated/);
+      assert.match(result.message, /planning mode/);
+      assert.ok(result.guidance);
     });
   });
 });

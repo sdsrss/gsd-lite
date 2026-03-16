@@ -338,9 +338,9 @@ describe('matchDecisionForBlocker edge cases', () => {
   });
 
   it('matches at exact MIN_OVERLAP boundary (overlap=2)', () => {
-    const decisions = [{ id: 'd1', summary: 'Use PostgreSQL database' }];
-    const result = matchDecisionForBlocker(decisions, 'Which database to use');
-    // "database" + "use" overlap → 2 = MIN_OVERLAP → match
+    const decisions = [{ id: 'd1', summary: 'PostgreSQL database migration' }];
+    const result = matchDecisionForBlocker(decisions, 'database migration tool');
+    // "database" + "migration" overlap → 2 = MIN_OVERLAP → match
     assert.equal(result.id, 'd1');
   });
 

@@ -4,7 +4,6 @@ import {
   read,
   storeResearch,
   update,
-  addEvidence,
   selectRunnableTask,
   buildExecutorContext,
   matchDecisionForBlocker,
@@ -276,6 +275,19 @@ function buildDecisionEntries(decisions, phaseId, taskId, existingCount = 0) {
       return null;
     })
     .filter(Boolean);
+}
+
+function buildErrorFingerprint(result) {
+  const parts = [];
+  if (result.blockers?.length > 0) {
+    const b = result.blockers[0];
+    parts.push(typeof b === 'string' ? b : (b.reason || b.type || ''));
+  }
+  if (result.files_changed?.length > 0) {
+    parts.push([...result.files_changed].sort().join(','));
+  }
+  const combined = parts.filter(Boolean).join('|');
+  return combined.length > 0 ? combined.slice(0, 120) : result.summary.slice(0, 80);
 }
 
 function getBlockedReasonFromResult(result) {
@@ -705,15 +717,44 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = 
         message: 'Project is paused. Confirm to resume execution.',
       };
     case 'planning':
-    case 'reconcile_workspace':
-    case 'replan_required':
-    case 'research_refresh_needed':
       return {
         success: true,
         action: 'await_manual_intervention',
         workflow_mode: state.workflow_mode,
-        message: `workflow_mode "${state.workflow_mode}" is recognized but not yet automated by the orchestrator`,
+        guidance: 'Complete planning and call state-init to initialize the project',
+        message: 'Project is in planning mode; complete the plan and initialize with state-init',
       };
+    case 'reconcile_workspace': {
+      const reconGitHead = await getGitHead(basePath);
+      return {
+        success: true,
+        action: 'reconcile_workspace',
+        workflow_mode: state.workflow_mode,
+        expected_head: state.git_head,
+        actual_head: reconGitHead,
+        guidance: 'Workspace git HEAD has diverged. Verify changes and update git_head via state-update, then set workflow_mode to executing_task',
+        message: `Git HEAD mismatch: saved=${state.git_head}, current=${reconGitHead}`,
+      };
+    }
+    case 'replan_required':
+      return {
+        success: true,
+        action: 'replan_required',
+        workflow_mode: state.workflow_mode,
+        guidance: 'Plan files modified since last session. Review changes, update the plan if needed, then set workflow_mode to executing_task via state-update',
+        message: 'Plan artifacts modified since last session; review and re-align before resuming',
+      };
+    case 'research_refresh_needed': {
+      const expiredResearch = collectExpiredResearch(state);
+      return {
+        success: true,
+        action: 'dispatch_researcher',
+        workflow_mode: state.workflow_mode,
+        expired_research: expiredResearch,
+        guidance: 'Research cache expired. Dispatch researcher sub-agent to refresh, then call orchestrator-handle-researcher-result',
+        message: 'Research has expired and must be refreshed before execution can resume',
+      };
+    }
     default:
       return {
         error: true,
@@ -746,54 +787,46 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
   if (result.outcome === 'checkpointed') {
     const reviewLevel = reclassifyReviewLevel(task, result);
     const isL0 = reviewLevel === 'L0';
+    const autoAccept = isL0 || task.review_required === false;
 
     const current_review = !isL0 && reviewLevel === 'L2' && task.review_required !== false
       ? { scope: 'task', scope_id: task.id, stage: 'spec' }
       : null;
     const workflow_mode = current_review ? 'reviewing_task' : 'executing_task';
 
-    // First persist: checkpoint the task (running → checkpointed)
+    // Single atomic persist: auto-accept goes directly running → accepted,
+    // otherwise running → checkpointed (awaiting review)
+    const taskPatch = {
+      id: task.id,
+      lifecycle: autoAccept ? 'accepted' : 'checkpointed',
+      checkpoint_commit: result.checkpoint_commit,
+      files_changed: result.files_changed || [],
+      evidence_refs: result.evidence || [],
+      level: reviewLevel,
+      blocked_reason: null,
+      unblock_condition: null,
+      debug_context: null,
+    };
+    const phasePatch = { id: phase.id, todo: [taskPatch] };
+    // done is auto-recomputed by update() — no manual increment needed
+
+    // Bundle evidence into the same atomic persist to prevent inconsistency
+    const evidenceUpdates = {};
+    for (const ev of (result.evidence || [])) {
+      if (ev && typeof ev === 'object' && typeof ev.id === 'string' && typeof ev.scope === 'string') {
+        evidenceUpdates[ev.id] = ev;
+      }
+    }
+
     const persistError = await persist(basePath, {
       workflow_mode,
       current_task: null,
       current_review,
       decisions,
-      phases: [{
-        id: phase.id,
-        todo: [{
-          id: task.id,
-          lifecycle: 'checkpointed',
-          checkpoint_commit: result.checkpoint_commit,
-          files_changed: result.files_changed || [],
-          evidence_refs: result.evidence || [],
-          level: reviewLevel,
-          blocked_reason: null,
-          unblock_condition: null,
-          debug_context: null,
-        }],
-      }],
+      phases: [phasePatch],
+      ...(Object.keys(evidenceUpdates).length > 0 ? { evidence: evidenceUpdates } : {}),
     });
     if (persistError) return persistError;
-
-    // Store structured evidence entries
-    for (const ev of (result.evidence || [])) {
-      if (ev && typeof ev === 'object' && typeof ev.id === 'string' && typeof ev.scope === 'string') {
-        await addEvidence({ id: ev.id, data: ev, basePath });
-      }
-    }
-
-    // Auto-accept: L0 tasks or tasks with review_required: false
-    const autoAccept = isL0 || task.review_required === false;
-    if (autoAccept) {
-      const acceptError = await persist(basePath, {
-        phases: [{
-          id: phase.id,
-          done: (phase.done || 0) + 1,
-          todo: [{ id: task.id, lifecycle: 'accepted' }],
-        }],
-      });
-      if (acceptError) return acceptError;
-    }
 
     return {
       success: true,
@@ -841,7 +874,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
   const retry_count = (task.retry_count || 0) + 1;
   const error_fingerprint = typeof result.error_fingerprint === 'string' && result.error_fingerprint.length > 0
     ? result.error_fingerprint
-    : result.summary.slice(0, 80);
+    : buildErrorFingerprint(result);
   const shouldDebug = retry_count >= MAX_DEBUG_RETRY;
   const current_review = shouldDebug
     ? {
@@ -989,8 +1022,6 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   }
 
   const taskPatches = [];
-  let doneIncrement = 0;
-  let doneDecrement = 0;
 
   // Accept tasks
   for (const taskId of (result.accepted_tasks || [])) {
@@ -998,7 +1029,6 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     if (!task) continue;
     if (task.lifecycle === 'checkpointed') {
       taskPatches.push({ id: taskId, lifecycle: 'accepted' });
-      doneIncrement += 1;
     }
   }
 
@@ -1007,18 +1037,9 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     const task = getTaskById(phase, taskId);
     if (!task) continue;
     if (task.lifecycle === 'checkpointed' || task.lifecycle === 'accepted') {
-      if (task.lifecycle === 'accepted') doneDecrement += 1;
       taskPatches.push({ id: taskId, lifecycle: 'needs_revalidation', evidence_refs: [] });
     }
   }
-
-  // Snapshot accepted task IDs before propagation (for done counter adjustment).
-  // Note: rework_tasks patches above are NOT yet applied in-memory, so tasks demoted
-  // by the rework loop are still 'accepted' here. The guard below
-  // `!taskPatches.some(p => p.id === task.id)` prevents double-counting.
-  const acceptedBeforePropagation = new Set(
-    (phase.todo || []).filter(t => t.lifecycle === 'accepted').map(t => t.id),
-  );
 
   // Propagation for critical issues with invalidates_downstream
   for (const issue of (result.critical_issues || [])) {
@@ -1031,18 +1052,15 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   for (const task of (phase.todo || [])) {
     if (task.lifecycle === 'needs_revalidation' && !taskPatches.some((p) => p.id === task.id)) {
       taskPatches.push({ id: task.id, lifecycle: 'needs_revalidation', evidence_refs: [] });
-      if (acceptedBeforePropagation.has(task.id)) {
-        doneDecrement += 1;
-      }
     }
   }
 
   const hasCritical = (result.critical_issues || []).length > 0;
   const reviewStatus = hasCritical ? 'rework_required' : 'accepted';
 
+  // done is auto-recomputed by update() — no manual tracking needed
   const phaseUpdates = {
     id: phase.id,
-    done: Math.max(0, (phase.done || 0) + doneIncrement - doneDecrement),
     phase_review: {
       status: reviewStatus,
       ...(hasCritical
@@ -1063,19 +1081,21 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
 
   const workflowMode = 'executing_task';
 
+  // Bundle evidence into the same atomic persist
+  const evidenceUpdates = {};
+  for (const ev of (result.evidence || [])) {
+    if (ev && typeof ev === 'object' && typeof ev.id === 'string' && typeof ev.scope === 'string') {
+      evidenceUpdates[ev.id] = ev;
+    }
+  }
+
   const persistError = await persist(basePath, {
     workflow_mode: workflowMode,
     current_review: null,
     phases: [phaseUpdates],
+    ...(Object.keys(evidenceUpdates).length > 0 ? { evidence: evidenceUpdates } : {}),
   });
   if (persistError) return persistError;
-
-  // Store evidence entries if provided
-  for (const ev of (result.evidence || [])) {
-    if (ev && typeof ev === 'object' && typeof ev.id === 'string' && typeof ev.scope === 'string') {
-      await addEvidence({ id: ev.id, data: ev, basePath });
-    }
-  }
 
   return {
     success: true,

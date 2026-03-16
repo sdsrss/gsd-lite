@@ -56,8 +56,8 @@ process.stdin.on('end', () => {
     }
 
     // Context window display (USED percentage scaled to usable context)
-    // Claude Code reserves ~16.5% for autocompact buffer
-    const AUTO_COMPACT_BUFFER_PCT = 16.5;
+    // Claude Code reserves ~16.5% for autocompact buffer (configurable via env)
+    const AUTO_COMPACT_BUFFER_PCT = Number(process.env.GSD_AUTOCOMPACT_BUFFER) || 16.5;
     let ctx = '';
     if (remaining != null) {
       const usableRemaining = Math.max(0, ((remaining - AUTO_COMPACT_BUFFER_PCT) / (100 - AUTO_COMPACT_BUFFER_PCT)) * 100);

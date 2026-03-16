@@ -42,6 +42,16 @@ export function setLockPath(lockPath) {
   _fileLockPath = lockPath;
 }
 
+/**
+ * Ensure _fileLockPath is set from a known state path.
+ * Must be called before withStateLock in all mutation paths.
+ */
+function ensureLockPathFromStatePath(statePath) {
+  if (!_fileLockPath && statePath) {
+    _fileLockPath = join(dirname(statePath), 'state.lock');
+  }
+}
+
 function withStateLock(fn) {
   const p = _mutationQueue.then(() => {
     if (_fileLockPath) {
@@ -80,6 +90,7 @@ export async function init({ project, phases, research, force = false, basePath 
   }
   const gsdDir = join(basePath, '.gsd');
   const statePath = join(gsdDir, 'state.json');
+  ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
     // Guard: reject re-initialization unless force is set
@@ -129,6 +140,9 @@ export async function init({ project, phases, research, force = false, basePath 
       ...state.phases.map((phase) => join(phasesDir, `phase-${phase.id}.md`)),
     ];
     const mtimes = await Promise.all(trackedFiles.map(async (filePath) => (await stat(filePath)).mtimeMs));
+    // Math.ceil is required: mtimeMs has sub-millisecond precision (float), but
+    // Date.toISOString() truncates to milliseconds. Without ceil, the stored timestamp
+    // can be slightly less than the file's actual mtime, causing false plan-drift detection.
     state.context.last_session = new Date(Math.ceil(Math.max(...mtimes))).toISOString();
     await writeJson(statePath, state);
 
@@ -195,8 +209,7 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
-  // C-2: Initialize cross-process lock path on first mutation
-  if (!_fileLockPath) _fileLockPath = join(dirname(statePath), 'state.lock');
+  ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
     const result = await readJson(statePath);
@@ -242,6 +255,12 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
 
     // Deep merge phases by ID instead of shallow replace [I-1]
     const merged = { ...state, ...updates };
+
+    // Deep merge evidence by key (preserves existing entries)
+    if (updates.evidence && isPlainObject(updates.evidence)) {
+      merged.evidence = { ...(state.evidence || {}), ...updates.evidence };
+    }
+
     if (updates.phases && Array.isArray(updates.phases)) {
       merged.phases = state.phases.map(oldPhase => {
         const newPhase = updates.phases.find(p => p.id === oldPhase.id);
@@ -274,6 +293,21 @@ export async function update({ updates, basePath = process.cwd() } = {}) {
           merged.phases.push(newPhase);
         }
       }
+    }
+
+    // Recompute `done` from actual accepted tasks (prevents counter drift)
+    if (updates.phases && Array.isArray(updates.phases)) {
+      for (const phase of merged.phases) {
+        if (Array.isArray(phase.todo)) {
+          phase.done = phase.todo.filter(t => t.lifecycle === 'accepted').length;
+        }
+      }
+    }
+
+    // Auto-prune evidence when entries exceed limit
+    if (merged.evidence && Object.keys(merged.evidence).length > MAX_EVIDENCE_ENTRIES) {
+      const gsdDir = dirname(statePath);
+      await _pruneEvidenceFromState(merged, merged.current_phase, gsdDir);
     }
 
     // Use incremental validation for simple updates (no phases changes)
@@ -336,11 +370,12 @@ export async function phaseComplete({
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
+  ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
     const state = result.data;
 
@@ -484,11 +519,12 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
+  ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
     const state = result.data;
 
@@ -563,11 +599,12 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
+  ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
     const state = result.data;
 
@@ -831,16 +868,27 @@ export function reclassifyReviewLevel(task, executorResult) {
 const MIN_TOKEN_LENGTH = 2;
 const MIN_OVERLAP = 2;
 
+// High-frequency words too generic for meaningful keyword matching
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'not',
+  'but', 'are', 'was', 'been', 'will', 'can', 'should', 'would', 'could',
+  'use', 'using', 'need', 'needs', 'into', 'also', 'when', 'then',
+  'than', 'more', 'some', 'does', 'did', 'its', 'has', 'all', 'any',
+  'error', 'data', 'type', 'value', 'file', 'code', 'function',
+  'return', 'null', 'true', 'false', 'undefined', 'object', 'string',
+  'number', 'array', 'list', 'map', 'set', 'key', 'name',
+]);
+
 /**
  * Tokenize a string into lowercase tokens, splitting on whitespace and punctuation.
- * Filters out short tokens (< MIN_TOKEN_LENGTH).
+ * Filters out short tokens (< MIN_TOKEN_LENGTH) and stopwords.
  */
 function tokenize(text) {
   if (!text) return [];
   return text
     .toLowerCase()
     .split(/[\s,.:;!?()[\]{}<>/\\|@#$%^&*+=~`'"，。：；！？（）【】、]+/)
-    .filter(t => t.length >= MIN_TOKEN_LENGTH);
+    .filter(t => t.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(t));
 }
 
 /**
@@ -949,11 +997,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Invalid researcher result: ${resultValidation.errors.join('; ')}` };
   }
 
-  const artifactsValidation = validateResearchArtifacts(artifacts, {
-    decisionIds: result.decision_ids,
-    volatility: result.volatility,
-    expiresAt: result.expires_at,
-  });
+  const artifactsValidation = validateResearchArtifacts(artifacts);
   if (!artifactsValidation.valid) {
     return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Invalid research artifacts: ${artifactsValidation.errors.join('; ')}` };
   }
@@ -967,11 +1011,12 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
   }
+  ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
     const current = await readJson(statePath);
     if (!current.ok) {
-      return { error: true, message: current.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: current.error };
     }
 
     const state = current.data;
@@ -1024,6 +1069,13 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
 
     if (state.workflow_mode === 'research_refresh_needed') {
       state.workflow_mode = inferWorkflowModeAfterResearch(state);
+    }
+
+    // Recompute done after applyResearchRefresh may have invalidated tasks
+    for (const phase of (state.phases || [])) {
+      if (Array.isArray(phase.todo)) {
+        phase.done = phase.todo.filter(t => t.lifecycle === 'accepted').length;
+      }
     }
 
     const validation = validateState(state);

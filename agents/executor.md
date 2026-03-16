@@ -55,7 +55,10 @@ tools: Read, Write, Edit, Bash, Grep, Glob
   "decisions": ["[DECISION] use optimistic locking by version column"],
   "blockers": [],
   "contract_changed": true,
-  "evidence": ["ev:test:users-update", "ev:typecheck:phase-2"]
+  "evidence": [
+    {"id": "ev:test:users-update", "scope": "task:2.3"},
+    {"id": "ev:typecheck:phase-2", "scope": "task:2.3"}
+  ]
 }
 `contract_changed` 判定指南:
 - 改了函数/方法签名 (参数、返回类型) → true

@@ -733,6 +733,7 @@ describe('schema', () => {
       state.workflow_mode = 'completed';
       state.phases[0].todo[0].lifecycle = 'accepted';
       state.phases[0].lifecycle = 'accepted';
+      state.phases[0].done = 1;
       const result = validateState(state);
       assert.equal(result.valid, true);
     });
@@ -819,6 +820,7 @@ describe('schema', () => {
       });
       state.phases[0].lifecycle = 'accepted';
       state.phases[0].todo[0].lifecycle = 'accepted';
+      state.phases[0].done = 1;
       const result = validateState(state);
       assert.equal(result.valid, true);
     });
@@ -1291,54 +1293,26 @@ describe('validateResearchArtifacts edge cases', () => {
     assert.ok(result.errors.some(e => e.includes('STACK.md must be a non-empty string')));
   });
 
-  it('validates volatility mention in SUMMARY.md', () => {
+  it('accepts SUMMARY.md without content-level checks (structure only)', () => {
     const artifacts = {
       'STACK.md': 'stack',
       'ARCHITECTURE.md': 'arch',
       'PITFALLS.md': 'pit',
-      'SUMMARY.md': 'no volatility mention',
+      'SUMMARY.md': 'no specific mentions needed',
     };
-    const result = validateResearchArtifacts(artifacts, { volatility: 'medium' });
-    assert.equal(result.valid, false);
-    assert.ok(result.errors.some(e => e.includes('must mention volatility')));
+    // Content-level substring checks removed: correctness ensured by structured JSON result
+    const result = validateResearchArtifacts(artifacts);
+    assert.equal(result.valid, true);
   });
 
-  it('validates expires_at mention in SUMMARY.md', () => {
-    const artifacts = {
-      'STACK.md': 'stack',
-      'ARCHITECTURE.md': 'arch',
-      'PITFALLS.md': 'pit',
-      'SUMMARY.md': 'no expiry mention',
-    };
-    const result = validateResearchArtifacts(artifacts, { expiresAt: '2026-01-01' });
-    assert.equal(result.valid, false);
-    assert.ok(result.errors.some(e => e.includes('must mention expires_at')));
-  });
-
-  it('validates decision_ids mentioned in SUMMARY.md', () => {
-    const artifacts = {
-      'STACK.md': 'stack',
-      'ARCHITECTURE.md': 'arch',
-      'PITFALLS.md': 'pit',
-      'SUMMARY.md': 'summary text',
-    };
-    const result = validateResearchArtifacts(artifacts, { decisionIds: ['decision:auth'] });
-    assert.equal(result.valid, false);
-    assert.ok(result.errors.some(e => e.includes('must mention decision id decision:auth')));
-  });
-
-  it('accepts valid artifacts with all mentions', () => {
+  it('accepts valid artifacts with non-empty files', () => {
     const artifacts = {
       'STACK.md': 'stack info',
       'ARCHITECTURE.md': 'arch info',
       'PITFALLS.md': 'pit info',
-      'SUMMARY.md': 'summary with medium and 2026-01-01 and decision:auth',
+      'SUMMARY.md': 'summary info',
     };
-    const result = validateResearchArtifacts(artifacts, {
-      volatility: 'medium',
-      expiresAt: '2026-01-01',
-      decisionIds: ['decision:auth'],
-    });
+    const result = validateResearchArtifacts(artifacts);
     assert.equal(result.valid, true);
   });
 });

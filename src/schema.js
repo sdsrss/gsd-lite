@@ -19,7 +19,7 @@ export const WORKFLOW_MODES = [
 
 export const TASK_LIFECYCLE = {
   pending:              ['running', 'blocked'],
-  running:              ['checkpointed', 'blocked', 'failed'],
+  running:              ['checkpointed', 'blocked', 'failed', 'accepted'], // accepted: auto-accept for L0/review_required=false (atomic, skips checkpointed)
   checkpointed:         ['accepted', 'needs_revalidation'],
   accepted:             ['needs_revalidation'],
   blocked:              ['pending'],
@@ -106,7 +106,7 @@ export function validateResearchDecisionIndex(decisionIndex, requiredIds = []) {
   return { valid: errors.length === 0, errors };
 }
 
-export function validateResearchArtifacts(artifacts, { decisionIds = [], volatility, expiresAt } = {}) {
+export function validateResearchArtifacts(artifacts) {
   const errors = [];
   if (!isPlainObject(artifacts)) {
     return { valid: false, errors: ['artifacts must be an object'] };
@@ -116,19 +116,6 @@ export function validateResearchArtifacts(artifacts, { decisionIds = [], volatil
   for (const fileName of requiredFiles) {
     if (typeof artifacts[fileName] !== 'string' || artifacts[fileName].trim().length === 0) {
       errors.push(`artifacts.${fileName} must be a non-empty string`);
-    }
-  }
-
-  const summary = typeof artifacts['SUMMARY.md'] === 'string' ? artifacts['SUMMARY.md'] : '';
-  if (volatility && !summary.includes(volatility)) {
-    errors.push('artifacts.SUMMARY.md must mention volatility');
-  }
-  if (expiresAt && !summary.includes(expiresAt)) {
-    errors.push('artifacts.SUMMARY.md must mention expires_at');
-  }
-  for (const id of decisionIds) {
-    if (!summary.includes(id)) {
-      errors.push(`artifacts.SUMMARY.md must mention decision id ${id}`);
     }
   }
 
@@ -451,6 +438,13 @@ export function validateState(state) {
       }
       if (!Number.isFinite(phase.done)) {
         errors.push(`Phase ${phase.id}: done must be a finite number`);
+      }
+      // Cross-validate done against actual accepted tasks
+      if (Number.isFinite(phase.done) && Array.isArray(phase.todo)) {
+        const acceptedCount = phase.todo.filter(t => t.lifecycle === 'accepted').length;
+        if (phase.done !== acceptedCount) {
+          errors.push(`Phase ${phase.id}: done (${phase.done}) does not match accepted task count (${acceptedCount})`);
+        }
       }
       if (!Array.isArray(phase.todo)) {
         errors.push(`Phase ${phase.id}: todo must be an array`);

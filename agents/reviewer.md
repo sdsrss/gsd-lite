@@ -92,7 +92,7 @@ Minor = 建议修复 (命名/风格)
 ```json
 {
   "scope": "task | phase",
-  "scope_id": "2.3 | phase-2",
+  "scope_id": "2.3 (task scope: string ID) | 2 (phase scope: number ID)",
   "review_level": "L2 | L1-batch",
   "spec_passed": true,
   "quality_passed": false,
@@ -107,7 +107,10 @@ Minor = 建议修复 (命名/风格)
   "minor_issues": [],
   "accepted_tasks": [],
   "rework_tasks": ["2.3", "2.4"],
-  "evidence": ["ev:test:phase-2", "ev:lint:phase-2"]
+  "evidence": [
+    {"id": "ev:test:phase-2", "scope": "task:2.3"},
+    {"id": "ev:lint:phase-2", "scope": "task:2.3"}
+  ]
 }
 ```
 
