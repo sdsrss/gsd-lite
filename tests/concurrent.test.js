@@ -133,6 +133,87 @@ describe('concurrent state operations (P2-11)', () => {
     assert.ok(Array.isArray(parsed.phases));
   });
 
+  it('file lock protects cross-process concurrent writes', async () => {
+    // Initialize state first
+    await init({
+      project: 'cross-process-concurrent',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    // Write a worker script as a temp .mjs file
+    const { writeFile: wf, unlink: ul } = await import('node:fs/promises');
+    const { fork } = await import('node:child_process');
+    const { fileURLToPath } = await import('node:url');
+    const workerPath = join(tempDir, 'concurrent-worker.mjs');
+    const stateModulePath = join(fileURLToPath(import.meta.url), '../../src/tools/state.js');
+
+    const workerScript = `
+import { update, setLockPath } from ${JSON.stringify(stateModulePath)};
+
+const basePath = process.argv[2];
+const lockPath = process.argv[3];
+const workerId = process.argv[4];
+
+setLockPath(lockPath);
+
+try {
+  const result = await update({
+    updates: { context: { remaining_percentage: Number(workerId), last_session: new Date().toISOString() } },
+    basePath,
+  });
+  process.send({ workerId, success: result.success, error: result.error || null });
+} catch (err) {
+  process.send({ workerId, success: false, error: err.message });
+}
+`;
+    await wf(workerPath, workerScript);
+
+    const lockPath = join(tempDir, '.gsd', '.state-lock');
+    const workerCount = 5;
+
+    // Fork workers that all write concurrently
+    const workerResults = await Promise.all(
+      Array.from({ length: workerCount }, (_, i) => {
+        return new Promise((resolve, reject) => {
+          const child = fork(workerPath, [tempDir, lockPath, String(i)], {
+            stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+          });
+          let result = null;
+          child.on('message', (msg) => { result = msg; });
+          child.on('exit', (code) => {
+            if (result) resolve(result);
+            else reject(new Error(`worker ${i} exited with code ${code} and no result`));
+          });
+          child.on('error', reject);
+          // Timeout safety
+          setTimeout(() => reject(new Error(`worker ${i} timed out`)), 15000);
+        });
+      }),
+    );
+
+    // All workers should have succeeded
+    for (const r of workerResults) {
+      assert.equal(r.success, true, `worker ${r.workerId} failed: ${JSON.stringify(r)}`);
+    }
+
+    // Final state must be valid JSON with consistent structure
+    const raw = await readFile(join(tempDir, '.gsd', 'state.json'), 'utf-8');
+    const parsed = JSON.parse(raw); // Must not throw
+    assert.equal(parsed.project, 'cross-process-concurrent');
+    assert.ok(Array.isArray(parsed.phases), 'phases must be an array');
+    assert.ok(parsed.context, 'context must exist');
+    assert.ok(Number.isFinite(parsed.context.remaining_percentage), 'remaining_percentage must be a number');
+    // The value must be one of the worker IDs (0-4) — last writer wins
+    assert.ok(
+      parsed.context.remaining_percentage >= 0 && parsed.context.remaining_percentage <= 4,
+      `remaining_percentage ${parsed.context.remaining_percentage} should be a valid worker ID (0-4)`,
+    );
+
+    // Clean up worker script
+    await ul(workerPath);
+  });
+
   it('file lock prevents stale lock from blocking operations', async () => {
     await init({
       project: 'stale-lock',

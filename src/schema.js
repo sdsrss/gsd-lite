@@ -387,6 +387,37 @@ export function validateState(state) {
       }
     }
   }
+  // P2-9: workflow_mode consistency — reviewing modes require matching current_review
+  if (state.workflow_mode === 'reviewing_phase' || state.workflow_mode === 'reviewing_task') {
+    const expectedScope = state.workflow_mode === 'reviewing_phase' ? 'phase' : 'task';
+    if (!state.current_review || state.current_review.scope !== expectedScope) {
+      errors.push(`workflow_mode "${state.workflow_mode}" requires current_review with scope="${expectedScope}"`);
+    }
+  }
+  // P2-9: current_review.scope_id must reference an existing phase or task
+  if (state.current_review && state.current_review.scope_id != null && Array.isArray(state.phases)) {
+    if (state.current_review.scope === 'phase') {
+      if (!state.phases.some(p => p.id === state.current_review.scope_id)) {
+        errors.push(`current_review.scope_id ${state.current_review.scope_id} references non-existent phase`);
+      }
+    } else if (state.current_review.scope === 'task') {
+      const curPhase = state.phases.find(p => p.id === state.current_phase);
+      if (curPhase && Array.isArray(curPhase.todo) && !curPhase.todo.some(t => t.id === state.current_review.scope_id)) {
+        errors.push(`current_review.scope_id "${state.current_review.scope_id}" references non-existent task in phase ${state.current_phase}`);
+      }
+    }
+  }
+  // P2-9: accepted phase must not contain non-accepted tasks
+  if (Array.isArray(state.phases)) {
+    for (const phase of state.phases) {
+      if (phase.lifecycle === 'accepted' && Array.isArray(phase.todo)) {
+        const nonAccepted = phase.todo.filter(t => t.lifecycle !== 'accepted');
+        if (nonAccepted.length > 0) {
+          errors.push(`Accepted phase ${phase.id} contains non-accepted tasks: ${nonAccepted.map(t => `${t.id}:${t.lifecycle}`).join(', ')}`);
+        }
+      }
+    }
+  }
   if (Array.isArray(state.phases)) {
     if (typeof state.total_phases === 'number' && state.total_phases !== state.phases.length) {
       errors.push(`total_phases (${state.total_phases}) does not match phases.length (${state.phases.length})`);

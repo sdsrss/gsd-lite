@@ -437,6 +437,10 @@ describe('orchestrator skeleton', () => {
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
+    // Advance task through full lifecycle before accepting phase
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
     await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
     await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
 

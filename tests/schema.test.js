@@ -736,6 +736,92 @@ describe('schema', () => {
       const result = validateState(state);
       assert.equal(result.valid, true);
     });
+
+    // P2-9: reviewing mode requires matching current_review
+    it('rejects reviewing_phase without phase-scoped current_review (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'reviewing_phase';
+      state.current_review = null;
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('requires current_review with scope="phase"')));
+    });
+
+    it('rejects reviewing_task with phase-scoped current_review (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'reviewing_task';
+      state.current_review = { scope: 'phase', scope_id: 1 };
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('requires current_review with scope="task"')));
+    });
+
+    // P2-9: current_review.scope_id references existing entity
+    it('rejects current_review.scope_id referencing non-existent phase (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'reviewing_phase';
+      state.current_review = { scope: 'phase', scope_id: 99 };
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('non-existent phase')));
+    });
+
+    it('rejects current_review.scope_id referencing non-existent task (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'reviewing_task';
+      state.current_review = { scope: 'task', scope_id: '9.9' };
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('non-existent task')));
+    });
+
+    it('accepts valid current_review.scope_id referencing existing phase (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'reviewing_phase';
+      state.current_review = { scope: 'phase', scope_id: 1 };
+      const result = validateState(state);
+      assert.equal(result.valid, true);
+    });
+
+    // P2-9: accepted phase must not contain non-accepted tasks
+    it('rejects accepted phase with pending task (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }, { index: 2, name: 't2' }] }],
+      });
+      state.phases[0].lifecycle = 'accepted';
+      state.phases[0].todo[0].lifecycle = 'accepted';
+      // todo[1] is still 'pending'
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Accepted phase 1 contains non-accepted tasks')));
+    });
+
+    it('accepts accepted phase with all accepted tasks (P2-9)', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.phases[0].lifecycle = 'accepted';
+      state.phases[0].todo[0].lifecycle = 'accepted';
+      const result = validateState(state);
+      assert.equal(result.valid, true);
+    });
   });
 
   describe('createInitialState', () => {

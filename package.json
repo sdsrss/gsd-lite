@@ -39,7 +39,8 @@
     "cli.js",
     "launcher.js",
     "install.js",
-    "uninstall.js"
+    "uninstall.js",
+    "package-lock.json"
   ],
   "engines": {
     "node": ">=20.0.0"

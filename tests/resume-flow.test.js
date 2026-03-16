@@ -113,6 +113,12 @@ describe('resume flow matrix', () => {
     });
 
     await withProject('resume-completed', async (tempDir) => {
+      // Advance all tasks through full lifecycle before accepting phase
+      for (const taskId of ['1.1', '1.2']) {
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'running' }] }] }, basePath: tempDir });
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: taskId, lifecycle: 'accepted' }] }] }, basePath: tempDir });
+      }
       await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
       await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
       await update({ updates: { workflow_mode: 'completed' }, basePath: tempDir });

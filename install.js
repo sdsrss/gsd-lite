@@ -136,7 +136,7 @@ export function main() {
     copyDir(localNM, join(RUNTIME_DIR, 'node_modules'), 'runtime/node_modules (copied)');
   } else if (!DRY_RUN) {
     log('  ⧗ Installing runtime dependencies...');
-    execSync('npm install --omit=dev', { cwd: RUNTIME_DIR, stdio: 'pipe' });
+    execSync('npm ci --omit=dev', { cwd: RUNTIME_DIR, stdio: 'pipe' });
     log('  ✓ runtime dependencies installed');
   } else {
     log('  [dry-run] Would install runtime dependencies');
