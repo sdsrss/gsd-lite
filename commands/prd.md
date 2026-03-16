@@ -134,6 +134,15 @@ argument-hint: File path to requirements doc, or inline description text
 
 编排器必须严格按照该参考文档中的步骤顺序执行:
 加载 phase → 选择 task → 构建上下文 → 派发 executor → 处理结果 → 审查 → phase handoff → 批量更新 → 上下文检查
+
+**自动执行循环:** 进入执行后，持续循环直到遇到终止条件:
+1. 调用 `orchestrator-resume` 获取 action
+2. 按 action 派发对应子代理 (executor/reviewer/researcher/debugger)
+3. 收到结果后调用对应 `orchestrator-handle-*-result`
+4. 回到步骤 1
+5. 终止: action ∈ {idle, awaiting_user, completed, failed, await_manual_intervention}
+
+不要在循环中间停下来等用户确认 — 让编排器驱动。`complete_phase` action → 调 `phase-complete` MCP tool → 自动推进下一 phase。
 </execution_loop>
 
 ## STEP 12 — 全部完成

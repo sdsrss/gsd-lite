@@ -212,6 +212,79 @@ description: Resume project execution from saved state with workspace validation
 
 所有展示数据从 canonical fields 实时推导，不使用 derived fields。
 
+## STEP 5: 自动执行循环
+
+<HARD-GATE id="auto-execution-loop">
+STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核心 —— 不要停在某一步等待用户，除非遇到终止条件。
+
+```
+循环入口:
+  1. 调用 MCP tool `orchestrator-resume` 获取 action
+  2. 根据 action 分派:
+
+     dispatch_executor:
+       → 使用 Agent tool 派发 executor 子代理 (subagent_type: gsd:executor)
+       → 传入 orchestrator 返回的 executor_context
+       → 收到 executor 结果后 → 调用 MCP tool `orchestrator-handle-executor-result`
+       → 回到步骤 1
+
+     dispatch_reviewer:
+       → 使用 Agent tool 派发 reviewer 子代理 (subagent_type: gsd:reviewer)
+       → 传入 review_targets / current_review
+       → 收到 reviewer 结果后 → 调用 MCP tool `orchestrator-handle-reviewer-result`
+       → 回到步骤 1
+
+     dispatch_researcher:
+       → 使用 Agent tool 派发 researcher 子代理 (subagent_type: gsd:researcher)
+       → 传入过期的研究信息
+       → 收到 researcher 结果后 → 调用 MCP tool `orchestrator-handle-researcher-result`
+       → 回到步骤 1
+
+     dispatch_debugger:
+       → 使用 Agent tool 派发 debugger 子代理 (subagent_type: gsd:debugger)
+       → 传入 debug_target
+       → 收到 debugger 结果后 → 调用 MCP tool `orchestrator-handle-debugger-result`
+       → 回到步骤 1
+
+     trigger_review:
+       → 直接派发 reviewer，scope 和 targets 从 action 响应中获取
+       → 回到步骤 1
+
+     complete_phase:
+       → 调用 MCP tool `phase-complete`，传入 phase_id + run_verify: true
+       → 回到步骤 1 (编排器会自动推进到下一 phase)
+
+     retry_executor:
+       → 重新调用 orchestrator-resume 获取更新后的 executor 上下文
+       → 回到步骤 1
+
+     rollback_to_dirty_phase:
+       → 编排器已自动回滚 current_phase，输出回滚通知
+       → 回到步骤 1
+
+     continue_execution:
+       → 直接回到步骤 1
+
+  3. 终止条件 — 遇到以下 action 时退出循环:
+
+     idle              → 输出 "无可执行任务"，停止
+     awaiting_user     → 展示 blockers / drift 信息，等待用户输入
+     await_manual_intervention → 展示需要人工干预的信息，停止
+     noop (completed)  → 展示完成报告，停止
+     await_recovery_decision (failed) → 展示失败信息和恢复选项，停止
+
+  4. 上下文安全阀:
+     每次循环迭代前检查上下文健康度
+     remaining <= 35% → 保存状态 + 输出 "请 /clear 后 /gsd:resume" → 退出循环
+```
+
+**关键原则:**
+- 循环是连续的: dispatch → handle result → resume → dispatch → ...
+- 不在中间步骤停下来等用户确认（除非是终止条件）
+- 每次 handle result 后立即 resume，让编排器决定下一步
+- Phase 审查通过后 → complete_phase → 自动推进下一 phase → 继续执行
+</HARD-GATE>
+
 </process>
 
 <EXTREMELY-IMPORTANT>
@@ -221,4 +294,5 @@ description: Resume project execution from saved state with workspace validation
 - awaiting_user / reconcile_workspace / replan_required 模式下不自动执行代码
 - 只有编排器写 state.json，子代理不直接写
 - 上下文 < 35% → 保存状态 + workflow_mode = awaiting_clear + 停止执行
+- **进入自动执行循环后，不要在循环中间停下来等用户 — 让编排器驱动**
 </EXTREMELY-IMPORTANT>
