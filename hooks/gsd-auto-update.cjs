@@ -20,95 +20,187 @@ const claudeDir =
 const runtimeDir = path.join(claudeDir, 'gsd');
 const stateDir = path.join(runtimeDir, 'runtime');
 const STATE_FILE = path.join(stateDir, 'update-state.json');
+const STATE_LOCK_FILE = path.join(stateDir, 'update-state.lock');
+const NOTIFICATION_FILE = path.join(stateDir, 'update-notification.json');
 const pluginRoot = path.resolve(__dirname, '..');
+
+const LOCK_STALE_MS = 10_000;
+const LOCK_RETRY_MS = 50;
+const LOCK_MAX_RETRIES = 100;
 
 // ── Main Entry ─────────────────────────────────────────────
 async function checkForUpdate(options = {}) {
-  const { force = false, verbose = false, install = true } = options;
+  const {
+    force = false,
+    verbose = false,
+    install = true,
+    notify = false,
+    fetchLatestRelease: fetchLatestReleaseImpl = fetchLatestRelease,
+    downloadAndInstall: downloadAndInstallImpl = downloadAndInstall,
+    getCurrentVersion: getCurrentVersionImpl = getCurrentVersion,
+  } = options;
+  const installMode = getInstallMode();
 
   try {
     if (!force && shouldSkipUpdateCheck()) {
       if (verbose) console.log('Skipping update check (dev mode or auto-update in progress)');
       return null;
     }
-
-    const state = readState();
-    if (!force && !shouldCheck(state)) {
-      if (state.updateAvailable && state.latestVersion) {
-        return {
-          updateAvailable: true,
-          from: getCurrentVersion(),
-          to: state.latestVersion,
-        };
+    return await withFileLock(async () => {
+      const state = readState();
+      if (!force && !shouldCheck(state)) {
+        if (state.updateAvailable && state.latestVersion) {
+          return {
+            updateAvailable: true,
+            from: getCurrentVersionImpl(installMode),
+            to: state.latestVersion,
+            installMode,
+          };
+        }
+        if (verbose) console.log('Throttled — last check:', state.lastCheck);
+        return null;
       }
-      if (verbose) console.log('Throttled — last check:', state.lastCheck);
-      return null;
-    }
 
-    if (verbose) console.log('Checking GitHub for latest release...');
-    const token = getGitHubToken();
-    const latest = await fetchLatestRelease(token);
-    if (!latest) {
-      if (latest === false) state.rateLimited = true; // 403 rate-limited
-      saveState({ ...state, lastCheck: new Date().toISOString() });
-      if (verbose) console.log('Could not fetch latest release');
-      return null;
-    }
+      if (verbose) console.log('Checking GitHub for latest release...');
+      const token = getGitHubToken();
+      const latest = await fetchLatestReleaseImpl(token);
+      if (!latest) {
+        if (latest === false) state.rateLimited = true; // 403 rate-limited
+        saveState({ ...state, lastCheck: new Date().toISOString() });
+        if (verbose) console.log('Could not fetch latest release');
+        return null;
+      }
 
-    // Successful fetch — clear rate-limit back-off
-    state.rateLimited = false;
-    const currentVersion = getCurrentVersion();
-    if (verbose) console.log(`Current: v${currentVersion} — Latest: v${latest.version}`);
+      // Successful fetch — clear rate-limit back-off
+      state.rateLimited = false;
+      const currentVersion = getCurrentVersionImpl(installMode);
+      if (verbose) console.log(`Current: v${currentVersion} — Latest: v${latest.version}`);
 
-    const hasUpdate = compareVersions(latest.version, currentVersion) > 0;
+      const hasUpdate = compareVersions(latest.version, currentVersion) > 0;
 
-    if (hasUpdate) {
-      if (!install) {
-        // Check-only mode (used by SessionStart hook)
+      if (hasUpdate) {
+        if (installMode === 'plugin' && install) {
+          saveState({
+            ...state,
+            lastCheck: new Date().toISOString(),
+            latestVersion: latest.version,
+            updateAvailable: true,
+          });
+          if (notify) {
+            writeNotification({
+              kind: 'available',
+              from: currentVersion,
+              to: latest.version,
+              action: 'plugin_update',
+            });
+          }
+          return {
+            updateAvailable: true,
+            from: currentVersion,
+            to: latest.version,
+            action: 'plugin_update',
+            autoInstallSupported: false,
+            installMode,
+          };
+        }
+
+        if (!install) {
+          // Check-only mode (used by SessionStart hook)
+          saveState({
+            ...state,
+            lastCheck: new Date().toISOString(),
+            latestVersion: latest.version,
+            updateAvailable: true,
+          });
+          return {
+            updateAvailable: true,
+            from: currentVersion,
+            to: latest.version,
+            installMode,
+          };
+        }
+
+        if (verbose) console.log(`Downloading v${latest.version}...`);
+        const success = await downloadAndInstallImpl(latest.tarballUrl, verbose, token);
+
         saveState({
           ...state,
           lastCheck: new Date().toISOString(),
           latestVersion: latest.version,
-          updateAvailable: true,
+          updateAvailable: !success,
+          lastUpdate: success ? new Date().toISOString() : state.lastUpdate,
         });
+
+        if (success && notify) {
+          writeNotification({
+            kind: 'updated',
+            from: currentVersion,
+            to: latest.version,
+          });
+        }
+
         return {
-          updateAvailable: true,
+          updateAvailable: !success,
+          updated: success,
           from: currentVersion,
           to: latest.version,
+          installMode,
         };
       }
 
-      if (verbose) console.log(`Downloading v${latest.version}...`);
-      const success = await downloadAndInstall(latest.tarballUrl, verbose, token);
-
+      // No update needed
       saveState({
         ...state,
         lastCheck: new Date().toISOString(),
         latestVersion: latest.version,
-        updateAvailable: !success,
-        lastUpdate: success ? new Date().toISOString() : state.lastUpdate,
+        updateAvailable: false,
       });
-
-      return {
-        updateAvailable: !success,
-        updated: success,
-        from: currentVersion,
-        to: latest.version,
-      };
-    }
-
-    // No update needed
-    saveState({
-      ...state,
-      lastCheck: new Date().toISOString(),
-      latestVersion: latest.version,
-      updateAvailable: false,
+      if (verbose) console.log('Already up to date');
+      return null;
     });
-    if (verbose) console.log('Already up to date');
-    return null;
   } catch (err) {
     if (verbose) console.error('Update check failed:', err.message);
     return null;
+  }
+}
+
+async function withFileLock(fn) {
+  let acquired = false;
+  try {
+    fs.mkdirSync(stateDir, { recursive: true });
+  } catch {
+    /* best effort */
+  }
+
+  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
+    try {
+      fs.writeFileSync(STATE_LOCK_FILE, String(process.pid), { flag: 'wx' });
+      acquired = true;
+      break;
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        try {
+          const stats = fs.statSync(STATE_LOCK_FILE);
+          if (Date.now() - stats.mtimeMs > LOCK_STALE_MS) {
+            try { fs.rmSync(STATE_LOCK_FILE, { force: true }); } catch {}
+            continue;
+          }
+        } catch {
+          continue;
+        }
+        await new Promise(resolve => setTimeout(resolve, LOCK_RETRY_MS));
+      } else {
+        break;
+      }
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (acquired) {
+      try { fs.rmSync(STATE_LOCK_FILE, { force: true }); } catch {}
+    }
   }
 }
 
@@ -118,6 +210,10 @@ async function checkForUpdate(options = {}) {
 // 2. Running from a git clone → dev mode (developer working on source)
 function shouldSkipUpdateCheck() {
   if (process.env.PLUGIN_AUTO_UPDATE) return true;
+  return isDevMode();
+}
+
+function isDevMode() {
   try {
     if (!fs.existsSync(path.join(pluginRoot, '.git'))) return false;
     const pkg = JSON.parse(
@@ -127,6 +223,13 @@ function shouldSkipUpdateCheck() {
   } catch {
     return false;
   }
+}
+
+function getInstallMode() {
+  if (isDevMode()) return 'dev';
+  return path.resolve(pluginRoot) === path.resolve(claudeDir)
+    ? 'manual'
+    : 'plugin';
 }
 
 // ── Throttle ───────────────────────────────────────────────
@@ -196,11 +299,11 @@ function compareVersions(a, b) {
   return 0;
 }
 
-function getCurrentVersion() {
-  for (const p of [
-    path.join(pluginRoot, 'package.json'),
-    path.join(runtimeDir, 'package.json'),
-  ]) {
+function getCurrentVersion(mode = getInstallMode()) {
+  const candidates = mode === 'manual'
+    ? [path.join(runtimeDir, 'package.json'), path.join(pluginRoot, 'package.json')]
+    : [path.join(pluginRoot, 'package.json'), path.join(runtimeDir, 'package.json')];
+  for (const p of candidates) {
     try {
       return JSON.parse(fs.readFileSync(p, 'utf8')).version;
     } catch {
@@ -280,32 +383,30 @@ function saveState(state) {
   }
 }
 
+function writeNotification(notification) {
+  try {
+    fs.mkdirSync(stateDir, { recursive: true });
+    const tmpPath = NOTIFICATION_FILE + `.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(notification, null, 2) + '\n');
+    fs.renameSync(tmpPath, NOTIFICATION_FILE);
+  } catch {
+    /* silent */
+  }
+}
+
 module.exports = {
   checkForUpdate,
   getCurrentVersion,
   compareVersions,
+  getInstallMode,
+  isDevMode,
+  shouldCheck,
   shouldSkipUpdateCheck,
 };
 
 // ── CLI Entry Point (for background auto-install) ─────────
 if (require.main === module) {
-  checkForUpdate({ install: true, verbose: false })
-    .then((result) => {
-      if (result?.updated) {
-        const notifPath = path.join(stateDir, 'update-notification.json');
-        fs.mkdirSync(stateDir, { recursive: true });
-        const tmpPath = notifPath + `.${process.pid}.tmp`;
-        fs.writeFileSync(
-          tmpPath,
-          JSON.stringify({
-            from: result.from,
-            to: result.to,
-            at: new Date().toISOString(),
-          }) + '\n',
-        );
-        fs.renameSync(tmpPath, notifPath);
-      }
-    })
+  checkForUpdate({ install: true, verbose: false, notify: true })
     .catch(() => {})
     .finally(() => process.exit(0));
 }

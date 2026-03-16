@@ -40,7 +40,11 @@ switch (command) {
     if (result?.updated) {
       console.log(`\n✓ Updated: v${result.from} → v${result.to}`);
     } else if (result?.updateAvailable) {
-      console.log(`\n! Update available v${result.to} but install failed. Try manually.`);
+      if (result.action === 'plugin_update') {
+        console.log(`\n! Update available: v${result.to}. Run /plugin update gsd`);
+      } else {
+        console.log(`\n! Update available v${result.to} but install failed. Try manually.`);
+      }
     } else if (!result) {
       console.log('✓ Already up to date');
     }

@@ -2,7 +2,7 @@
 // GSD-Lite SessionStart hook
 // 1. Cleans up stale temp files (throttled to once/day).
 // 2. Auto-registers statusLine in settings.json if not already configured.
-// 3. Shows notification if a previous background auto-update completed.
+// 3. Shows notification if a previous background update completed or found a new version.
 // 4. Spawns background auto-update (detached, non-blocking).
 // Idempotent: skips if statusLine already points to gsd-statusline, preserves
 // third-party statuslines.
@@ -71,7 +71,13 @@ setTimeout(() => process.exit(0), 4000).unref();
     const notifPath = path.join(claudeDir, 'gsd', 'runtime', 'update-notification.json');
     if (fs.existsSync(notifPath)) {
       const notif = JSON.parse(fs.readFileSync(notifPath, 'utf8'));
-      console.log(`✅ GSD-Lite auto-updated: v${notif.from} → v${notif.to}`);
+      if (notif.kind === 'updated') {
+        console.log(`✅ GSD-Lite auto-updated: v${notif.from} → v${notif.to}`);
+      } else if (notif.kind === 'available' && notif.action === 'plugin_update') {
+        console.log(`📦 GSD-Lite update available: v${notif.from} → v${notif.to}. Run /plugin update gsd`);
+      } else if (notif.kind === 'available') {
+        console.log(`📦 GSD-Lite update available: v${notif.from} → v${notif.to}. Run gsd update`);
+      }
       fs.unlinkSync(notifPath);
     }
   } catch { /* silent */ }

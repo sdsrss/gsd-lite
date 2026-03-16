@@ -205,17 +205,17 @@ describe('resume flow matrix', () => {
         result: {
           decision_ids: ['decision:jwt-rotation'],
           volatility: 'medium',
-          expires_at: '2026-03-16T10:30:00Z',
+          expires_at: '2099-03-16T10:30:00Z',
           sources: [{ id: 'src1', type: 'Context7', ref: 'Next.js auth docs' }],
         },
         decision_index: {
-          'decision:jwt-rotation': { summary: 'Use refresh token rotation', source: 'Context7', expires_at: '2026-03-16T10:30:00Z' },
+          'decision:jwt-rotation': { summary: 'Use refresh token rotation', source: 'Context7', expires_at: '2099-03-16T10:30:00Z' },
         },
         artifacts: {
           'STACK.md': '# Stack\n',
           'ARCHITECTURE.md': '# Architecture\n',
           'PITFALLS.md': '# Pitfalls\n',
-          'SUMMARY.md': '# Summary\nvolatility: medium\nexpires_at: 2026-03-16T10:30:00Z\ndecisions:\n- decision:jwt-rotation\n',
+          'SUMMARY.md': '# Summary\nvolatility: medium\nexpires_at: 2099-03-16T10:30:00Z\ndecisions:\n- decision:jwt-rotation\n',
         },
       });
       assert.equal(resumed.action, 'dispatch_executor');
