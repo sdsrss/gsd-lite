@@ -207,3 +207,100 @@ describe('auto update install modes', () => {
     }
   });
 });
+
+describe('validateExtractedPackage', () => {
+  it('accepts valid gsd-lite package.json', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
+    try {
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '0.4.0' }));
+      const ctx = await loadAutoUpdate('manual');
+      try {
+        const result = ctx.mod.validateExtractedPackage(dir);
+        assert.equal(result, true);
+      } finally {
+        await ctx.cleanup();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects package with wrong name', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
+    try {
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'malicious-pkg', version: '0.4.0' }));
+      const ctx = await loadAutoUpdate('manual');
+      try {
+        const result = ctx.mod.validateExtractedPackage(dir);
+        assert.equal(result, false);
+      } finally {
+        await ctx.cleanup();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects package with missing version', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
+    try {
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'gsd-lite' }));
+      const ctx = await loadAutoUpdate('manual');
+      try {
+        const result = ctx.mod.validateExtractedPackage(dir);
+        assert.equal(result, false);
+      } finally {
+        await ctx.cleanup();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects package with invalid version format', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
+    try {
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: 'not-a-version' }));
+      const ctx = await loadAutoUpdate('manual');
+      try {
+        const result = ctx.mod.validateExtractedPackage(dir);
+        assert.equal(result, false);
+      } finally {
+        await ctx.cleanup();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects when package.json is missing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
+    try {
+      const ctx = await loadAutoUpdate('manual');
+      try {
+        const result = ctx.mod.validateExtractedPackage(dir);
+        assert.equal(result, false);
+      } finally {
+        await ctx.cleanup();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts version with prerelease suffix', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
+    try {
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '1.0.0-beta.1' }));
+      const ctx = await loadAutoUpdate('manual');
+      try {
+        const result = ctx.mod.validateExtractedPackage(dir);
+        assert.equal(result, true);
+      } finally {
+        await ctx.cleanup();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

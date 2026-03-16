@@ -313,9 +313,24 @@ function getCurrentVersion(mode = getInstallMode()) {
   return '0.0.0';
 }
 
+// ── Package Validation ──────────────────────────────────────
+function validateExtractedPackage(extractDir) {
+  try {
+    const pkgPath = path.join(extractDir, 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (pkg.name !== 'gsd-lite') return false;
+    if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Download & Install ─────────────────────────────────────
 async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
+  const backupPath = path.join(pluginRoot, 'package.json.bak');
+  let backedUp = false;
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -341,6 +356,23 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
     const tar = spawnSync('tar', ['xzf', tarPath, '-C', tmpDir, '--strip-components=1'], { timeout: 30000 });
     if (tar.status !== 0) throw new Error(`tar extract failed: ${(tar.stderr || '').toString().slice(0, 200)}`);
 
+    // Validate extracted package before installing
+    if (!validateExtractedPackage(tmpDir)) {
+      if (verbose) console.error('  Package validation failed — aborting install');
+      return false;
+    }
+
+    // Backup current package.json before install
+    const currentPkgPath = path.join(pluginRoot, 'package.json');
+    try {
+      if (fs.existsSync(currentPkgPath)) {
+        fs.copyFileSync(currentPkgPath, backupPath);
+        backedUp = true;
+      }
+    } catch {
+      /* best effort — proceed without backup */
+    }
+
     // Run installer with spawnSync (no shell)
     if (verbose) console.log('  Running installer...');
     const install = spawnSync(process.execPath, [path.join(tmpDir, 'install.js')], {
@@ -348,7 +380,18 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
       stdio: verbose ? 'inherit' : 'pipe',
       env: { ...process.env, PLUGIN_AUTO_UPDATE: '1' },
     });
-    if (install.status !== 0) throw new Error(`Installer failed: ${(install.stderr || '').toString().slice(0, 200)}`);
+    if (install.status !== 0) {
+      // Restore backup on install failure
+      if (backedUp) {
+        try { fs.copyFileSync(backupPath, currentPkgPath); } catch { /* best effort */ }
+      }
+      throw new Error(`Installer failed: ${(install.stderr || '').toString().slice(0, 200)}`);
+    }
+
+    // Success — remove backup
+    if (backedUp) {
+      try { fs.rmSync(backupPath, { force: true }); } catch { /* ignore */ }
+    }
 
     return true;
   } catch (err) {
@@ -402,6 +445,7 @@ module.exports = {
   isDevMode,
   shouldCheck,
   shouldSkipUpdateCheck,
+  validateExtractedPackage,
 };
 
 // ── CLI Entry Point (for background auto-install) ─────────
