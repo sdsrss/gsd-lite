@@ -75,7 +75,14 @@ export async function runTypeCheck(pm, cwd) {
   if (pm === 'pnpm') return runCommand('pnpm', ['exec', 'tsc', '--noEmit'], cwd);
   if (pm === 'yarn') return runCommand('yarn', ['tsc', '--noEmit'], cwd);
   if (pm === 'bun') return runCommand('bun', ['run', 'tsc', '--noEmit'], cwd);
-  return runCommand('npx', ['tsc', '--noEmit'], cwd);
+  // Local-first: use node_modules/.bin/tsc if available, skip otherwise
+  const localTsc = join(cwd, 'node_modules', '.bin', 'tsc');
+  try {
+    await stat(localTsc);
+  } catch {
+    return { skipped: true, reason: 'no local typescript found' };
+  }
+  return runCommand(localTsc, ['--noEmit'], cwd);
 }
 
 export async function runAll(cwd = process.cwd()) {

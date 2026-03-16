@@ -139,14 +139,38 @@ describe('verify tools', () => {
       assert.match(result.summary, /no tsconfig.json found/);
     });
 
-    it('runs typecheck when tsconfig.json exists', async () => {
+    it('runs typecheck when tsconfig.json exists and local tsc is available', async () => {
       const dir = join(tempDir, 'tc-has-tsconfig');
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'tsconfig.json'), '{}');
-      // npx tsc --noEmit will fail (no ts installed), confirming the command was attempted
+      // Create a fake node_modules/.bin/tsc so local-first detection finds it
+      await mkdir(join(dir, 'node_modules', '.bin'), { recursive: true });
+      await writeFile(join(dir, 'node_modules', '.bin', 'tsc'), '#!/bin/sh\necho "tsc mock"\nexit 0');
+      const { chmod } = await import('node:fs/promises');
+      await chmod(join(dir, 'node_modules', '.bin', 'tsc'), 0o755);
       const result = await runTypeCheck('npm', dir);
-      assert.ok(result.exit_code !== 0);
+      // Should use the local tsc binary and succeed
+      assert.equal(result.exit_code, 0);
       assert.ok(typeof result.summary === 'string');
+    });
+
+    it('skips typecheck when npm and no local tsc found', async () => {
+      const dir = join(tempDir, 'tc-npm-no-local-tsc');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'tsconfig.json'), '{}');
+      // No node_modules/.bin/tsc exists
+      const result = await runTypeCheck('npm', dir);
+      assert.equal(result.skipped, true);
+      assert.match(result.reason, /no local typescript found/);
+    });
+
+    it('skips typecheck when pm is null and no local tsc found', async () => {
+      const dir = join(tempDir, 'tc-null-pm-no-tsc');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'tsconfig.json'), '{}');
+      const result = await runTypeCheck(null, dir);
+      assert.equal(result.skipped, true);
+      assert.match(result.reason, /no local typescript found/);
     });
   });
 
