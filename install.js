@@ -182,20 +182,6 @@ export function main() {
     log('  [dry-run] Would register MCP server in settings.json');
   }
 
-  // 9. Generate .mcp.json in plugin install dir (not in repo — avoids marketplace/cache duplication)
-  if (!DRY_RUN) {
-    const mcpJson = JSON.stringify({
-      mcpServers: {
-        gsd: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/launcher.js'] },
-      },
-    }, null, 2) + '\n';
-    const mcpPath = join(__dirname, '.mcp.json');
-    const tmpMcp = mcpPath + `.${process.pid}.tmp`;
-    writeFileSync(tmpMcp, mcpJson);
-    renameSync(tmpMcp, mcpPath);
-    log('  ✓ .mcp.json generated in plugin directory');
-  }
-
   log('\n✓ GSD-Lite installed successfully!');
   log('  Use /gsd:start to begin a new project');
   log('  Use /gsd:resume to continue an existing project');
