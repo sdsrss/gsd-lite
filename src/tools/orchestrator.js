@@ -170,11 +170,15 @@ async function evaluatePreflight(state, basePath) {
 
   // P0-2: Dirty-phase detection — rollback current_phase to earliest phase
   // that has needs_revalidation tasks, ensuring earlier invalidated work
-  // is re-executed before proceeding with later phases
-  const earliestDirtyPhase = (state.phases || []).find(p =>
+  // is re-executed before proceeding with later phases.
+  // Use filter+reduce (not .find) to guarantee lowest-ID match regardless of array order.
+  const dirtyPhases = (state.phases || []).filter(p =>
     p.id < state.current_phase
     && (p.todo || []).some(t => t.lifecycle === 'needs_revalidation'),
   );
+  const earliestDirtyPhase = dirtyPhases.length > 0
+    ? dirtyPhases.reduce((min, p) => (p.id < min.id ? p : min))
+    : null;
   if (earliestDirtyPhase) {
     hints.push({
       workflow_mode: 'executing_task',

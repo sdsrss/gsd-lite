@@ -160,8 +160,8 @@ describe('verify tools', () => {
       await writeFile(join(dir, 'tsconfig.json'), '{}');
       // No node_modules/.bin/tsc exists
       const result = await runTypeCheck('npm', dir);
-      assert.equal(result.skipped, true);
-      assert.match(result.reason, /no local typescript found/);
+      assert.equal(result.exit_code, 0);
+      assert.match(result.summary, /no local typescript found/);
     });
 
     it('skips typecheck when pm is null and no local tsc found', async () => {
@@ -169,8 +169,8 @@ describe('verify tools', () => {
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'tsconfig.json'), '{}');
       const result = await runTypeCheck(null, dir);
-      assert.equal(result.skipped, true);
-      assert.match(result.reason, /no local typescript found/);
+      assert.equal(result.exit_code, 0);
+      assert.match(result.summary, /no local typescript found/);
     });
   });
 

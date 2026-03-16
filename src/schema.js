@@ -256,6 +256,17 @@ export function validateStateUpdate(state, updates) {
     errors.push(`current_phase (${effectivePhase}) must not exceed total_phases (${effectiveTotal})`);
   }
 
+  // P2-9: Cross-field — current_task must belong to current_phase
+  const effectiveTask = 'current_task' in updates ? updates.current_task : state.current_task;
+  if (effectiveTask && Array.isArray(state.phases)) {
+    const curPhase = state.phases.find(p => p.id === effectivePhase);
+    if (curPhase && Array.isArray(curPhase.todo)) {
+      if (!curPhase.todo.some(t => t.id === effectiveTask)) {
+        errors.push(`current_task "${effectiveTask}" not found in current_phase ${effectivePhase}`);
+      }
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
 

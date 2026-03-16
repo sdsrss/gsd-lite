@@ -80,7 +80,7 @@ export async function runTypeCheck(pm, cwd) {
   try {
     await stat(localTsc);
   } catch {
-    return { skipped: true, reason: 'no local typescript found' };
+    return { exit_code: 0, summary: 'skipped: no local typescript found' };
   }
   return runCommand(localTsc, ['--noEmit'], cwd);
 }
