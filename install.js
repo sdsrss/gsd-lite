@@ -23,6 +23,16 @@ const HOOK_REGISTRY = [
 
 function log(msg) { console.log(msg); }
 
+function isInstalledAsPlugin(claudeDir) {
+  try {
+    const pluginsPath = join(claudeDir, 'plugins', 'installed_plugins.json');
+    const data = JSON.parse(readFileSync(pluginsPath, 'utf-8'));
+    return !!data.plugins?.['gsd@gsd'];
+  } catch {
+    return false;
+  }
+}
+
 function registerStatusLine(settings, statuslineScriptPath) {
   const command = `node ${JSON.stringify(statuslineScriptPath)}`;
   // Don't overwrite non-GSD statusLine
@@ -142,8 +152,11 @@ export function main() {
     log('  [dry-run] Would install runtime dependencies');
   }
 
-  // 8. Register MCP server in settings.json
+  // 8. Register MCP server + hooks in settings.json
+  //    When installed as a plugin, the plugin system handles MCP via .mcp.json,
+  //    so we skip manual MCP registration to avoid name collisions.
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
+  const isPluginInstall = isInstalledAsPlugin(CLAUDE_DIR);
   if (!DRY_RUN) {
     let settings = {};
     try {
@@ -157,10 +170,20 @@ export function main() {
     if (!settings.mcpServers) settings.mcpServers = {};
     // Remove legacy "gsd-lite" server entry from older versions
     delete settings.mcpServers['gsd-lite'];
-    settings.mcpServers.gsd = {
-      command: 'node',
-      args: [join(RUNTIME_DIR, 'src', 'server.js')],
-    };
+
+    if (isPluginInstall) {
+      // Plugin system handles MCP via .mcp.json — remove stale manual entry
+      if (settings.mcpServers.gsd) {
+        delete settings.mcpServers.gsd;
+        log('  ✓ Removed manual MCP entry (plugin .mcp.json handles registration)');
+      }
+    } else {
+      settings.mcpServers.gsd = {
+        command: 'node',
+        args: [join(RUNTIME_DIR, 'src', 'server.js')],
+      };
+      log('  ✓ MCP server registered in settings.json');
+    }
 
     // Register statusLine (top-level setting) and hooks
     if (!settings.hooks) settings.hooks = {};
@@ -174,7 +197,6 @@ export function main() {
     const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;
     writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n');
     renameSync(tmpSettings, settingsPath);
-    log('  ✓ MCP server registered in settings.json');
     if (statusLineRegistered || hooksRegistered) {
       log('  ✓ GSD-Lite hooks registered in settings.json');
     }

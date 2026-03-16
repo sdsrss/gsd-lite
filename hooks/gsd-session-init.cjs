@@ -66,7 +66,38 @@ setTimeout(() => process.exit(0), 4000).unref();
     }
   } catch { /* silent */ }
 
-  // ── Phase 3: Show notification from previous background auto-install ──
+  // ── Phase 3: Self-heal .mcp.json in plugin directories ──
+  // If .mcp.json is missing (e.g. git operations deleted it), regenerate it
+  // so the plugin system can register the GSD MCP server.
+  try {
+    const pluginsPath = path.join(claudeDir, 'plugins', 'installed_plugins.json');
+    if (fs.existsSync(pluginsPath)) {
+      const plugins = JSON.parse(fs.readFileSync(pluginsPath, 'utf8'));
+      const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
+      if (gsdEntry) {
+        const mcpContent = JSON.stringify({
+          mcpServers: {
+            gsd: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/launcher.js'] },
+          },
+        }, null, 2) + '\n';
+        // Check marketplace dir
+        const marketplaceDir = path.join(claudeDir, 'plugins', 'marketplaces', 'gsd');
+        const marketplaceMcp = path.join(marketplaceDir, '.mcp.json');
+        if (fs.existsSync(marketplaceDir) && !fs.existsSync(marketplaceMcp)) {
+          fs.writeFileSync(marketplaceMcp, mcpContent);
+        }
+        // Check plugin cache dir
+        if (gsdEntry.installPath) {
+          const cacheMcp = path.join(gsdEntry.installPath, '.mcp.json');
+          if (fs.existsSync(gsdEntry.installPath) && !fs.existsSync(cacheMcp)) {
+            fs.writeFileSync(cacheMcp, mcpContent);
+          }
+        }
+      }
+    }
+  } catch { /* silent */ }
+
+  // ── Phase 4: Show notification from previous background auto-update ──
   try {
     const notifPath = path.join(claudeDir, 'gsd', 'runtime', 'update-notification.json');
     if (fs.existsSync(notifPath)) {
@@ -82,7 +113,7 @@ setTimeout(() => process.exit(0), 4000).unref();
     }
   } catch { /* silent */ }
 
-  // ── Phase 4: Spawn background auto-update (non-blocking) ──
+  // ── Phase 5: Spawn background auto-update (non-blocking) ──
   // Detached child handles check + download + install; throttled by shouldCheck()
   try {
     const { spawn } = require('node:child_process');
