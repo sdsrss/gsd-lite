@@ -92,6 +92,7 @@ const TOOLS = [
           },
         },
         research: { type: 'boolean', description: 'Whether research directory is needed' },
+        force: { type: 'boolean', description: 'Force reinitialize when state.json already exists (default: false)' },
       },
       required: ['project', 'phases'],
     },

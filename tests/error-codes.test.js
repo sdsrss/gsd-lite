@@ -30,9 +30,14 @@ describe('M-10: structured error codes', () => {
     assert.equal(result.code, ERROR_CODES.INVALID_INPUT);
   });
 
-  it('init returns STATE_EXISTS when state already exists', async () => {
-    await init({ project: 'test', phases: [], basePath: tempDir });
+  it('init returns INVALID_INPUT for empty phases', async () => {
     const result = await init({ project: 'test', phases: [], basePath: tempDir });
+    assert.equal(result.code, ERROR_CODES.INVALID_INPUT);
+  });
+
+  it('init returns STATE_EXISTS when state already exists', async () => {
+    await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ name: 'T1' }] }], basePath: tempDir });
+    const result = await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ name: 'T1' }] }], basePath: tempDir });
     assert.equal(result.code, ERROR_CODES.STATE_EXISTS);
   });
 
@@ -52,8 +57,12 @@ describe('M-10: structured error codes', () => {
   });
 
   it('update returns TERMINAL_STATE for completed workflow change', async () => {
-    await init({ project: 'test', phases: [], basePath: tempDir });
-    // Walk to completed via valid transitions: executing_task→reviewing_phase→completed
+    await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ name: 'T1' }] }], basePath: tempDir });
+    // Walk tasks to accepted so completed transition is valid
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'active', todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
     await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: tempDir });
     await update({ updates: { workflow_mode: 'completed' }, basePath: tempDir });
     const result = await update({ updates: { workflow_mode: 'planning' }, basePath: tempDir });

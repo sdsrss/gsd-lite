@@ -1112,7 +1112,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   if (state.error) return state;
 
   const phase = result.scope === 'phase'
-    ? (state.phases || []).find((p) => p.id === result.scope_id) || getCurrentPhase(state)
+    ? (state.phases || []).find((p) => p.id === Number(result.scope_id)) || null
     : getCurrentPhase(state);
   if (!phase) {
     return { error: true, message: `Phase not found for scope_id ${result.scope_id}` };
@@ -1141,6 +1141,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
       taskPatches.push({
         id: taskId,
         lifecycle: 'needs_revalidation',
+        retry_count: 0,
         evidence_refs: [],
         last_review_feedback: taskIssues.length > 0 ? taskIssues : null,
       });
@@ -1157,7 +1158,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   // Collect propagation-affected task patches (tasks mutated in-memory by propagateInvalidation)
   for (const task of (phase.todo || [])) {
     if (task.lifecycle === 'needs_revalidation' && !taskPatches.some((p) => p.id === task.id)) {
-      taskPatches.push({ id: task.id, lifecycle: 'needs_revalidation', evidence_refs: [] });
+      taskPatches.push({ id: task.id, lifecycle: 'needs_revalidation', retry_count: 0, evidence_refs: [] });
     }
   }
 

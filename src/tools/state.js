@@ -88,6 +88,9 @@ export async function init({ project, phases, research, force = false, basePath 
   if (!Array.isArray(phases)) {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'phases must be an array' };
   }
+  if (phases.length === 0) {
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'phases must contain at least one phase' };
+  }
   const gsdDir = join(basePath, '.gsd');
   const statePath = join(gsdDir, 'state.json');
   ensureLockPathFromStatePath(statePath);

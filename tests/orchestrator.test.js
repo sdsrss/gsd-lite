@@ -1480,7 +1480,7 @@ describe('orchestrator skeleton', () => {
   it('handleReviewerResult returns error for non-existent phase scope_id', async () => {
     await init({
       project: 'reviewer-no-phase',
-      phases: [],
+      phases: [{ name: 'P1', tasks: [{ name: 'T1' }] }],
       basePath: tempDir,
     });
 
