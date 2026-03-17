@@ -8,19 +8,29 @@ import { init, read, update, phaseComplete } from './tools/state.js';
 const _require = createRequire(import.meta.url);
 const PKG_VERSION = _require('../package.json').version;
 
-// Dev-mode version drift detection: warn when running code differs from disk
-const _isDevMode = (() => {
-  try { return _require('node:fs').existsSync(new URL('../.git', import.meta.url)); } catch { return false; }
-})();
+// Version drift detection: warn when running code differs from disk or plugin cache
+const _fs = _require('node:fs');
+const _path = _require('node:path');
+const _os = _require('node:os');
 function _checkVersionDrift() {
-  if (!_isDevMode) return null;
   try {
-    // Clear require cache to read fresh package.json
+    // Strategy 1: Check package.json on disk (dev mode)
     const pkgPath = _require.resolve('../package.json');
     delete _require.cache[pkgPath];
     const diskVersion = _require('../package.json').version;
     if (diskVersion !== PKG_VERSION) {
       return `⚠️ GSD server running v${PKG_VERSION} but code on disk is v${diskVersion}. Run /mcp to restart.`;
+    }
+
+    // Strategy 2: Check plugin cache registry (plugin mode)
+    const claudeDir = process.env.CLAUDE_CONFIG_DIR || _path.join(_os.homedir(), '.claude');
+    const pluginsFile = _path.join(claudeDir, 'plugins', 'installed_plugins.json');
+    if (_fs.existsSync(pluginsFile)) {
+      const plugins = JSON.parse(_fs.readFileSync(pluginsFile, 'utf8'));
+      const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
+      if (gsdEntry?.version && gsdEntry.version !== PKG_VERSION) {
+        return `⚠️ GSD server running v${PKG_VERSION} but plugin registry has v${gsdEntry.version}. Run /mcp to restart.`;
+      }
     }
   } catch { /* ignore */ }
   return null;

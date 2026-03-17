@@ -227,6 +227,14 @@ function isDevMode() {
 
 function getInstallMode() {
   if (isDevMode()) return 'dev';
+  // Check if installed as a Claude Code plugin (installed_plugins.json has gsd entry)
+  // Hook files live at ~/.claude/hooks/ so pluginRoot (=__dirname/..) equals claudeDir,
+  // but that doesn't mean it's a manual install — check the plugin registry first.
+  try {
+    const pluginsFile = path.join(claudeDir, 'plugins', 'installed_plugins.json');
+    const plugins = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'));
+    if (plugins.plugins?.['gsd@gsd']?.[0]) return 'plugin';
+  } catch { /* fall through */ }
   return path.resolve(pluginRoot) === path.resolve(claudeDir)
     ? 'manual'
     : 'plugin';

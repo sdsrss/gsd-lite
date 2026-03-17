@@ -119,3 +119,39 @@ if (existsSync(pluginsFile)) {
     console.warn(`Plugin cache sync skipped: ${err.message}`);
   }
 }
+
+// ── Runtime dir sync ──────────────────────────────────────
+// Keep ~/.claude/gsd/package.json version in sync so auto-update
+// knows the correct current version and doesn't report stale data.
+const runtimePkg = join(claudeDir, 'gsd', 'package.json');
+if (existsSync(runtimePkg)) {
+  try {
+    const runtimeJson = JSON.parse(readFileSync(runtimePkg, 'utf8'));
+    if (runtimeJson.version !== version) {
+      runtimeJson.version = version;
+      const tmpPath = `${runtimePkg}.${process.pid}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(runtimeJson, null, 2) + '\n');
+      renameSync(tmpPath, runtimePkg);
+      console.log(`Runtime dir version synced → ${version}`);
+    }
+  } catch (err) {
+    console.warn(`Runtime dir sync skipped: ${err.message}`);
+  }
+}
+
+// ── Auto-update state reset ───────────────────────────────
+// Clear stale auto-update state so it reflects the current version.
+const updateStatePath = join(claudeDir, 'gsd', 'runtime', 'update-state.json');
+if (existsSync(updateStatePath)) {
+  try {
+    const state = JSON.parse(readFileSync(updateStatePath, 'utf8'));
+    if (state.latestVersion && state.latestVersion !== version) {
+      state.latestVersion = version;
+      state.updateAvailable = false;
+      const tmpPath = `${updateStatePath}.${process.pid}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(state, null, 2) + '\n');
+      renameSync(tmpPath, updateStatePath);
+      console.log(`Auto-update state synced → ${version}`);
+    }
+  } catch { /* best effort */ }
+}
