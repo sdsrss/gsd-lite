@@ -32,8 +32,32 @@ describe('validateStateUpdate', () => {
   describe('workflow_mode validation', () => {
     it('accepts valid workflow_mode', () => {
       const state = baseState();
+      const result = validateStateUpdate(state, { workflow_mode: 'paused_by_user' });
+      assert.equal(result.valid, true);
+    });
+
+    it('accepts completed from reviewing_phase when all phases accepted', () => {
+      const state = baseState();
+      state.workflow_mode = 'reviewing_phase';
+      state.phases[0].lifecycle = 'accepted';
       const result = validateStateUpdate(state, { workflow_mode: 'completed' });
       assert.equal(result.valid, true);
+    });
+
+    it('rejects completed when phases not accepted', () => {
+      const state = baseState();
+      state.workflow_mode = 'reviewing_phase';
+      const result = validateStateUpdate(state, { workflow_mode: 'completed' });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('not accepted')));
+    });
+
+    it('rejects completed from executing_task (invalid transition)', () => {
+      const state = baseState();
+      state.phases[0].lifecycle = 'accepted';
+      const result = validateStateUpdate(state, { workflow_mode: 'completed' });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Invalid workflow_mode transition')));
     });
 
     it('rejects invalid workflow_mode', () => {
@@ -295,7 +319,7 @@ describe('validateStateUpdate', () => {
   describe('multiple updates at once', () => {
     it('validates multiple valid updates', () => {
       const state = baseState();
-      const result = validateStateUpdate(state, { workflow_mode: 'completed', current_task: null });
+      const result = validateStateUpdate(state, { workflow_mode: 'paused_by_user', current_task: null });
       assert.equal(result.valid, true);
     });
 

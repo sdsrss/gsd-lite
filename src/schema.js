@@ -17,6 +17,23 @@ export const WORKFLOW_MODES = [
   'failed',
 ];
 
+// Valid workflow_mode transitions — unlisted transitions are rejected by validateStateUpdate.
+// Terminal states (completed, failed) are guarded separately by the FROM-terminal check in state-update.
+export const WORKFLOW_TRANSITIONS = {
+  planning:                 ['executing_task', 'paused_by_user'],
+  executing_task:           ['planning', 'reviewing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'failed'],
+  reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'failed'],
+  reviewing_phase:          ['executing_task', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'completed', 'failed'],
+  awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear'],
+  awaiting_clear:           ['executing_task', 'paused_by_user'],
+  paused_by_user:           ['executing_task', 'awaiting_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'reviewing_task', 'reviewing_phase'],
+  reconcile_workspace:      ['executing_task', 'paused_by_user'],
+  replan_required:          ['executing_task', 'paused_by_user'],
+  research_refresh_needed:  ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user'],
+  completed:                [],  // terminal — guarded by FROM-terminal check
+  failed:                   [],  // terminal — guarded by FROM-terminal check
+};
+
 export const TASK_LIFECYCLE = {
   pending:              ['running', 'blocked'],
   running:              ['checkpointed', 'blocked', 'failed', 'accepted'], // accepted: auto-accept for L0/review_required=false (atomic, skips checkpointed)
@@ -154,11 +171,28 @@ export function validateStateUpdate(state, updates) {
 
   for (const key of Object.keys(updates)) {
     switch (key) {
-      case 'workflow_mode':
+      case 'workflow_mode': {
         if (!WORKFLOW_MODES.includes(updates.workflow_mode)) {
           errors.push(`Invalid workflow_mode: ${updates.workflow_mode}`);
+          break;
+        }
+        // Transition whitelist — reject unlisted transitions
+        const currentMode = state.workflow_mode;
+        if (currentMode && updates.workflow_mode !== currentMode) {
+          const allowed = WORKFLOW_TRANSITIONS[currentMode];
+          if (allowed && !allowed.includes(updates.workflow_mode)) {
+            errors.push(`Invalid workflow_mode transition: '${currentMode}' → '${updates.workflow_mode}' (allowed: ${allowed.join(', ') || 'none (terminal state)'})`);
+          }
+        }
+        // Guard: 'completed' requires all phases accepted
+        if (updates.workflow_mode === 'completed' && Array.isArray(state.phases)) {
+          const unfinished = state.phases.filter(p => p.lifecycle !== 'accepted');
+          if (unfinished.length > 0) {
+            errors.push(`Cannot set workflow_mode to 'completed': ${unfinished.length} phase(s) not accepted (${unfinished.map(p => `${p.id}:${p.lifecycle}`).join(', ')})`);
+          }
         }
         break;
+      }
       case 'current_phase':
         if (!Number.isFinite(updates.current_phase)) {
           errors.push('current_phase must be a finite number');
@@ -383,8 +417,12 @@ export function validateState(state) {
       }
     }
   }
-  // P2-9: workflow_mode consistency — completed project must not have active/running tasks
+  // P2-9: workflow_mode consistency — completed project requires all phases accepted
   if (state.workflow_mode === 'completed' && Array.isArray(state.phases)) {
+    const unfinishedPhases = state.phases.filter(p => p.lifecycle !== 'accepted');
+    if (unfinishedPhases.length > 0) {
+      errors.push(`Completed project has ${unfinishedPhases.length} unfinished phase(s): ${unfinishedPhases.map(p => `${p.id}:${p.lifecycle}`).join(', ')}`);
+    }
     for (const phase of state.phases) {
       for (const task of (phase.todo || [])) {
         if (task.lifecycle === 'running') {

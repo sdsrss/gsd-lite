@@ -74,7 +74,7 @@ process.stdin.on('end', () => {
           let needsWrite = true;
           try {
             const existing = JSON.parse(fs.readFileSync(bridgePath, 'utf8'));
-            if (existing.remaining_percentage === remaining) needsWrite = false;
+            if (existing.remaining_percentage === remaining && existing.has_gsd === hasGsd) needsWrite = false;
           } catch { /* no existing file */ }
           if (needsWrite) {
             const tmpBridge = bridgePath + '.tmp';

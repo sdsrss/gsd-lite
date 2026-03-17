@@ -131,7 +131,8 @@ describe('state tools', () => {
         // Phase: active→reviewing→accepted
         await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: dir });
         await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: dir });
-        // Set completed
+        // Walk workflow: executing_task→reviewing_phase→completed
+        await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: dir });
         await update({ updates: { workflow_mode: 'completed' }, basePath: dir });
         // Now try to change to paused_by_user — should be rejected
         const result = await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });

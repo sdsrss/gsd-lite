@@ -121,6 +121,8 @@ describe('resume flow matrix', () => {
       }
       await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
       await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
+      // Walk workflow: executing_task→reviewing_phase→completed
+      await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: tempDir });
       await update({ updates: { workflow_mode: 'completed' }, basePath: tempDir });
       const completed = await resumeWorkflow({ basePath: tempDir });
       assert.equal(completed.action, 'noop');

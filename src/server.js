@@ -90,7 +90,7 @@ const TOOLS = [
       properties: {
         updates: {
           type: 'object',
-          description: 'Key-value pairs of canonical fields to update',
+          description: 'Key-value pairs of canonical fields: workflow_mode, current_phase, current_task, current_review, git_head, plan_version, schema_version, total_phases, project, decisions, context, evidence, research',
         },
       },
       required: ['updates'],
@@ -105,7 +105,13 @@ const TOOLS = [
         phase_id: { type: 'number', description: 'Phase number to complete' },
         verification: {
           type: 'object',
-          description: 'Optional precomputed verification: {lint: {exit_code: number}, typecheck: {exit_code: number}, test: {exit_code: number}} — all three keys required, exit_code 0 = passed',
+          description: 'Optional precomputed verification — all three keys required, exit_code 0 = passed',
+          properties: {
+            lint: { type: 'object', properties: { exit_code: { type: 'number' } }, required: ['exit_code'] },
+            typecheck: { type: 'object', properties: { exit_code: { type: 'number' } }, required: ['exit_code'] },
+            test: { type: 'object', properties: { exit_code: { type: 'number' } }, required: ['exit_code'] },
+          },
+          required: ['lint', 'typecheck', 'test'],
         },
         run_verify: {
           type: 'boolean',
@@ -135,7 +141,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: string[], blockers: object[], contract_changed: boolean, evidence: object[]}',
+          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: [{id, summary, rationale}], blockers: [{description}], contract_changed: boolean, evidence: string[]}',
         },
       },
       required: ['result'],

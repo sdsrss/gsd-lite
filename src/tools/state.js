@@ -341,10 +341,13 @@ function verificationPassed(verification) {
 
 function verificationSummary(verification) {
   if (!verification || typeof verification !== 'object') return 'no verification details';
-  return ['lint', 'typecheck', 'test']
-    .filter((key) => verification[key])
-    .map((key) => `${key}:${verification[key].exit_code}`)
-    .join(', ');
+  const parts = ['lint', 'typecheck', 'test'].map((key) => {
+    const v = verification[key];
+    if (!v) return `${key}:missing`;
+    if (typeof v !== 'object' || !('exit_code' in v)) return `${key}:invalid-format (expected {exit_code: number})`;
+    return `${key}:${v.exit_code === 0 ? 'pass' : `fail(${v.exit_code})`}`;
+  });
+  return parts.join(', ');
 }
 
 export async function phaseComplete({

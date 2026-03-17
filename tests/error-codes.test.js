@@ -53,6 +53,8 @@ describe('M-10: structured error codes', () => {
 
   it('update returns TERMINAL_STATE for completed workflow change', async () => {
     await init({ project: 'test', phases: [], basePath: tempDir });
+    // Walk to completed via valid transitions: executing_task→reviewing_phase→completed
+    await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: tempDir });
     await update({ updates: { workflow_mode: 'completed' }, basePath: tempDir });
     const result = await update({ updates: { workflow_mode: 'planning' }, basePath: tempDir });
     assert.equal(result.code, ERROR_CODES.TERMINAL_STATE);
