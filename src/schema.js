@@ -688,6 +688,33 @@ export function createInitialState({ project, phases }) {
     }
   }
 
+  // Validate requires references: must be structured objects with valid targets
+  for (const [pi, p] of phases.entries()) {
+    for (const [ti, t] of (p.tasks || []).entries()) {
+      const taskId = `${pi + 1}.${t.index ?? (ti + 1)}`;
+      for (const dep of (t.requires || [])) {
+        if (typeof dep === 'string') {
+          return { error: true, message: `Task ${taskId}: requires entry "${dep}" must be an object {kind: "task"|"phase", id: "..."}, not a string` };
+        }
+        if (!isPlainObject(dep) || !dep.kind || !dep.id) {
+          return { error: true, message: `Task ${taskId}: requires entries must be objects with kind ("task"|"phase") and id` };
+        }
+        if (!['task', 'phase'].includes(dep.kind)) {
+          return { error: true, message: `Task ${taskId}: requires entry kind must be "task" or "phase" (got "${dep.kind}")` };
+        }
+        if (dep.kind === 'task' && !seenIds.has(String(dep.id))) {
+          return { error: true, message: `Task ${taskId}: requires references non-existent task "${dep.id}" (valid IDs: ${[...seenIds].join(', ')})` };
+        }
+        if (dep.kind === 'phase') {
+          const phaseId = Number(dep.id);
+          if (!Number.isFinite(phaseId) || phaseId < 1 || phaseId > phases.length) {
+            return { error: true, message: `Task ${taskId}: requires references non-existent phase "${dep.id}" (valid: 1-${phases.length})` };
+          }
+        }
+      }
+    }
+  }
+
   // M-7: Detect circular dependencies within each phase (Kahn's algorithm)
   for (const [pi, p] of phases.entries()) {
     const tasks = p.tasks || [];

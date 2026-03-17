@@ -1401,6 +1401,65 @@ describe('createInitialState — duplicate task ID', () => {
   });
 });
 
+describe('createInitialState — requires validation', () => {
+  it('rejects string-format requires entries', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [{ name: 'A' }, { name: 'B', requires: ['1.1'] }] }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /must be an object.*not a string/);
+  });
+
+  it('rejects requires with missing kind/id', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [{ name: 'A' }, { name: 'B', requires: [{ id: '1.1' }] }] }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /kind.*and id/);
+  });
+
+  it('rejects reference to non-existent task ID', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [{ name: 'A' }, { name: 'B', requires: [{ kind: 'task', id: '9.9' }] }] }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /non-existent task/);
+  });
+
+  it('rejects reference to non-existent phase', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [{ name: 'A', requires: [{ kind: 'phase', id: 5 }] }] }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /non-existent phase/);
+  });
+
+  it('rejects invalid requires kind', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [{ name: 'A', requires: [{ kind: 'milestone', id: '1' }] }] }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /kind must be "task" or "phase"/);
+  });
+
+  it('accepts valid cross-phase dependency', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [
+        { name: 'P1', tasks: [{ name: 'A' }] },
+        { name: 'P2', tasks: [{ name: 'B', requires: [{ kind: 'phase', id: 1 }] }] },
+      ],
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.project, 'test');
+  });
+});
+
 describe('validateState — current_task and current_review types', () => {
   it('rejects numeric current_task', () => {
     const state = createInitialState({ project: 'test', phases: [{ name: 'P1', tasks: [{ name: 'T' }] }] });

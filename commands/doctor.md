@@ -19,7 +19,7 @@ Check if `.gsd/state.json` exists:
 
 ## STEP 2: MCP Server Health
 
-Call the `gsd health` MCP tool:
+Call the `health` MCP tool:
 - If returns `status: "ok"`: record PASS with server version
 - If returns error or unreachable: record FAIL with error message
 - Note: if MCP server is not available at all (tool not found), record FAIL "MCP server not registered"
@@ -51,7 +51,7 @@ Check if `.gsd/.state-lock` exists:
 
 Check for update-related information:
 - Read `~/.claude/gsd/package.json` for installed version
-- Compare with the version from `gsd health` tool response
+- Compare with the version from `health` tool response
 - If versions match: record PASS with version number
 - If mismatch: record WARN "Version mismatch: installed={x}, server={y}"
 - If `~/.claude/gsd/.update-pending` exists: record INFO "Update pending, will apply on next session"

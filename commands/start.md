@@ -12,7 +12,7 @@ argument-hint: Optional feature or project description
 
 ## STEP 0 — 已有项目检测
 
-调用 `gsd health` 工具。如果返回 state_exists=true:
+调用 `health` 工具（MCP tool 名称: health）。如果返回 state_exists=true:
 - 告知用户: "检测到进行中的 GSD 项目。"
 - 提供选项:
   - (a) 恢复执行 → 转到 `/gsd:resume`

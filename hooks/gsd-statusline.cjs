@@ -60,10 +60,11 @@ process.stdin.on('end', () => {
 
     // Context window display (USED percentage scaled to usable context)
     // Claude Code reserves ~16.5% for autocompact buffer (configurable via env)
-    const AUTO_COMPACT_BUFFER_PCT = Number(process.env.GSD_AUTOCOMPACT_BUFFER) || 16.5;
+    const AUTO_COMPACT_BUFFER_PCT = Math.min(99, Math.max(0, Number(process.env.GSD_AUTOCOMPACT_BUFFER) || 16.5));
     let ctx = '';
     if (remaining != null) {
-      const usableRemaining = Math.max(0, ((remaining - AUTO_COMPACT_BUFFER_PCT) / (100 - AUTO_COMPACT_BUFFER_PCT)) * 100);
+      const divisor = 100 - AUTO_COMPACT_BUFFER_PCT;
+      const usableRemaining = divisor > 0 ? Math.max(0, ((remaining - AUTO_COMPACT_BUFFER_PCT) / divisor) * 100) : 0;
       const used = Math.max(0, Math.min(100, Math.round(100 - usableRemaining)));
 
       // Write bridge file for context-monitor PostToolUse hook (skip if remaining unchanged)

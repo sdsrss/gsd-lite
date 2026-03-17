@@ -52,7 +52,7 @@ const TOOLS = [
                     name: { type: 'string', description: 'Task name (required)' },
                     index: { type: 'number', description: 'Task index within phase (default: auto)' },
                     level: { type: 'string', description: 'Complexity level: L0/L1/L2/L3 (default: L1)' },
-                    requires: { type: 'array', description: 'Dependency list (default: [])' },
+                    requires: { type: 'array', description: 'Dependencies: [{kind: "task"|"phase", id: "1.1", gate?: "checkpoint"|"accepted"|"phase_complete"}] (default: [])' },
                     review_required: { type: 'boolean', description: 'Whether review is needed (default: true)' },
                     verification_required: { type: 'boolean', description: 'Whether verification is needed (default: true)' },
                   },
@@ -105,7 +105,7 @@ const TOOLS = [
         phase_id: { type: 'number', description: 'Phase number to complete' },
         verification: {
           type: 'object',
-          description: 'Optional precomputed verification result object with lint/typecheck/test exit codes',
+          description: 'Optional precomputed verification: {lint: {exit_code: number}, typecheck: {exit_code: number}, test: {exit_code: number}} — all three keys required, exit_code 0 = passed',
         },
         run_verify: {
           type: 'boolean',
@@ -133,7 +133,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        result: { type: 'object', description: 'Executor result payload' },
+        result: {
+          type: 'object',
+          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: string[], blockers: object[], contract_changed: boolean, evidence: object[]}',
+        },
       },
       required: ['result'],
     },
@@ -144,7 +147,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        result: { type: 'object', description: 'Debugger result payload' },
+        result: {
+          type: 'object',
+          description: 'Debugger result: {task_id: string, outcome: "root_cause_found"|"fix_suggested"|"failed", root_cause: string, evidence: object[], hypothesis_tested: [{hypothesis: string, result: "confirmed"|"rejected", evidence: string}], fix_direction: string, fix_attempts: integer, blockers: object[], architecture_concern: boolean}',
+        },
       },
       required: ['result'],
     },
@@ -155,9 +161,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        result: { type: 'object', description: 'Researcher result payload' },
-        decision_index: { type: 'object', description: 'Decision index keyed by decision id' },
-        artifacts: { type: 'object', description: 'Markdown artifact contents keyed by file name' },
+        result: {
+          type: 'object',
+          description: 'Researcher result: {decision_ids: string[], volatility: "low"|"medium"|"high", expires_at: ISO8601 string, sources: [{id: string, type: string, ref: string}]}',
+        },
+        decision_index: { type: 'object', description: 'Decision index keyed by decision id, each value: {summary: string, source?: string, expires_at?: ISO8601}' },
+        artifacts: { type: 'object', description: 'Markdown contents keyed by filename: {STACK.md, ARCHITECTURE.md, PITFALLS.md, SUMMARY.md}' },
       },
       required: ['result', 'decision_index', 'artifacts'],
     },
@@ -168,7 +177,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        result: { type: 'object', description: 'Reviewer result payload' },
+        result: {
+          type: 'object',
+          description: 'Reviewer result: {scope: "task"|"phase", scope_id: string|number, review_level: "L2"|"L1-batch", spec_passed: boolean, quality_passed: boolean, critical_issues: object[], important_issues: object[], minor_issues: object[], accepted_tasks: string[], rework_tasks: string[], evidence: object[]}',
+        },
       },
       required: ['result'],
     },
