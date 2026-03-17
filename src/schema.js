@@ -619,8 +619,9 @@ export function validateReviewerResult(r) {
       errors.push('critical_issues entries must be objects');
       continue;
     }
-    if (typeof issue.reason !== 'string' || issue.reason.length === 0) {
-      errors.push('critical_issues[].reason must be non-empty string');
+    const issueText = issue.reason ?? issue.description;
+    if (typeof issueText !== 'string' || issueText.length === 0) {
+      errors.push('critical_issues[].reason (or .description) must be non-empty string');
     }
     if ('task_id' in issue && typeof issue.task_id !== 'string') {
       errors.push('critical_issues[].task_id must be string');

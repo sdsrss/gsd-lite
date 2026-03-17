@@ -7,6 +7,7 @@
 | L0 | 无运行时语义变化 (docs/config/style) | checkpoint 后直接 accepted |
 | L1 | 普通编码任务 (默认) | phase 结束后批量审查 |
 | L2 | 高风险 (auth/payment/public API/DB migration) | checkpoint 后立即独立审查 |
+| L3 | 最高风险 (复杂架构/关键系统) | 与 L2 相同: checkpoint 后立即独立审查 |
 
 ## 运行时重分类
 
@@ -62,14 +63,14 @@ executor checkpointed
   -> 批量审查所有 checkpointed task (排除 L0)
 ```
 
-### L2 流程
+### L2/L3 流程
 
 ```
 executor checkpointed
-  -> handleExecutorResult 检测 reviewLevel === 'L2' && review_required !== false
+  -> handleExecutorResult 检测 (reviewLevel === 'L2' || reviewLevel === 'L3') && review_required !== false
   -> 设置 current_review = { scope: 'task', scope_id: task.id, stage: 'spec' }
   -> workflow_mode = 'reviewing_task'
-  -> 派发 reviewer (scope='task', review_level='L2')
+  -> 派发 reviewer (scope='task', review_level='L2' 或 'L3')
   -> 审查通过后才释放下游依赖
 ```
 

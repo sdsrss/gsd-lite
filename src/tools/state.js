@@ -404,13 +404,23 @@ export async function phaseComplete({
     }
 
     // Validate phase lifecycle transition FIRST (fail-fast) [I-4]
-    const transitionResult = validateTransition(
-      'phase',
-      phase.lifecycle,
-      'accepted',
-    );
-    if (!transitionResult.valid) {
-      return { error: true, code: ERROR_CODES.TRANSITION_ERROR, message: transitionResult.error };
+    // Allow active → accepted by auto-advancing through 'reviewing' intermediate state
+    if (phase.lifecycle === 'active') {
+      const intermediateResult = validateTransition('phase', 'active', 'reviewing');
+      const finalResult = validateTransition('phase', 'reviewing', 'accepted');
+      if (!intermediateResult.valid || !finalResult.valid) {
+        return { error: true, code: ERROR_CODES.TRANSITION_ERROR, message: `Invalid phase transition: ${phase.lifecycle} → accepted` };
+      }
+      // Will be set to 'accepted' below; just validate here
+    } else {
+      const transitionResult = validateTransition(
+        'phase',
+        phase.lifecycle,
+        'accepted',
+      );
+      if (!transitionResult.valid) {
+        return { error: true, code: ERROR_CODES.TRANSITION_ERROR, message: transitionResult.error };
+      }
     }
 
     // Check handoff gate: all tasks must be accepted

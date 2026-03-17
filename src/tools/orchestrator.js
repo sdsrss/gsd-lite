@@ -38,7 +38,7 @@ const RESULT_CONTRACTS = {
     review_level: '"L2" | "L1-batch" | "L1"',
     spec_passed: 'boolean',
     quality_passed: 'boolean',
-    critical_issues: '{ reason, task_id?, invalidates_downstream? }[] — blocking issues',
+    critical_issues: '{ reason|description, task_id?, invalidates_downstream? }[] — blocking issues',
     important_issues: '{ description, task_id? }[]',
     minor_issues: '{ description, task_id? }[]',
     accepted_tasks: 'string[] — task ids that passed review',
@@ -661,7 +661,7 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = 
       const autoUnblock = await tryAutoUnblock(state, phase, basePath);
       if (autoUnblock.error) return autoUnblock;
 
-      if (autoUnblock.autoUnblocked.length > 0 && autoUnblock.blockers.length === 0) {
+      if (autoUnblock.blockers.length === 0) {
         const persistError = await persist(basePath, {
           workflow_mode: 'executing_task',
           current_task: null,
@@ -859,7 +859,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     const isL0 = reviewLevel === 'L0';
     const autoAccept = isL0 || task.review_required === false;
 
-    const current_review = !isL0 && reviewLevel === 'L2' && task.review_required !== false
+    const current_review = !isL0 && (reviewLevel === 'L2' || reviewLevel === 'L3') && task.review_required !== false
       ? { scope: 'task', scope_id: task.id, stage: 'spec' }
       : null;
     const workflow_mode = current_review ? 'reviewing_task' : 'executing_task';
