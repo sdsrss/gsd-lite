@@ -67,9 +67,11 @@ Phase 4 修复方向建议:
   "task_id": "2.3",
   "outcome": "root_cause_found | fix_suggested | failed",
   "root_cause": "Description of the identified root cause",
-  "evidence": ["ev:repro:error-xyz", "ev:trace:data-flow"],
+  "evidence": [
+    { "id": "ev:repro:error-xyz", "scope": "task:2.3", "command": "npm test", "exit_code": 1, "stdout": "...", "stderr": "...", "timestamp": "ISO8601" }
+  ],
   "hypothesis_tested": [
-    { "hypothesis": "X causes Y", "result": "confirmed | rejected", "evidence": "..." }
+    { "hypothesis": "X causes Y", "result": "confirmed | rejected", "evidence": "non-empty string (required)" }
   ],
   "fix_direction": "Suggested fix approach for executor",
   "fix_attempts": 0,

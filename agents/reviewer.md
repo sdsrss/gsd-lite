@@ -93,7 +93,7 @@ Minor = 建议修复 (命名/风格)
 {
   "scope": "task | phase",
   "scope_id": "2.3 (task scope: string ID) | 2 (phase scope: number ID)",
-  "review_level": "L2 | L1-batch",
+  "review_level": "L2 | L1-batch | L1",
   "spec_passed": true,
   "quality_passed": false,
   "critical_issues": [

@@ -598,7 +598,7 @@ export function validateReviewerResult(r) {
   if (!(typeof r.scope_id === 'string' || typeof r.scope_id === 'number') || r.scope_id === '') {
     errors.push('missing scope_id');
   }
-  if (!['L2', 'L1-batch'].includes(r.review_level)) errors.push('invalid review_level');
+  if (!['L2', 'L1-batch', 'L1'].includes(r.review_level)) errors.push('invalid review_level (expected L2, L1-batch, or L1)');
   if (typeof r.spec_passed !== 'boolean') errors.push('spec_passed must be boolean');
   if (typeof r.quality_passed !== 'boolean') errors.push('quality_passed must be boolean');
   if (!Array.isArray(r.critical_issues)) errors.push('critical_issues must be array');

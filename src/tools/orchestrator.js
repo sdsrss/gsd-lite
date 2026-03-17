@@ -450,6 +450,13 @@ async function resumeExecutingTask(state, basePath) {
 
   if (selection.task) {
     const task = selection.task;
+    // Two-step transition for needs_revalidation: must go through pending first
+    if (task.lifecycle === 'needs_revalidation') {
+      const resetError = await persist(basePath, {
+        phases: [{ id: phase.id, todo: [{ id: task.id, lifecycle: 'pending' }] }],
+      });
+      if (resetError) return resetError;
+    }
     const persistError = await persist(basePath, {
       workflow_mode: 'executing_task',
       current_task: task.id,
