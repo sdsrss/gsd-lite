@@ -308,6 +308,14 @@ describe('schema', () => {
       assert.ok(result.errors.some(e => e.includes('research.expires_at must be a non-empty string')));
     });
 
+    it('rejects research with invalid ISO 8601 expires_at', () => {
+      const state = createInitialState({ project: 'test', phases: [] });
+      state.research = { expires_at: '2026-99-99' };
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('valid ISO 8601 date')));
+    });
+
     it('rejects research with non-array files', () => {
       const state = createInitialState({ project: 'test', phases: [] });
       state.research = { files: 'not-array' };
@@ -786,6 +794,29 @@ describe('schema', () => {
       const result = validateState(state);
       assert.equal(result.valid, false);
       assert.ok(result.errors.some(e => e.includes('non-existent task')));
+    });
+
+    it('rejects current_review with invalid scope value', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.current_review = { scope: 'tsk', scope_id: '1.1' };
+      const result = validateState(state);
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('current_review.scope must be one of: task, phase')));
+    });
+
+    it('accepts current_review with valid scope "task"', () => {
+      const state = createInitialState({
+        project: 'test',
+        phases: [{ name: 'p1', tasks: [{ index: 1, name: 't1' }] }],
+      });
+      state.workflow_mode = 'reviewing_task';
+      state.current_task = '1.1';
+      state.current_review = { scope: 'task', scope_id: '1.1' };
+      const result = validateState(state);
+      assert.equal(result.valid, true);
     });
 
     it('accepts valid current_review.scope_id referencing existing phase (P2-9)', () => {
@@ -1267,6 +1298,17 @@ describe('validateResearchDecisionIndex edge cases', () => {
 
   it('accepts valid decision_index with source and expires_at', () => {
     const result = validateResearchDecisionIndex({ d1: { summary: 'ok', source: 'web', expires_at: '2026-01-01' } });
+    assert.equal(result.valid, true);
+  });
+
+  it('rejects entry with invalid ISO 8601 expires_at', () => {
+    const result = validateResearchDecisionIndex({ d1: { summary: 'ok', expires_at: '2026-99-99' } });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('valid ISO 8601 date')));
+  });
+
+  it('accepts entry with valid ISO 8601 expires_at', () => {
+    const result = validateResearchDecisionIndex({ d1: { summary: 'ok', expires_at: '2026-03-17T12:00:00Z' } });
     assert.equal(result.valid, true);
   });
 });

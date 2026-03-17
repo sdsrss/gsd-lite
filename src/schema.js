@@ -98,8 +98,12 @@ export function validateResearchDecisionIndex(decisionIndex, requiredIds = []) {
     if ('source' in entry && (typeof entry.source !== 'string' || entry.source.length === 0)) {
       errors.push(`decision_index.${id}.source must be a non-empty string`);
     }
-    if ('expires_at' in entry && (typeof entry.expires_at !== 'string' || entry.expires_at.length === 0)) {
-      errors.push(`decision_index.${id}.expires_at must be a non-empty string`);
+    if ('expires_at' in entry) {
+      if (typeof entry.expires_at !== 'string' || entry.expires_at.length === 0) {
+        errors.push(`decision_index.${id}.expires_at must be a non-empty string`);
+      } else if (Number.isNaN(Date.parse(entry.expires_at))) {
+        errors.push(`decision_index.${id}.expires_at must be a valid ISO 8601 date (got "${entry.expires_at}")`);
+      }
     }
   }
 
@@ -168,6 +172,12 @@ export function validateStateUpdate(state, updates) {
       case 'current_review':
         if (updates.current_review !== null && !isPlainObject(updates.current_review)) {
           errors.push('current_review must be an object or null');
+        }
+        if (isPlainObject(updates.current_review) && 'scope' in updates.current_review) {
+          const validScopes = ['task', 'phase'];
+          if (!validScopes.includes(updates.current_review.scope)) {
+            errors.push(`current_review.scope must be one of: ${validScopes.join(', ')} (got "${updates.current_review.scope}")`);
+          }
         }
         break;
       case 'git_head':
@@ -306,9 +316,12 @@ export function validateState(state) {
     if ('volatility' in state.research && !['low', 'medium', 'high'].includes(state.research.volatility)) {
       errors.push('research.volatility must be low|medium|high');
     }
-    if ('expires_at' in state.research
-      && (typeof state.research.expires_at !== 'string' || state.research.expires_at.length === 0)) {
-      errors.push('research.expires_at must be a non-empty string');
+    if ('expires_at' in state.research) {
+      if (typeof state.research.expires_at !== 'string' || state.research.expires_at.length === 0) {
+        errors.push('research.expires_at must be a non-empty string');
+      } else if (Number.isNaN(Date.parse(state.research.expires_at))) {
+        errors.push(`research.expires_at must be a valid ISO 8601 date (got "${state.research.expires_at}")`);
+      }
     }
     if ('files' in state.research && !Array.isArray(state.research.files)) {
       errors.push('research.files must be an array');
@@ -334,6 +347,12 @@ export function validateState(state) {
   }
   if (state.current_review !== null && !isPlainObject(state.current_review)) {
     errors.push('current_review must be an object or null');
+  }
+  if (isPlainObject(state.current_review) && 'scope' in state.current_review) {
+    const validScopes = ['task', 'phase'];
+    if (!validScopes.includes(state.current_review.scope)) {
+      errors.push(`current_review.scope must be one of: ${validScopes.join(', ')} (got "${state.current_review.scope}")`);
+    }
   }
   if (!isPlainObject(state.evidence)) {
     errors.push('evidence must be an object');

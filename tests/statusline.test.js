@@ -184,4 +184,52 @@ describe('gsd-statusline ancestor traversal', () => {
     // Cleanup bridge file
     try { await rm(bridgePath); } catch {}
   });
+
+  it('truncates long task names to 40 characters', async () => {
+    const projectDir = join(rootDir, 'long-task-name');
+    const gsdDir = join(projectDir, '.gsd');
+    await mkdir(gsdDir, { recursive: true });
+    const longName = 'A'.repeat(60);
+    await writeFile(join(gsdDir, 'state.json'), JSON.stringify({
+      current_task: 'T1',
+      current_phase: 'P1',
+      phases: [{ id: 'P1', todo: [{ id: 'T1', name: longName }] }],
+    }));
+
+    const result = runHook({
+      model: { display_name: 'Claude' },
+      workspace: { current_dir: projectDir },
+      session_id: 'test-truncate-1',
+      context_window: { remaining_percentage: 80 },
+    });
+
+    // Should show truncated name (40 chars + "...")
+    assert.ok(result.stdout.includes('A'.repeat(40) + '...'),
+      `Expected truncated task name, got: ${JSON.stringify(result.stdout)}`);
+    assert.ok(!result.stdout.includes('A'.repeat(41)),
+      'Should not contain more than 40 A characters before ellipsis');
+  });
+
+  it('does not truncate short task names', async () => {
+    const projectDir = join(rootDir, 'short-task-name');
+    const gsdDir = join(projectDir, '.gsd');
+    await mkdir(gsdDir, { recursive: true });
+    await writeFile(join(gsdDir, 'state.json'), JSON.stringify({
+      current_task: 'T1',
+      current_phase: 'P1',
+      phases: [{ id: 'P1', todo: [{ id: 'T1', name: 'Short name' }] }],
+    }));
+
+    const result = runHook({
+      model: { display_name: 'Claude' },
+      workspace: { current_dir: projectDir },
+      session_id: 'test-truncate-2',
+      context_window: { remaining_percentage: 80 },
+    });
+
+    assert.ok(result.stdout.includes('T1 Short name'),
+      `Expected full task name, got: ${JSON.stringify(result.stdout)}`);
+    assert.ok(!result.stdout.includes('...'),
+      'Should not have ellipsis for short names');
+  });
 });

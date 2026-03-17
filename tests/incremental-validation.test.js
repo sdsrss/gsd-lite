@@ -100,6 +100,19 @@ describe('validateStateUpdate', () => {
       assert.equal(result.valid, false);
       assert.ok(result.errors.some(e => e.includes('current_review must be an object or null')));
     });
+
+    it('rejects current_review with invalid scope via incremental path', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { current_review: { scope: 'tsk', scope_id: '1.1' } });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('current_review.scope must be one of: task, phase')));
+    });
+
+    it('accepts current_review with valid scope "phase" via incremental path', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { current_review: { scope: 'phase', scope_id: 1 } });
+      assert.equal(result.valid, true);
+    });
   });
 
   describe('git_head validation', () => {

@@ -49,7 +49,10 @@ process.stdin.on('end', () => {
       if (state.current_task && state.current_phase) {
         const phase = (state.phases || []).find(p => p.id === state.current_phase);
         const t = phase?.todo?.find(t => t.id === state.current_task);
-        if (t) task = `${t.id} ${t.name}`;
+        if (t) {
+          const name = t.name.length > 40 ? t.name.substring(0, 40) + '...' : t.name;
+          task = `${t.id} ${name}`;
+        }
       }
     } catch {
       // No state.json or parse error — skip task display
