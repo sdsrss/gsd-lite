@@ -28,7 +28,10 @@ Call the `health` MCP tool:
 
 Check if GSD hooks are registered in Claude settings:
 - Read `~/.claude/settings.json` (or `~/.claude/settings.local.json`)
-- Check for `statusLine` entry containing `gsd-statusline`
+- StatusLine check (check BOTH paths):
+  1. Direct: `statusLine` entry containing `gsd-statusline`
+  2. Composite: read `~/.cache/code-graph/statusline-registry.json` — if any entry's `command` contains `gsd-statusline`, it is registered through the composite statusline system
+  - Either path present: StatusLine = registered
 - Check for `PostToolUse` hook entry containing `gsd-context-monitor`
 - Both present: record PASS
 - Partial: record WARN with which hook is missing
@@ -50,10 +53,14 @@ Check if `.gsd/.state-lock` exists:
 ## STEP 5: Auto-Update Status
 
 Check for update-related information:
-- Read `~/.claude/gsd/package.json` for installed version
-- Compare with the version from `health` tool response
-- If versions match: record PASS with version number
-- If mismatch: record WARN "Version mismatch: installed={x}, server={y}"
+- Read the `health` tool response for running server version
+- Read `package.json` in the current project root for source version (if in a dev repo with `.git`)
+- Read `~/.claude/gsd/package.json` for runtime version (if exists)
+- Compare all available versions:
+  - All match: record PASS with version number
+  - Server version < source version: record WARN "MCP server running v{x} but source is v{y}. Run /mcp to restart"
+  - Runtime < server: record WARN "Runtime dir outdated: v{x} vs server v{y}"
+  - Any mismatch: record WARN with details
 - If `~/.claude/gsd/.update-pending` exists: record INFO "Update pending, will apply on next session"
 - If cannot determine: record INFO "Update status unavailable"
 

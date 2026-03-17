@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Sync version from package.json to plugin.json and marketplace.json.
+ * Sync version from package.json to plugin.json, marketplace.json,
+ * and the local plugin cache (if installed as a Claude Code plugin).
  * Run automatically via `prepublishOnly` or manually: `node scripts/sync-versions.js`
  */
 
-import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, cpSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
+import { homedir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
@@ -53,4 +56,66 @@ if (changed) {
   console.log(`Synced version to ${version}`);
 } else {
   console.log(`Versions already at ${version}`);
+}
+
+// ── Plugin cache sync (dev workflow) ─────────────────────
+// When developing locally, the MCP server runs from the plugin cache
+// at ~/.claude/plugins/cache/gsd/gsd/<version>/.
+// After version bumps, sync source → cache so the running server picks up changes.
+const claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+const pluginsFile = join(claudeDir, 'plugins', 'installed_plugins.json');
+
+if (existsSync(pluginsFile)) {
+  try {
+    const plugins = JSON.parse(readFileSync(pluginsFile, 'utf8'));
+    const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
+    if (gsdEntry?.installPath) {
+      const cacheBase = join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd');
+      const newCachePath = join(cacheBase, version);
+
+      // Copy source files to cache
+      mkdirSync(newCachePath, { recursive: true });
+      const syncDirs = ['src', 'commands', 'agents', 'workflows', 'references', 'hooks', 'scripts', '.claude-plugin'];
+      const syncFiles = ['package.json', 'launcher.js', '.mcp.json'];
+
+      for (const dir of syncDirs) {
+        const srcDir = join(root, dir);
+        if (existsSync(srcDir)) {
+          cpSync(srcDir, join(newCachePath, dir), { recursive: true });
+        }
+      }
+      for (const file of syncFiles) {
+        const srcFile = join(root, file);
+        if (existsSync(srcFile)) {
+          writeFileSync(join(newCachePath, file), readFileSync(srcFile));
+        }
+      }
+
+      // Install deps in cache if needed
+      if (!existsSync(join(newCachePath, 'node_modules', '@modelcontextprotocol'))) {
+        try {
+          execSync('npm install --omit=dev --ignore-scripts', {
+            cwd: newCachePath,
+            stdio: 'pipe',
+            timeout: 60000,
+          });
+        } catch { /* best effort */ }
+      }
+
+      // Update installed_plugins.json
+      if (gsdEntry.installPath !== newCachePath || gsdEntry.version !== version) {
+        gsdEntry.installPath = newCachePath;
+        gsdEntry.version = version;
+        gsdEntry.lastUpdated = new Date().toISOString();
+        const tmpPlugins = `${pluginsFile}.${process.pid}.tmp`;
+        writeFileSync(tmpPlugins, JSON.stringify(plugins, null, 2) + '\n');
+        renameSync(tmpPlugins, pluginsFile);
+        console.log(`Plugin cache synced → ${newCachePath}`);
+      } else {
+        console.log('Plugin cache already up to date');
+      }
+    }
+  } catch (err) {
+    console.warn(`Plugin cache sync skipped: ${err.message}`);
+  }
 }
