@@ -690,7 +690,8 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
         if (gate === 'accepted' && depTask.lifecycle !== 'accepted') { depsOk = false; break; }
         if (gate === 'phase_complete') { depsOk = false; break; } // phase_complete is only valid on phase-kind deps
       } else if (dep.kind === 'phase') {
-        const depPhase = (state.phases || []).find(p => p.id === dep.id);
+        const depPhaseId = Number(dep.id);
+        const depPhase = (state.phases || []).find(p => p.id === depPhaseId);
         if (!depPhase || depPhase.lifecycle !== 'accepted') { depsOk = false; break; }
       }
     }
@@ -745,7 +746,8 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
           reasons.push(`dep ${dep.id} has phase_complete gate (invalid for task-kind dependency)`);
         }
       } else if (dep.kind === 'phase') {
-        const depPhase = (state.phases || []).find(p => p.id === dep.id);
+        const depPhaseId = Number(dep.id);
+        const depPhase = (state.phases || []).find(p => p.id === depPhaseId);
         if (!depPhase || depPhase.lifecycle !== 'accepted') {
           reasons.push(`phase dep ${dep.id} not accepted`);
         }
@@ -847,6 +849,10 @@ export function buildExecutorContext(state, taskId, phaseId) {
     evidence: task.debug_context.evidence || [],
   } : null;
 
+  const rework_feedback = Array.isArray(task.last_review_feedback) && task.last_review_feedback.length > 0
+    ? task.last_review_feedback
+    : null;
+
   return {
     task_spec,
     research_decisions,
@@ -855,6 +861,7 @@ export function buildExecutorContext(state, taskId, phaseId) {
     workflows,
     constraints,
     debugger_guidance,
+    rework_feedback,
   };
 }
 

@@ -7,6 +7,24 @@ import { init, read, update, phaseComplete } from './tools/state.js';
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION = _require('../package.json').version;
+
+// Dev-mode version drift detection: warn when running code differs from disk
+const _isDevMode = (() => {
+  try { return _require('node:fs').existsSync(new URL('../.git', import.meta.url)); } catch { return false; }
+})();
+function _checkVersionDrift() {
+  if (!_isDevMode) return null;
+  try {
+    // Clear require cache to read fresh package.json
+    const pkgPath = _require.resolve('../package.json');
+    delete _require.cache[pkgPath];
+    const diskVersion = _require('../package.json').version;
+    if (diskVersion !== PKG_VERSION) {
+      return `⚠️ GSD server running v${PKG_VERSION} but code on disk is v${diskVersion}. Run /mcp to restart.`;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
 import {
   handleDebuggerResult,
   handleExecutorResult,
@@ -130,7 +148,13 @@ const TOOLS = [
     description: 'Resume the minimal orchestration loop from workflow_mode/current_phase state',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        unblock_tasks: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional task IDs to force-unblock before resuming (e.g. ["1.1", "2.3"])',
+        },
+      },
     },
   },
   {
@@ -185,7 +209,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Reviewer result: {scope: "task"|"phase", scope_id: string|number, review_level: "L2"|"L1-batch", spec_passed: boolean, quality_passed: boolean, critical_issues: object[], important_issues: object[], minor_issues: object[], accepted_tasks: string[], rework_tasks: string[], evidence: object[]}',
+          description: 'Reviewer result: {scope: "task"|"phase", scope_id: string|number, review_level: "L2"|"L1-batch", spec_passed: boolean, quality_passed: boolean, critical_issues: [{reason|description: string, task_id?: string, invalidates_downstream?: boolean}], important_issues: [{reason|description: string}], minor_issues: object[], accepted_tasks: string[], rework_tasks: string[], evidence: object[]}',
         },
       },
       required: ['result'],
@@ -202,6 +226,7 @@ async function dispatchToolCall(name, args) {
   switch (name) {
     case 'health': {
       const stateResult = await read(args || {});
+      const versionDrift = _checkVersionDrift();
       result = {
         status: 'ok',
         server: 'gsd',
@@ -213,6 +238,7 @@ async function dispatchToolCall(name, args) {
           current_phase: stateResult.current_phase,
           total_phases: stateResult.total_phases,
         }),
+        ...(versionDrift ? { warning: versionDrift } : {}),
       };
       break;
     }

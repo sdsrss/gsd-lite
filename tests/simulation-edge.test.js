@@ -335,6 +335,21 @@ describe('Edge 8: Cross-phase dependencies', () => {
     // Phase 1 not accepted yet, so task should not be runnable
     assert.equal(sel.task, undefined, 'Task with phase dependency should not be runnable');
   });
+
+  it('8.2 Phase dep with string id resolves correctly when phase is accepted', async () => {
+    // Regression: MCP input sends dep.id as string "1" but phase.id is number 1
+    const state = await read({ basePath });
+    // Accept phase 1 task and mark phase 1 as accepted
+    state.phases[0].todo[0].lifecycle = 'accepted';
+    state.phases[0].lifecycle = 'accepted';
+    // Ensure phase 2 dep.id is a string (as MCP tools would provide)
+    state.phases[1].todo[0].requires = [{ kind: 'phase', id: '1', gate: 'phase_complete' }];
+    state.phases[1].lifecycle = 'active';
+    const phase2 = state.phases[1];
+    const sel = selectRunnableTask(phase2, state);
+    assert.ok(sel.task, 'Task with string phase dep id should be runnable when phase is accepted');
+    assert.equal(sel.task.id, '2.1');
+  });
 });
 
 // ── EDGE 9: buildExecutorContext with missing data ──
@@ -788,5 +803,49 @@ describe('Edge 18: Invalid init inputs', () => {
   it('18.4 Non-array phases rejected', async () => {
     const result = await init({ project: 'X', phases: 'not-array', basePath });
     assert.ok(result.error);
+  });
+});
+
+// ── EDGE 19: Force-unblock via orchestrator-resume ──
+
+describe('Edge 19: Force-unblock tasks via resume', () => {
+  before(createTmpGit);
+  after(cleanTmp);
+
+  it('19.1 unblock_tasks parameter resolves blocked task and resumes execution', async () => {
+    await init({
+      project: 'UnblockTest',
+      phases: [{ name: 'P1', tasks: [{ name: 'Blocked task' }] }],
+      basePath,
+    });
+
+    // Execute then block
+    await resumeWorkflow({ basePath });
+    await handleExecutorResult({
+      result: {
+        task_id: '1.1', outcome: 'blocked', summary: 'Need API key',
+        checkpoint_commit: null, files_changed: [], decisions: [],
+        blockers: [{ description: 'Missing API key' }],
+        contract_changed: false, evidence: [],
+      },
+      basePath,
+    });
+
+    // Verify blocked
+    let state = await read({ basePath });
+    assert.equal(state.workflow_mode, 'awaiting_user');
+    assert.equal(state.phases[0].todo[0].lifecycle, 'blocked');
+
+    // Force-unblock and resume
+    const result = await resumeWorkflow({ basePath, unblock_tasks: ['1.1'] });
+    assert.ok(result.success);
+    assert.equal(result.action, 'dispatch_executor');
+    assert.equal(result.task_id, '1.1');
+
+    // Verify unblocked
+    state = await read({ basePath });
+    assert.equal(state.workflow_mode, 'executing_task');
+    assert.equal(state.phases[0].todo[0].lifecycle, 'running');
+    assert.equal(state.phases[0].todo[0].blocked_reason, null);
   });
 });

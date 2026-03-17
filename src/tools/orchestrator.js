@@ -605,7 +605,7 @@ async function resumeExecutingTask(state, basePath) {
   };
 }
 
-export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = {}) {
+export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks } = {}) {
   if (_depth >= MAX_RESUME_DEPTH) {
     return { error: true, message: `resumeWorkflow recursive depth limit exceeded (max ${MAX_RESUME_DEPTH})` };
   }
@@ -613,6 +613,31 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = 
   const state = await read({ basePath });
   if (state.error) {
     return state;
+  }
+
+  // Force-unblock specified tasks before normal resume flow
+  if (Array.isArray(unblock_tasks) && unblock_tasks.length > 0 && _depth === 0) {
+    const phase = getCurrentPhase(state);
+    if (phase) {
+      const patches = [];
+      for (const taskId of unblock_tasks) {
+        const task = (phase.todo || []).find(t => t.id === taskId);
+        if (task?.lifecycle === 'blocked') {
+          patches.push({ id: taskId, lifecycle: 'pending', blocked_reason: null, unblock_condition: null });
+        }
+      }
+      if (patches.length > 0) {
+        const persistError = await persist(basePath, {
+          workflow_mode: 'executing_task',
+          current_task: null,
+          current_review: null,
+          phases: [{ id: phase.id, todo: patches }],
+        });
+        if (persistError) return persistError;
+        // Re-read state after unblock and continue
+        return resumeWorkflow({ basePath, _depth: _depth + 1 });
+      }
+    }
   }
 
   const preflight = await evaluatePreflight(state, basePath);
@@ -1104,12 +1129,21 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     }
   }
 
-  // Rework tasks
+  // Rework tasks — persist reviewer feedback so executor knows what to fix
   for (const taskId of (result.rework_tasks || [])) {
     const task = getTaskById(phase, taskId);
     if (!task) continue;
     if (task.lifecycle === 'checkpointed' || task.lifecycle === 'accepted') {
-      taskPatches.push({ id: taskId, lifecycle: 'needs_revalidation', evidence_refs: [] });
+      const taskIssues = [
+        ...(result.critical_issues || []).filter(i => !i.task_id || i.task_id === taskId),
+        ...(result.important_issues || []).filter(i => !i.task_id || i.task_id === taskId),
+      ].map(i => i.reason ?? i.description ?? '');
+      taskPatches.push({
+        id: taskId,
+        lifecycle: 'needs_revalidation',
+        evidence_refs: [],
+        last_review_feedback: taskIssues.length > 0 ? taskIssues : null,
+      });
     }
   }
 

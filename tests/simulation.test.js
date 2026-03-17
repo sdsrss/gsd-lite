@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 import { handleToolCall } from '../src/server.js';
-import { init, read, update, phaseComplete, addEvidence, setLockPath } from '../src/tools/state.js';
+import { init, read, update, phaseComplete, addEvidence, setLockPath, buildExecutorContext } from '../src/tools/state.js';
 import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator.js';
 
 // ── Helpers ──
@@ -664,6 +664,21 @@ describe('Simulation 5: Reviewer rejects → rework → propagation', () => {
     assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation'); // 1.1 reworked
     assert.equal(state.phases[0].todo[1].lifecycle, 'needs_revalidation'); // 1.2 propagated
     assert.equal(state.phases[0].todo[2].lifecycle, 'needs_revalidation'); // 1.3 propagated
+  });
+
+  it('5.4 Rework feedback is stored on task and passed to executor', async () => {
+    // Verify reviewer issues are stored on the reworked task
+    const state = await read({ basePath });
+    const task1 = state.phases[0].todo[0];
+    assert.ok(Array.isArray(task1.last_review_feedback), 'rework task should have last_review_feedback');
+    assert.ok(task1.last_review_feedback.length > 0, 'last_review_feedback should contain issues');
+    assert.ok(task1.last_review_feedback[0].includes('security vulnerability'));
+
+    // Verify executor context includes rework_feedback
+    const ctx = buildExecutorContext(state, '1.1', 1);
+    assert.ok(!ctx.error);
+    assert.ok(Array.isArray(ctx.rework_feedback), 'executor context should have rework_feedback');
+    assert.ok(ctx.rework_feedback[0].includes('security vulnerability'));
   });
 });
 
