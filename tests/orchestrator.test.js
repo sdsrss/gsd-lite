@@ -1836,4 +1836,69 @@ describe('orchestrator skeleton', () => {
     const state = await read({ basePath: tempDir });
     assert.equal(state.current_phase, 2);
   });
+
+  it('triggers immediate L3 review for checkpointed L3 task (like L2)', async () => {
+    await init({
+      project: 'orchestrator-l3-review',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Design database schema', level: 'L3' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'checkpointed',
+        summary: 'Designed DB schema with migrations',
+        checkpoint_commit: 'l3abc',
+        files_changed: ['src/db/schema.sql'],
+        decisions: [],
+        blockers: [],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'dispatch_reviewer');
+    assert.equal(result.review_level, 'L3');
+    assert.deepEqual(result.current_review, { scope: 'task', scope_id: '1.1', stage: 'spec' });
+    assert.equal(result.workflow_mode, 'reviewing_task');
+  });
+
+  it('resumes from awaiting_user when all blockers are manually cleared (no decisions)', async () => {
+    await init({
+      project: 'orchestrator-manual-unblock',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }, { index: 2, name: 'Task B' }] }],
+      basePath: tempDir,
+    });
+
+    // Set workflow to awaiting_user with tasks already manually unblocked (lifecycle = pending)
+    await update({
+      updates: {
+        workflow_mode: 'awaiting_user',
+        phases: [{ id: 1, todo: [
+          { id: '1.1', lifecycle: 'pending' },
+          { id: '1.2', lifecycle: 'pending' },
+        ] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'dispatch_executor');
+    assert.equal(result.task_id, '1.1');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.workflow_mode, 'executing_task');
+    assert.equal(state.current_task, '1.1');
+  });
 });

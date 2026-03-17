@@ -1075,7 +1075,7 @@ describe('validateReviewerResult edge cases', () => {
     const r = { ...base, critical_issues: [{ reason: '' }] };
     const result = validateReviewerResult(r);
     assert.equal(result.valid, false);
-    assert.ok(result.errors.some(e => e.includes('reason must be non-empty string')));
+    assert.ok(result.errors.some(e => e.includes('must be non-empty string')));
   });
 
   it('validates critical_issues entry with non-string task_id', () => {
@@ -1488,5 +1488,41 @@ describe('validateReviewerResult — disjoint check', () => {
     });
     assert.equal(result.valid, false);
     assert.ok(result.errors.some(e => e.includes('disjoint')));
+  });
+});
+
+describe('validateReviewerResult — critical_issues accepts description field', () => {
+  it('accepts critical_issues entry with description instead of reason', () => {
+    const result = validateReviewerResult({
+      scope: 'task', scope_id: '1.1', review_level: 'L2',
+      spec_passed: false, quality_passed: true,
+      critical_issues: [{ description: 'Missing input validation on user endpoint' }],
+      important_issues: [], minor_issues: [],
+      accepted_tasks: [], rework_tasks: ['1.1'], evidence: [],
+    });
+    assert.equal(result.valid, true, `Expected valid but got errors: ${result.errors.join('; ')}`);
+  });
+
+  it('still accepts critical_issues entry with reason field', () => {
+    const result = validateReviewerResult({
+      scope: 'task', scope_id: '1.1', review_level: 'L2',
+      spec_passed: false, quality_passed: true,
+      critical_issues: [{ reason: 'Missing error handling' }],
+      important_issues: [], minor_issues: [],
+      accepted_tasks: [], rework_tasks: ['1.1'], evidence: [],
+    });
+    assert.equal(result.valid, true, `Expected valid but got errors: ${result.errors.join('; ')}`);
+  });
+
+  it('rejects critical_issues entry with neither reason nor description', () => {
+    const result = validateReviewerResult({
+      scope: 'task', scope_id: '1.1', review_level: 'L2',
+      spec_passed: false, quality_passed: true,
+      critical_issues: [{ task_id: '1.1' }],
+      important_issues: [], minor_issues: [],
+      accepted_tasks: [], rework_tasks: ['1.1'], evidence: [],
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('reason') || e.includes('description')));
   });
 });

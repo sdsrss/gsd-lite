@@ -391,3 +391,53 @@ describe('matchDecisionForBlocker edge cases', () => {
     assert.equal(result, null);
   });
 });
+
+describe('phaseComplete — active phase auto-advance to accepted', () => {
+  let tempDir;
+
+  before(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-phase-active-'));
+  });
+
+  after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('completes an active phase by auto-advancing through reviewing intermediate', async () => {
+    await init({
+      project: 'active-phase-complete',
+      phases: [{ name: 'Phase 1', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    // Walk task lifecycle: pending → running → checkpointed → accepted
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+
+    // Phase is still 'active' (not manually transitioned to 'reviewing')
+    // Set phase_handoff and phase_review so handoff gate passes
+    await update({
+      updates: {
+        phases: [{
+          id: 1,
+          phase_review: { status: 'accepted' },
+          phase_handoff: { required_reviews_passed: true, tests_passed: true },
+        }],
+      },
+      basePath: tempDir,
+    });
+
+    // Verify phase is still in 'active' lifecycle
+    const stateBefore = await read({ basePath: tempDir });
+    assert.equal(stateBefore.phases[0].lifecycle, 'active');
+
+    // phaseComplete should succeed (active → accepted via reviewing intermediate)
+    const result = await phaseComplete({ phase_id: 1, basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.error, undefined);
+
+    const stateAfter = await read({ basePath: tempDir });
+    assert.equal(stateAfter.phases[0].lifecycle, 'accepted');
+  });
+});
