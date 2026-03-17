@@ -18,6 +18,56 @@ const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
 const MAX_DECISIONS = 200;
 
+// ── Result Contracts ──
+// Provided in dispatch responses so agents produce valid results on the first call.
+const RESULT_CONTRACTS = {
+  executor: {
+    task_id: 'string — must match dispatched task_id',
+    outcome: '"checkpointed" | "blocked" | "failed"',
+    summary: 'string — non-empty description of work done',
+    checkpoint_commit: 'string — required when outcome="checkpointed"',
+    files_changed: 'string[] — list of modified file paths',
+    decisions: '{ id, title, rationale }[] — architectural decisions made',
+    blockers: '{ description, type }[] — what blocked progress (when outcome="blocked")',
+    contract_changed: 'boolean — true if external API/behavior contract changed',
+    evidence: '{ type, detail }[] — verification evidence (test results, lint, etc.)',
+  },
+  reviewer: {
+    scope: '"task" | "phase"',
+    scope_id: 'string | number — task id (e.g. "1.2") or phase number',
+    review_level: '"L2" | "L1-batch" | "L1"',
+    spec_passed: 'boolean',
+    quality_passed: 'boolean',
+    critical_issues: '{ reason, task_id?, invalidates_downstream? }[] — blocking issues',
+    important_issues: '{ description, task_id? }[]',
+    minor_issues: '{ description, task_id? }[]',
+    accepted_tasks: 'string[] — task ids that passed review',
+    rework_tasks: 'string[] — task ids that need rework (disjoint with accepted_tasks)',
+    evidence: '{ type, detail }[]',
+  },
+  researcher: {
+    result: {
+      decision_ids: 'string[] — ids of decisions addressed',
+      volatility: '"low" | "medium" | "high"',
+      expires_at: 'string — ISO date when research expires',
+      sources: '{ id, type, ref, title?, accessed_at? }[] — research sources',
+    },
+    decision_index: '{ [id]: { id, title, rationale, status, summary } } — keyed by decision id',
+    artifacts: '{ "STACK.md", "ARCHITECTURE.md", "PITFALLS.md", "SUMMARY.md" } — all four required',
+  },
+  debugger: {
+    task_id: 'string — must match debug target',
+    outcome: '"root_cause_found" | "fix_suggested" | "failed"',
+    root_cause: 'string — non-empty root cause description',
+    evidence: '{ type, detail }[]',
+    hypothesis_tested: '{ hypothesis, result: "confirmed"|"rejected", evidence }[]',
+    fix_direction: 'string — recommended fix approach',
+    fix_attempts: 'number — non-negative integer (>=3 requires outcome="failed")',
+    blockers: '{ description, type }[]',
+    architecture_concern: 'boolean',
+  },
+};
+
 function isTerminalWorkflowMode(workflowMode) {
   return workflowMode === 'completed' || workflowMode === 'failed';
 }
@@ -353,6 +403,7 @@ function buildExecutorDispatch(state, phase, task, extras = {}) {
     phase_id: phase.id,
     task_id: task.id,
     executor_context: context,
+    result_contract: RESULT_CONTRACTS.executor,
     ...extras,
   };
 }
@@ -420,6 +471,7 @@ async function resumeExecutingTask(state, basePath) {
       phase_id: phase.id,
       current_review: state.current_review,
       debug_target: getDebugTarget(phase, task, state.current_review),
+      result_contract: RESULT_CONTRACTS.debugger,
     };
   }
 
@@ -450,8 +502,9 @@ async function resumeExecutingTask(state, basePath) {
 
   if (selection.task) {
     const task = selection.task;
-    // Two-step transition for needs_revalidation: must go through pending first
-    if (task.lifecycle === 'needs_revalidation') {
+    // Compound transition: auto-reset to pending for states that require it
+    // needs_revalidation/blocked/failed all transition through pending before running
+    if (['needs_revalidation', 'blocked', 'failed'].includes(task.lifecycle)) {
       const resetError = await persist(basePath, {
         phases: [{ id: phase.id, todo: [{ id: task.id, lifecycle: 'pending' }] }],
       });
@@ -520,6 +573,14 @@ async function resumeExecutingTask(state, basePath) {
   const reviewPassed = phase.phase_review?.status === 'accepted'
     || phase.phase_handoff?.required_reviews_passed === true;
   if (allAccepted && reviewPassed) {
+    // Auto-advance phase lifecycle to 'reviewing' if currently 'active'
+    // (mirrors trigger_review path at line 480-482)
+    if (phase.lifecycle === 'active') {
+      const advanceError = await persist(basePath, {
+        phases: [{ id: phase.id, lifecycle: 'reviewing' }],
+      });
+      if (advanceError) return advanceError;
+    }
     return {
       success: true,
       action: 'complete_phase',
@@ -643,6 +704,7 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = 
           checkpoint_commit: task.checkpoint_commit || null,
           files_changed: task.files_changed || [],
         })),
+        result_contract: RESULT_CONTRACTS.reviewer,
       };
     }
     case 'reviewing_task': {
@@ -670,6 +732,7 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0 } = 
           checkpoint_commit: task.checkpoint_commit || null,
           files_changed: task.files_changed || [],
         } : null,
+        result_contract: RESULT_CONTRACTS.reviewer,
       };
     }
     case 'completed':
@@ -843,6 +906,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       review_level: reviewLevel,
       current_review,
       auto_accepted: autoAccept,
+      ...(current_review ? { result_contract: RESULT_CONTRACTS.reviewer } : {}),
     };
   }
 
@@ -920,6 +984,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     task_id: task.id,
     retry_count,
     current_review,
+    result_contract: shouldDebug ? RESULT_CONTRACTS.debugger : RESULT_CONTRACTS.executor,
   };
 }
 

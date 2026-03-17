@@ -146,7 +146,17 @@ export async function init({ project, phases, research, force = false, basePath 
     state.context.last_session = new Date(Math.ceil(Math.max(...mtimes))).toISOString();
     await writeJson(statePath, state);
 
-    return { success: true };
+    return {
+      success: true,
+      project: state.project,
+      total_phases: state.total_phases,
+      phases: state.phases.map(p => ({
+        id: p.id,
+        name: p.name,
+        tasks: p.todo.length,
+      })),
+      research: !!research,
+    };
   });
 }
 

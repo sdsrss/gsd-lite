@@ -1683,6 +1683,51 @@ describe('orchestrator skeleton', () => {
     assert.equal(result.phase_id, 1);
   });
 
+  it('complete_phase auto-advances phase lifecycle from active to reviewing', async () => {
+    await init({
+      project: 'auto-lifecycle-advance',
+      phases: [
+        { name: 'Core', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Polish', tasks: [{ index: 1, name: 'Task B' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // Task 1.1: running → checkpointed → accepted
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+
+    // Set phase review as accepted but leave phase lifecycle as 'active'
+    await update({
+      updates: {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: [{
+          id: 1,
+          done: 1,
+          phase_review: { status: 'accepted' },
+          phase_handoff: { required_reviews_passed: true },
+        }],
+      },
+      basePath: tempDir,
+    });
+
+    // Verify phase is still 'active' before resume
+    const stateBefore = await read({ basePath: tempDir });
+    assert.equal(stateBefore.phases[0].lifecycle, 'active');
+
+    // Resume should signal complete_phase AND auto-advance lifecycle to 'reviewing'
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'complete_phase');
+
+    // Verify phase lifecycle was advanced to 'reviewing' (so phase-complete can transition to accepted)
+    const stateAfter = await read({ basePath: tempDir });
+    assert.equal(stateAfter.phases[0].lifecycle, 'reviewing');
+  });
+
   // ── P0-2: Dirty phase detection and rollback ──
 
   it('rolls back to earliest dirty phase when earlier phase has needs_revalidation tasks', async () => {
