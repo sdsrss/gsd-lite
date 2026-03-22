@@ -450,6 +450,35 @@ function writeNotification(notification) {
   }
 }
 
+// ── Cache Cleanup ─────────────────────────────────────────
+// Remove old plugin cache versions, keeping the N most recent.
+function pruneOldCacheVersions(cacheBase, keepCount = 3, verbose = false) {
+  try {
+    if (!fs.existsSync(cacheBase)) return;
+    const entries = fs.readdirSync(cacheBase, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name);
+    if (entries.length <= keepCount) return;
+
+    // Sort by semver: split into [major, minor, patch] and compare numerically
+    const sorted = entries.slice().sort((a, b) => {
+      const pa = a.split('.').map(Number);
+      const pb = b.split('.').map(Number);
+      for (let i = 0; i < 3; i++) {
+        if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+      }
+      return 0;
+    });
+
+    const toRemove = sorted.slice(0, sorted.length - keepCount);
+    for (const ver of toRemove) {
+      const verPath = path.join(cacheBase, ver);
+      fs.rmSync(verPath, { recursive: true, force: true });
+      if (verbose) console.log(`  Pruned old cache: ${ver}`);
+    }
+  } catch { /* best effort */ }
+}
+
 // ── Plugin Cache Sync ─────────────────────────────────────
 // When installed as a plugin, the MCP server runs from plugins/cache/gsd/gsd/<version>/
 // The auto-update installs to ~/.claude/gsd/ (runtime dir) via install.js,
@@ -529,6 +558,9 @@ function syncPluginCache(extractedDir, verbose = false) {
         }
       }
     } catch {}
+
+    // Prune old cache versions — keep only the 3 most recent
+    pruneOldCacheVersions(cacheBase, 3, verbose);
 
     if (verbose) console.log(`  Plugin cache synced to v${newVersion}`);
   } catch (err) {

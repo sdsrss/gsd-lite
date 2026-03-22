@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Plugin installer for GSD-Lite
 
-import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, renameSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -232,6 +232,32 @@ export function main() {
     }
   } else {
     log('  [dry-run] Would register MCP server in settings.json');
+  }
+
+  // 9. Prune old plugin cache versions (keep latest 3)
+  if (!DRY_RUN && isPluginInstall) {
+    const cacheBase = join(CLAUDE_DIR, 'plugins', 'cache', 'gsd', 'gsd');
+    if (existsSync(cacheBase)) {
+      try {
+        const entries = readdirSync(cacheBase, { withFileTypes: true })
+          .filter(e => e.isDirectory()).map(e => e.name);
+        if (entries.length > 3) {
+          const sorted = entries.slice().sort((a, b) => {
+            const pa = a.split('.').map(Number);
+            const pb = b.split('.').map(Number);
+            for (let i = 0; i < 3; i++) {
+              if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+            }
+            return 0;
+          });
+          const toRemove = sorted.slice(0, sorted.length - 3);
+          for (const ver of toRemove) {
+            rmSync(join(cacheBase, ver), { recursive: true, force: true });
+          }
+          log(`  ✓ Pruned ${toRemove.length} old cache version(s), kept latest 3`);
+        }
+      } catch { /* best effort */ }
+    }
   }
 
   log('\n✓ GSD-Lite installed successfully!');
