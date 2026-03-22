@@ -1013,7 +1013,14 @@ describe('validateReviewerResult edge cases', () => {
     const r = { ...base, scope_id: '' };
     const result = validateReviewerResult(r);
     assert.equal(result.valid, false);
-    assert.ok(result.errors.some(e => e.includes('missing scope_id')));
+    assert.ok(result.errors.some(e => e.includes('scope_id')));
+  });
+
+  it('rejects scope_id of 0', () => {
+    const r = { ...base, scope_id: 0 };
+    const result = validateReviewerResult(r);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('scope_id')));
   });
 
   it('accepts numeric scope_id', () => {
@@ -1457,6 +1464,31 @@ describe('createInitialState — requires validation', () => {
     });
     assert.equal(result.error, undefined);
     assert.equal(result.project, 'test');
+  });
+
+  it('rejects invalid gate value', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [
+        { name: 'A' },
+        { name: 'B', requires: [{ kind: 'task', id: '1.1', gate: 'checkpint' }] },
+      ] }],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /gate must be one of/);
+  });
+
+  it('accepts valid gate values', () => {
+    for (const gate of ['checkpoint', 'accepted', 'phase_complete']) {
+      const result = createInitialState({
+        project: 'test',
+        phases: [{ name: 'P1', tasks: [
+          { name: 'A' },
+          { name: 'B', requires: [{ kind: 'task', id: '1.1', gate }] },
+        ] }],
+      });
+      assert.equal(result.error, undefined, `gate "${gate}" should be accepted`);
+    }
   });
 });
 

@@ -5,7 +5,7 @@ import { stat } from 'node:fs/promises';
 import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject, clearGsdDirCache } from '../../utils.js';
 import {
   CANONICAL_FIELDS,
-  TASK_LIFECYCLE,
+  TASK_LEVELS,
   validateState,
   validateStateUpdate,
   validateTransition,
@@ -605,6 +605,300 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
 
     return { success: true, archived };
   });
+}
+
+/**
+ * Incrementally patch the plan: add/remove/reorder tasks, update task fields, add dependencies.
+ * Runs inside withStateLock for atomicity. Validates schema + circular deps after patching.
+ */
+export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
+  if (!Array.isArray(operations) || operations.length === 0) {
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'operations must be a non-empty array' };
+  }
+
+  const validOps = ['add_task', 'remove_task', 'reorder_tasks', 'update_task', 'add_dependency'];
+  for (const op of operations) {
+    if (!op || typeof op !== 'object' || !validOps.includes(op.op)) {
+      return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `Invalid operation: ${JSON.stringify(op?.op)}. Must be one of: ${validOps.join(', ')}` };
+    }
+  }
+
+  const statePath = await getStatePath(basePath);
+  if (!statePath) {
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+  }
+  ensureLockPathFromStatePath(statePath);
+
+  return withStateLock(async () => {
+    const result = await readJson(statePath);
+    if (!result.ok) {
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
+    }
+    const state = migrateState(result.data);
+
+    // Guard: only allow patching in non-terminal states
+    if (state.workflow_mode === 'completed' || state.workflow_mode === 'failed') {
+      return { error: true, code: ERROR_CODES.TERMINAL_STATE, message: `Cannot patch plan in terminal state '${state.workflow_mode}'` };
+    }
+
+    const applied = [];
+    const errors = [];
+
+    for (const op of operations) {
+      const opResult = _applyPatchOp(state, op);
+      if (opResult.error) {
+        errors.push(`${op.op}: ${opResult.message}`);
+      } else {
+        applied.push(opResult.summary);
+      }
+    }
+
+    if (errors.length > 0) {
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Patch failed: ${errors.join('; ')}` };
+    }
+
+    // Detect circular dependencies after all patches
+    const cycleError = _detectCycles(state);
+    if (cycleError) {
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: cycleError };
+    }
+
+    // Recompute done counts
+    for (const phase of state.phases) {
+      if (Array.isArray(phase.todo)) {
+        phase.tasks = phase.todo.length;
+        phase.done = phase.todo.filter(t => t.lifecycle === 'accepted').length;
+      }
+    }
+    state.total_phases = state.phases.length;
+
+    // Increment plan version
+    state.plan_version = (state.plan_version || 0) + 1;
+
+    // Full validation
+    const validation = validateState(state);
+    if (!validation.valid) {
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${validation.errors.join('; ')}` };
+    }
+
+    await writeJson(statePath, state);
+    return { success: true, applied, plan_version: state.plan_version };
+  });
+}
+
+function _applyPatchOp(state, op) {
+  switch (op.op) {
+    case 'add_task': {
+      const { phase_id, task } = op;
+      if (typeof phase_id !== 'number') return { error: true, message: 'phase_id must be a number' };
+      if (!task || typeof task.name !== 'string' || task.name.length === 0) return { error: true, message: 'task.name must be a non-empty string' };
+
+      const phase = state.phases.find(p => p.id === phase_id);
+      if (!phase) return { error: true, message: `Phase ${phase_id} not found` };
+
+      // Cannot add tasks to accepted phases
+      if (phase.lifecycle === 'accepted') return { error: true, message: `Cannot add tasks to accepted phase ${phase_id}` };
+
+      // Compute next task index
+      const existingIndices = phase.todo.map(t => {
+        const parts = t.id.split('.');
+        return parseInt(parts[1], 10);
+      });
+      const nextIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 1;
+      const taskId = `${phase_id}.${task.index ?? nextIndex}`;
+
+      // Check for duplicate ID
+      if (phase.todo.some(t => t.id === taskId)) {
+        return { error: true, message: `Task ID ${taskId} already exists` };
+      }
+
+      const level = task.level || 'L1';
+      if (!TASK_LEVELS.includes(level)) {
+        return { error: true, message: `level must be one of ${TASK_LEVELS.join(', ')} (got "${level}")` };
+      }
+
+      const newTask = {
+        id: taskId,
+        name: task.name,
+        lifecycle: 'pending',
+        level,
+        requires: task.requires || [],
+        retry_count: 0,
+        review_required: task.review_required !== false,
+        verification_required: task.verification_required !== false,
+        checkpoint_commit: null,
+        research_basis: task.research_basis || [],
+        evidence_refs: [],
+      };
+
+      // Insert after specified task or at end
+      if (task.after) {
+        const afterIdx = phase.todo.findIndex(t => t.id === task.after);
+        if (afterIdx === -1) return { error: true, message: `after task ${task.after} not found` };
+        phase.todo.splice(afterIdx + 1, 0, newTask);
+      } else {
+        phase.todo.push(newTask);
+      }
+
+      return { summary: `Added task ${taskId} "${task.name}" to phase ${phase_id}` };
+    }
+
+    case 'remove_task': {
+      const { task_id } = op;
+      if (typeof task_id !== 'string') return { error: true, message: 'task_id must be a string' };
+
+      const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));
+      if (!phase) return { error: true, message: `Task ${task_id} not found` };
+
+      const task = phase.todo.find(t => t.id === task_id);
+      // Cannot remove running or accepted tasks
+      if (['running', 'accepted', 'checkpointed'].includes(task.lifecycle)) {
+        return { error: true, message: `Cannot remove task ${task_id} in '${task.lifecycle}' state` };
+      }
+
+      // Check if any other task depends on this one
+      for (const p of state.phases) {
+        for (const t of (p.todo || [])) {
+          const depOnRemoved = (t.requires || []).some(d => d.kind === 'task' && d.id === task_id);
+          if (depOnRemoved) {
+            return { error: true, message: `Cannot remove task ${task_id}: task ${t.id} depends on it` };
+          }
+        }
+      }
+
+      // Remove current_task reference if it points to this task
+      if (state.current_task === task_id) {
+        state.current_task = null;
+      }
+
+      phase.todo = phase.todo.filter(t => t.id !== task_id);
+      return { summary: `Removed task ${task_id} from phase ${phase.id}` };
+    }
+
+    case 'reorder_tasks': {
+      const { phase_id, order } = op;
+      if (typeof phase_id !== 'number') return { error: true, message: 'phase_id must be a number' };
+      if (!Array.isArray(order)) return { error: true, message: 'order must be an array of task IDs' };
+
+      const phase = state.phases.find(p => p.id === phase_id);
+      if (!phase) return { error: true, message: `Phase ${phase_id} not found` };
+
+      const taskMap = new Map(phase.todo.map(t => [t.id, t]));
+      const existing = new Set(taskMap.keys());
+      const ordered = new Set(order);
+
+      // Must contain exactly the same task IDs
+      if (ordered.size !== existing.size || ![...ordered].every(id => existing.has(id))) {
+        return { error: true, message: `order must contain exactly the same task IDs as phase ${phase_id}` };
+      }
+
+      phase.todo = order.map(id => taskMap.get(id));
+      return { summary: `Reordered tasks in phase ${phase_id}` };
+    }
+
+    case 'update_task': {
+      const { task_id, ...fields } = op;
+      if (typeof task_id !== 'string') return { error: true, message: 'task_id must be a string' };
+
+      const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));
+      if (!phase) return { error: true, message: `Task ${task_id} not found` };
+
+      const task = phase.todo.find(t => t.id === task_id);
+      const allowedFields = ['name', 'level', 'review_required', 'verification_required', 'research_basis'];
+      const updates = {};
+      for (const key of allowedFields) {
+        if (key in fields) {
+          updates[key] = fields[key];
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return { error: true, message: `No valid fields to update. Allowed: ${allowedFields.join(', ')}` };
+      }
+      if (updates.level && !TASK_LEVELS.includes(updates.level)) {
+        return { error: true, message: `level must be one of ${TASK_LEVELS.join(', ')} (got "${updates.level}")` };
+      }
+
+      Object.assign(task, updates);
+      return { summary: `Updated task ${task_id}: ${Object.keys(updates).join(', ')}` };
+    }
+
+    case 'add_dependency': {
+      const { task_id, requires } = op;
+      if (typeof task_id !== 'string') return { error: true, message: 'task_id must be a string' };
+      if (!requires || typeof requires !== 'object') return { error: true, message: 'requires must be an object with kind and id' };
+
+      const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));
+      if (!phase) return { error: true, message: `Task ${task_id} not found` };
+
+      if (!['task', 'phase'].includes(requires.kind)) {
+        return { error: true, message: `requires.kind must be "task" or "phase"` };
+      }
+
+      const validGates = ['checkpoint', 'accepted', 'phase_complete'];
+      if (requires.gate && !validGates.includes(requires.gate)) {
+        return { error: true, message: `requires.gate must be one of ${validGates.join(', ')}` };
+      }
+
+      // Validate target exists
+      if (requires.kind === 'task') {
+        const targetExists = state.phases.some(p => p.todo?.some(t => t.id === requires.id));
+        if (!targetExists) return { error: true, message: `Dependency target task ${requires.id} not found` };
+      } else {
+        const phaseId = Number(requires.id);
+        if (!state.phases.some(p => p.id === phaseId)) {
+          return { error: true, message: `Dependency target phase ${requires.id} not found` };
+        }
+      }
+
+      const task = phase.todo.find(t => t.id === task_id);
+      // Check for duplicate dependency
+      const isDupe = task.requires.some(d => d.kind === requires.kind && String(d.id) === String(requires.id));
+      if (isDupe) return { error: true, message: `Task ${task_id} already depends on ${requires.kind}:${requires.id}` };
+
+      task.requires.push(requires);
+      return { summary: `Added dependency ${requires.kind}:${requires.id} to task ${task_id}` };
+    }
+
+    default:
+      return { error: true, message: `Unknown operation: ${op.op}` };
+  }
+}
+
+function _detectCycles(state) {
+  for (const phase of state.phases) {
+    const tasks = phase.todo || [];
+    const taskIds = tasks.map(t => t.id);
+    const inDegree = new Map(taskIds.map(id => [id, 0]));
+    const adj = new Map(taskIds.map(id => [id, []]));
+
+    for (const task of tasks) {
+      for (const dep of (task.requires || [])) {
+        if (dep.kind === 'task' && inDegree.has(dep.id)) {
+          adj.get(dep.id).push(task.id);
+          inDegree.set(task.id, inDegree.get(task.id) + 1);
+        }
+      }
+    }
+
+    const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
+    let sorted = 0;
+    while (queue.length > 0) {
+      const node = queue.shift();
+      sorted++;
+      for (const neighbor of adj.get(node)) {
+        const d = inDegree.get(neighbor) - 1;
+        inDegree.set(neighbor, d);
+        if (d === 0) queue.push(neighbor);
+      }
+    }
+
+    if (sorted < taskIds.length) {
+      const cycleNodes = [...inDegree.entries()].filter(([, d]) => d > 0).map(([id]) => id);
+      return `Circular dependency detected in phase ${phase.id}: ${cycleNodes.join(', ')}`;
+    }
+  }
+  return null;
 }
 
 /**

@@ -76,6 +76,12 @@ describe('reviewer result contract', () => {
     const r = { ...validResult, spec_passed: 'yes', evidence: 'not-array' };
     assert.equal(validateReviewerResult(r).valid, false);
   });
+
+  it('rejects scope_id of 0', () => {
+    const r = { ...validResult, scope_id: 0 };
+    assert.equal(validateReviewerResult(r).valid, false);
+    assert.ok(validateReviewerResult(r).errors.some(e => e.includes('scope_id')));
+  });
 });
 
 describe('researcher result contract', () => {

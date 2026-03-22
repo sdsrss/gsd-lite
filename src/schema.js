@@ -595,8 +595,8 @@ export function validateExecutorResult(r) {
 export function validateReviewerResult(r) {
   const errors = [];
   if (!['task', 'phase'].includes(r.scope)) errors.push('invalid scope');
-  if (!(typeof r.scope_id === 'string' || typeof r.scope_id === 'number') || r.scope_id === '') {
-    errors.push('missing scope_id');
+  if (!(typeof r.scope_id === 'string' || typeof r.scope_id === 'number') || r.scope_id === '' || r.scope_id === 0) {
+    errors.push('missing or invalid scope_id');
   }
   if (!['L2', 'L1-batch', 'L1'].includes(r.review_level)) errors.push('invalid review_level (expected L2, L1-batch, or L1)');
   if (typeof r.spec_passed !== 'boolean') errors.push('spec_passed must be boolean');
@@ -712,6 +712,8 @@ export function createInitialState({ project, phases }) {
   if (!Array.isArray(phases)) {
     return { error: true, message: 'phases must be an array' };
   }
+  // Note: empty phases is allowed here for internal/test use;
+  // the public API guard is in init() which rejects phases.length === 0.
   // Validate task names and uniqueness before creating state
   const seenIds = new Set();
   for (const [pi, p] of phases.entries()) {
@@ -740,6 +742,10 @@ export function createInitialState({ project, phases }) {
         }
         if (!['task', 'phase'].includes(dep.kind)) {
           return { error: true, message: `Task ${taskId}: requires entry kind must be "task" or "phase" (got "${dep.kind}")` };
+        }
+        const validGates = ['checkpoint', 'accepted', 'phase_complete'];
+        if (dep.gate && !validGates.includes(dep.gate)) {
+          return { error: true, message: `Task ${taskId}: requires entry gate must be one of ${validGates.join(', ')} (got "${dep.gate}")` };
         }
         if (dep.kind === 'task' && !seenIds.has(String(dep.id))) {
           return { error: true, message: `Task ${taskId}: requires references non-existent task "${dep.id}" (valid IDs: ${[...seenIds].join(', ')})` };

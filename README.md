@@ -10,7 +10,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 
 ### Structured Execution Engine
 - **Phase-based project management** — Break work into phases with ordered tasks, dependency tracking, and handoff gates
-- **State machine orchestration** — 11 workflow modes with precise state transitions, persistent to `state.json`
+- **State machine orchestration** — 12 workflow modes with precise state transitions, persistent to `state.json`
 - **Automatic task scheduling** — Gate-aware dependency resolution determines what runs next
 - **Session resilience** — Stop anytime, resume exactly where you left off — even across Claude Code restarts
 
@@ -41,7 +41,7 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
                                               (code→review→verify→advance)
 ```
 
-### 5 Commands
+### 6 Commands
 
 | Command | Purpose |
 |---------|---------|
@@ -50,6 +50,7 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 | `/gsd:resume` | Resume execution from saved state |
 | `/gsd:status` | View project progress dashboard |
 | `/gsd:stop` | Save state and pause execution |
+| `/gsd:doctor` | Diagnostic checks on GSD-Lite installation and project health |
 
 ### 4 Agents
 
@@ -60,7 +61,7 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 | **researcher** | Ecosystem research (Context7 → official docs → web) | Confidence scoring + TTL |
 | **debugger** | 4-phase systematic root cause analysis | Root Cause Iron Law |
 
-### MCP Server (10 Tools)
+### MCP Server (11 Tools)
 
 | Tool | Purpose |
 |------|---------|
@@ -68,6 +69,7 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 | `state-init` | Initialize `.gsd/` directory with project structure |
 | `state-read` | Read state with optional field filtering |
 | `state-update` | Update canonical fields with lifecycle validation |
+| `state-patch` | Incrementally modify plan (add/remove/reorder tasks, update fields, add dependencies) |
 | `phase-complete` | Complete a phase after verifying handoff gates |
 | `orchestrator-resume` | Resume orchestration from current state |
 | `orchestrator-handle-executor-result` | Process executor output, advance lifecycle |
@@ -202,33 +204,44 @@ All state lives in `.gsd/state.json` — a single source of truth with:
 
 | Dimension | GSD | GSD-Lite |
 |-----------|-----|----------|
-| Commands | 32 | **5** |
+| Commands | 32 | **6** |
 | Agents | 12 | **4** |
 | Source files | 100+ | **~35** |
 | Installer | 2465 lines | **~80 lines** |
 | User interactions | 6+ confirmations | **Typically 2** |
 | TDD / Anti-rationalization | No | **Yes** |
-| State machine recovery | Partial | **Full (11 modes)** |
+| State machine recovery | Partial | **Full (12 modes)** |
 | Evidence-based verification | No | **Yes** |
 
 ## Project Structure
 
 ```
 gsd-lite/
-├── src/                    # MCP Server + tools (~3300 lines)
-│   ├── server.js           # MCP Server entry (10 tools)
+├── src/                    # MCP Server + tools
+│   ├── server.js           # MCP Server entry (11 tools)
 │   ├── schema.js           # State schema + lifecycle validation
-│   ├── utils.js            # Shared utilities (atomic writes, git)
+│   ├── utils.js            # Shared utilities (atomic writes, git, file lock)
 │   └── tools/
-│       ├── state.js        # State CRUD + evidence + propagation
-│       ├── orchestrator.js # Orchestration logic + agent handlers
+│       ├── state/          # State management (modular)
+│       │   ├── constants.js  # Error codes, lock infrastructure
+│       │   ├── crud.js       # CRUD operations + plan patching
+│       │   ├── logic.js      # Task scheduling, propagation, research
+│       │   └── index.js      # Re-exports
+│       ├── orchestrator/   # Orchestration logic (modular)
+│       │   ├── helpers.js    # Shared constants, preflight, dispatch
+│       │   ├── resume.js     # Workflow resume state machine
+│       │   ├── executor.js   # Executor result handler
+│       │   ├── reviewer.js   # Reviewer result handler
+│       │   ├── debugger.js   # Debugger result handler
+│       │   ├── researcher.js # Researcher result handler
+│       │   └── index.js      # Re-exports
 │       └── verify.js       # lint/typecheck/test verification
-├── commands/               # 5 slash commands
-├── agents/                 # 4 subagent prompts
-├── workflows/              # 5 core workflows (TDD, review, debug, research, deviation)
-├── references/             # 8 reference docs (execution loop, state diagram, evidence spec, ...)
-├── hooks/                  # Context monitoring (StatusLine + PostToolUse)
-├── tests/                  # 674 tests (unit + simulation + E2E)
+├── commands/               # 6 slash commands (start, prd, resume, status, stop, doctor)
+├── agents/                 # 4 subagent prompts (executor, reviewer, researcher, debugger)
+├── workflows/              # 6 core workflows (TDD, review, debug, research, deviation, execution-flow)
+├── references/             # 8 reference docs
+├── hooks/                  # Context monitoring (StatusLine + PostToolUse + SessionStart + AutoUpdate)
+├── tests/                  # 779 tests (unit + simulation + E2E)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script
 └── uninstall.js            # Uninstall script
@@ -237,7 +250,7 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 674 tests
+npm test                    # Run all 779 tests
 npm run test:coverage       # Tests + coverage report (94%+ lines, 81%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file

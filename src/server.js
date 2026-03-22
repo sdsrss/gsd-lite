@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import { init, read, update, phaseComplete } from './tools/state/index.js';
+import { init, read, update, phaseComplete, patchPlan } from './tools/state/index.js';
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION = _require('../package.json').version;
@@ -155,6 +155,32 @@ const TOOLS = [
     },
   },
   {
+    name: 'state-patch',
+    description: 'Incrementally patch the plan: add/remove/reorder tasks, update fields, add dependencies — without full replan',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        operations: {
+          type: 'array',
+          description: 'Array of patch operations. Each: {op: "add_task"|"remove_task"|"reorder_tasks"|"update_task"|"add_dependency", ...params}',
+          items: {
+            type: 'object',
+            properties: {
+              op: { type: 'string', description: 'Operation type' },
+              phase_id: { type: 'number', description: 'Phase ID (for add_task, reorder_tasks)' },
+              task_id: { type: 'string', description: 'Task ID (for remove_task, update_task, add_dependency)' },
+              task: { type: 'object', description: 'Task definition (for add_task): {name, level?, requires?, after?, review_required?, verification_required?}' },
+              order: { type: 'array', items: { type: 'string' }, description: 'Ordered task IDs (for reorder_tasks)' },
+              requires: { type: 'object', description: 'Dependency (for add_dependency): {kind: "task"|"phase", id, gate?}' },
+            },
+            required: ['op'],
+          },
+        },
+      },
+      required: ['operations'],
+    },
+  },
+  {
     name: 'orchestrator-resume',
     description: 'Resume the minimal orchestration loop from workflow_mode/current_phase state',
     inputSchema: {
@@ -264,6 +290,9 @@ async function dispatchToolCall(name, args) {
       break;
     case 'phase-complete':
       result = await phaseComplete(args);
+      break;
+    case 'state-patch':
+      result = await patchPlan(args);
       break;
     case 'orchestrator-resume':
       result = await resumeWorkflow(args || {});

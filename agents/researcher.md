@@ -27,6 +27,9 @@ tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 关键推荐生成 decision id，供 plan/task 的 `research_basis` 引用
 
 <result_contract>
+编排器调用 `orchestrator-handle-researcher-result` 需要三个参数:
+
+**1. result** — 研究元数据:
 ```json
 {
   "decision_ids": ["decision:jwt-rotation"],
@@ -35,6 +38,27 @@ tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
   "sources": [
     { "id": "src1", "type": "Context7", "ref": "Next.js auth docs" }
   ]
+}
+```
+
+**2. decision_index** — 以 decision id 为 key 的索引对象 (每个 decision_ids 中的 id 必须在此出现):
+```json
+{
+  "decision:jwt-rotation": {
+    "summary": "Use refresh token rotation for JWT auth",
+    "source": "Context7",
+    "expires_at": "2026-03-16T10:30:00Z"
+  }
+}
+```
+
+**3. artifacts** — 四个研究文档的 Markdown 内容 (上方 research_output 中的四个文件):
+```json
+{
+  "STACK.md": "# 技术栈推荐\n...",
+  "ARCHITECTURE.md": "# 架构模式\n...",
+  "PITFALLS.md": "# 领域陷阱\n...",
+  "SUMMARY.md": "# 摘要\n..."
 }
 ```
 </result_contract>
