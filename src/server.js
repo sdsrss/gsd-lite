@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import { init, read, update, phaseComplete } from './tools/state.js';
+import { init, read, update, phaseComplete } from './tools/state/index.js';
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION = _require('../package.json').version;

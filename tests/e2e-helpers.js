@@ -2,7 +2,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, read, update, addEvidence, phaseComplete, pruneEvidence } from '../src/tools/state.js';
+import { init, read, update, addEvidence, phaseComplete, pruneEvidence } from '../src/tools/state/index.js';
 
 export async function createTempDir() {
   return mkdtemp(join(tmpdir(), 'gsd-e2e-'));

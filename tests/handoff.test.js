@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, update, read, phaseComplete } from '../src/tools/state.js';
+import { init, update, read, phaseComplete } from '../src/tools/state/index.js';
 
 async function prepareReviewingAcceptedPhase(basePath) {
   await init({

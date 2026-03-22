@@ -1,7 +1,7 @@
 // tests/research-refresh.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyResearchRefresh } from '../src/tools/state.js';
+import { applyResearchRefresh } from '../src/tools/state/index.js';
 
 describe('applyResearchRefresh', () => {
   it('rule 1: same ID + same conclusion → keep reference, update expires_at', () => {

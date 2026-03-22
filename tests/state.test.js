@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, stat as fsStat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, read, update, phaseComplete, matchDecisionForBlocker } from '../src/tools/state.js';
+import { init, read, update, phaseComplete, matchDecisionForBlocker } from '../src/tools/state/index.js';
 import { readJson } from '../src/utils.js';
 
 describe('state tools', () => {
@@ -252,7 +252,7 @@ describe('concurrent withStateLock serialization', () => {
   });
 
   it('serializes concurrent addEvidence() calls without data loss', async () => {
-    const { addEvidence } = await import('../src/tools/state.js');
+    const { addEvidence } = await import('../src/tools/state/index.js');
 
     const results = await Promise.all([
       addEvidence({ id: 'ev:concurrent:1', data: { scope: 'task:1.1', summary: 'first' }, basePath: tempDir }),

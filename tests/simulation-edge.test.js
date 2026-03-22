@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
-import { init, read, update, addEvidence, setLockPath, selectRunnableTask, applyResearchRefresh, propagateInvalidation, reclassifyReviewLevel, matchDecisionForBlocker, buildExecutorContext } from '../src/tools/state.js';
+import { init, read, update, addEvidence, setLockPath, selectRunnableTask, applyResearchRefresh, propagateInvalidation, reclassifyReviewLevel, matchDecisionForBlocker, buildExecutorContext } from '../src/tools/state/index.js';
 import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, resumeWorkflow } from '../src/tools/orchestrator.js';
 
 let basePath;
@@ -758,6 +758,37 @@ describe('Edge 17: Schema migration v0→v1', () => {
     assert.equal(state.schema_version, 1);
     assert.ok(state.evidence !== undefined);
     assert.ok(state.decisions !== undefined);
+    assert.ok(state.context !== undefined);
+  });
+
+  it('17.2 update() auto-migrates v0 state before merging', async () => {
+    await init({
+      project: 'MigrateUpdateTest',
+      phases: makePhases([{ name: 'P1', tasks: [{ name: 'T1' }] }]),
+      basePath,
+    });
+
+    // Tamper: downgrade to v0 (remove v1-only fields)
+    const statePath = join(basePath, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf-8'));
+    delete raw.evidence;
+    delete raw.research;
+    delete raw.decisions;
+    delete raw.context;
+    raw.schema_version = 0;
+    await writeFile(statePath, JSON.stringify(raw), 'utf-8');
+
+    // update() should auto-migrate before applying the update
+    const result = await update({
+      updates: { git_head: 'abc1234' },
+      basePath,
+    });
+    assert.ok(!result.error, `Update failed: ${JSON.stringify(result)}`);
+
+    const state = await read({ basePath });
+    assert.equal(state.schema_version, 1);
+    assert.equal(state.git_head, 'abc1234');
+    assert.ok(state.evidence !== undefined);
     assert.ok(state.context !== undefined);
   });
 });

@@ -1,7 +1,7 @@
 // tests/propagation.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { propagateInvalidation } from '../src/tools/state.js';
+import { propagateInvalidation } from '../src/tools/state/index.js';
 
 describe('propagateInvalidation', () => {
   it('invalidates downstream when contract_changed is true', () => {

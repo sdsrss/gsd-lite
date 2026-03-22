@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, update, read, setLockPath } from '../src/tools/state.js';
+import { init, update, read, setLockPath } from '../src/tools/state/index.js';
 
 describe('concurrent state operations (P2-11)', () => {
   let tempDir;
@@ -146,7 +146,7 @@ describe('concurrent state operations (P2-11)', () => {
     const { fork } = await import('node:child_process');
     const { fileURLToPath } = await import('node:url');
     const workerPath = join(tempDir, 'concurrent-worker.mjs');
-    const stateModulePath = join(fileURLToPath(import.meta.url), '../../src/tools/state.js');
+    const stateModulePath = join(fileURLToPath(import.meta.url), '../../src/tools/state/index.js');
 
     const workerScript = `
 import { update, setLockPath } from ${JSON.stringify(stateModulePath)};

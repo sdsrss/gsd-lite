@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, read, update } from '../src/tools/state.js';
+import { init, read, update } from '../src/tools/state/index.js';
 import {
   handleDebuggerResult,
   handleExecutorResult,
@@ -599,6 +599,8 @@ describe('orchestrator skeleton', () => {
     assert.equal(state.current_review, null);
     assert.equal(state.current_task, '1.1');
     assert.equal(state.phases[0].todo[0].debug_context.fix_direction, 'Reuse shared client and tighten cleanup');
+    // Verify retry_count is reset after successful debugging
+    assert.equal(state.phases[0].todo[0].retry_count, 0, 'retry_count should reset to 0 after successful debugger');
   });
 
   it('fails the phase when debugger reports architecture concern', async () => {

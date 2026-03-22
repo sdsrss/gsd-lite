@@ -9,7 +9,7 @@ describe('evidence store', () => {
 
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'gsd-evidence-'));
-    const { init } = await import('../src/tools/state.js');
+    const { init } = await import('../src/tools/state/index.js');
     await init({
       project: 'evidence-test',
       phases: [
@@ -25,7 +25,7 @@ describe('evidence store', () => {
   });
 
   it('adds evidence entry', async () => {
-    const { addEvidence, read } = await import('../src/tools/state.js');
+    const { addEvidence, read } = await import('../src/tools/state/index.js');
     await addEvidence({
       id: 'ev:test:task-1',
       data: {
@@ -43,7 +43,7 @@ describe('evidence store', () => {
   });
 
   it('adds multiple evidence entries', async () => {
-    const { addEvidence, read } = await import('../src/tools/state.js');
+    const { addEvidence, read } = await import('../src/tools/state/index.js');
     await addEvidence({
       id: 'ev:lint:phase-1',
       data: {
@@ -61,11 +61,11 @@ describe('evidence store', () => {
   });
 
   it('prunes evidence on phase handoff (archives old phases)', async () => {
-    const { pruneEvidence, read } = await import('../src/tools/state.js');
+    const { pruneEvidence, read } = await import('../src/tools/state/index.js');
     const { readJson } = await import('../src/utils.js');
 
     // Add evidence scoped to phase 1
-    const { addEvidence } = await import('../src/tools/state.js');
+    const { addEvidence } = await import('../src/tools/state/index.js');
     await addEvidence({
       id: 'ev:test:old-phase-1',
       data: { command: 'test', scope: 'task:1.1', exit_code: 0, timestamp: new Date().toISOString(), summary: 'old' },
@@ -89,7 +89,7 @@ describe('evidence store', () => {
   });
 
   it('prunes phase 1 evidence when currentPhase=2 (off-by-one regression)', async () => {
-    const { addEvidence, pruneEvidence, read } = await import('../src/tools/state.js');
+    const { addEvidence, pruneEvidence, read } = await import('../src/tools/state/index.js');
 
     // Add evidence scoped to phase 1
     await addEvidence({
@@ -108,7 +108,7 @@ describe('evidence store', () => {
   });
 
   it('auto-prunes evidence when exceeding MAX_EVIDENCE_ENTRIES', async () => {
-    const { addEvidence, read, update } = await import('../src/tools/state.js');
+    const { addEvidence, read, update } = await import('../src/tools/state/index.js');
 
     // Pre-fill evidence with 200 entries (the MAX) scoped to phase 1
     const bulkEvidence = {};
@@ -142,7 +142,7 @@ describe('evidence store', () => {
 
     before(async () => {
       scopeDir = await mkdtemp(join(tmpdir(), 'gsd-scope-'));
-      const { init } = await import('../src/tools/state.js');
+      const { init } = await import('../src/tools/state/index.js');
       await init({
         project: 'scope-test',
         phases: [
@@ -159,7 +159,7 @@ describe('evidence store', () => {
     });
 
     it('archives standard scope "task:1.1" when currentPhase=3', async () => {
-      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state.js');
+      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state/index.js');
       await addEvidence({
         id: 'ev:scope:phase1',
         data: { command: 'test', scope: 'task:1.1', exit_code: 0, timestamp: new Date().toISOString(), summary: 'p1' },
@@ -175,7 +175,7 @@ describe('evidence store', () => {
     });
 
     it('archives standard scope "task:2.3" when currentPhase=3 (keep only current phase)', async () => {
-      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state.js');
+      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state/index.js');
       await addEvidence({
         id: 'ev:scope:phase2',
         data: { command: 'test', scope: 'task:2.3', exit_code: 0, timestamp: new Date().toISOString(), summary: 'p2' },
@@ -192,7 +192,7 @@ describe('evidence store', () => {
     });
 
     it('retains multi-digit scope "task:10.5" when currentPhase=3', async () => {
-      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state.js');
+      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state/index.js');
       await addEvidence({
         id: 'ev:scope:phase10',
         data: { command: 'test', scope: 'task:10.5', exit_code: 0, timestamp: new Date().toISOString(), summary: 'p10' },
@@ -208,7 +208,7 @@ describe('evidence store', () => {
     });
 
     it('retains non-task scope "global" (parseScopePhase returns null)', async () => {
-      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state.js');
+      const { addEvidence, pruneEvidence, read } = await import('../src/tools/state/index.js');
       await addEvidence({
         id: 'ev:scope:global',
         data: { command: 'check', scope: 'global', exit_code: 0, timestamp: new Date().toISOString(), summary: 'global' },
@@ -224,7 +224,7 @@ describe('evidence store', () => {
     });
 
     it('retains evidence with non-task scope (global → never archived)', async () => {
-      const { update, pruneEvidence, read } = await import('../src/tools/state.js');
+      const { update, pruneEvidence, read } = await import('../src/tools/state/index.js');
       // Use a non-task scope that parseScopePhase can't extract a phase from
       const state = await read({ basePath: scopeDir });
       state.evidence['ev:scope:noscope'] = { command: 'test', exit_code: 0, timestamp: new Date().toISOString(), summary: 'global scope', scope: 'global' };
@@ -239,7 +239,7 @@ describe('evidence store', () => {
     });
 
     it('handles empty evidence without crashing', async () => {
-      const { update, pruneEvidence } = await import('../src/tools/state.js');
+      const { update, pruneEvidence } = await import('../src/tools/state/index.js');
       await update({ updates: { evidence: {} }, basePath: scopeDir });
 
       const result = await pruneEvidence({ currentPhase: 3, basePath: scopeDir });

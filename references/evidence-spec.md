@@ -79,14 +79,14 @@ task:3.1   -> phase 3, task 1
 
 此函数用于 evidence 归档时判断 evidence 所属 phase。
 
-来源: `parseScopePhase()` in `src/tools/state.js`
+来源: `parseScopePhase()` in `src/tools/state/`
 
 ## 容量限制与自动裁剪
 
 ### MAX_EVIDENCE_ENTRIES
 
 - 硬限制: `200` 条
-- 定义位置: `src/tools/state.js` 顶层常量
+- 定义位置: `src/tools/state/` 顶层常量
 
 ### 自动裁剪触发
 
@@ -163,4 +163,4 @@ _pruneEvidenceFromState()
 - 更新时机: executor checkpointed / blocked / failed 时从 result.evidence 覆写
 - 清空时机: `propagateInvalidation()` 或 reviewer 标记 rework 时清空为 `[]`
 
-来源: `addEvidence()`, `_pruneEvidenceFromState()`, `pruneEvidence()`, `phaseComplete()` in `src/tools/state.js`; `handleExecutorResult()`, `handleReviewerResult()` in `src/tools/orchestrator.js`
+来源: `addEvidence()`, `_pruneEvidenceFromState()`, `pruneEvidence()`, `phaseComplete()` in `src/tools/state/`; `handleExecutorResult()`, `handleReviewerResult()` in `src/tools/orchestrator.js`

@@ -16,7 +16,7 @@ import {
 } from '../src/tools/orchestrator.js';
 import {
   selectRunnableTask,
-} from '../src/tools/state.js';
+} from '../src/tools/state/index.js';
 
 // ── Test Case 1: executing_task → reviewing_task (L2 checkpoint) ──
 
@@ -442,7 +442,7 @@ describe('TC8: executing_task → completed (all phases accepted)', () => {
     await update({ updates: { phases: [{ id: 1, phase_handoff: { required_reviews_passed: true, tests_passed: true } }] }, basePath: dir });
 
     // Accept phase 1 (reviewing → accepted)
-    const { phaseComplete } = await import('../src/tools/state.js');
+    const { phaseComplete } = await import('../src/tools/state/index.js');
     let res = await phaseComplete({
       phase_id: 1,
       basePath: dir,

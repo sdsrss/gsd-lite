@@ -8,15 +8,13 @@ import {
   buildExecutorContext,
   matchDecisionForBlocker,
   reclassifyReviewLevel,
-  propagateInvalidation,
-} from './state.js';
+} from './state/index.js';
 import { validateDebuggerResult, validateExecutorResult, validateResearcherResult, validateReviewerResult } from '../schema.js';
 import { getGitHead, getGsdDir } from '../utils.js';
 
 const MAX_DEBUG_RETRY = 3;
 const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
-const MAX_DECISIONS = 200;
 
 // ── Result Contracts ──
 // Provided in dispatch responses so agents produce valid results on the first call.
@@ -352,12 +350,21 @@ function getBlockedReasonFromResult(result) {
   };
 }
 
-async function persist(basePath, updates) {
-  const result = await update({ updates, basePath });
+async function persist(basePath, updates, { _append_decisions, _propagation_tasks } = {}) {
+  const result = await update({ updates, basePath, _append_decisions, _propagation_tasks });
   if (result.error) {
     return result;
   }
   return null;
+}
+
+// persist variant that returns merged state from update(), avoiding re-reads
+async function persistAndRead(basePath, updates, { _append_decisions, _propagation_tasks } = {}) {
+  const result = await update({ updates, basePath, _append_decisions, _propagation_tasks });
+  if (result.error) {
+    return { error: true, ...result };
+  }
+  return result.state;
 }
 
 async function resumeAwaitingClear(state, basePath) {
@@ -438,13 +445,11 @@ async function tryAutoUnblock(state, phase, basePath) {
     return { autoUnblocked: [], blockers: getBlockedTasks(phase) };
   }
 
-  const persistError = await persist(basePath, {
+  const refreshed = await persistAndRead(basePath, {
     phases: [{ id: phase.id, todo: patches }],
   });
-  if (persistError) return persistError;
-
-  const refreshed = await read({ basePath });
   if (refreshed.error) return refreshed;
+
   const refreshedPhase = getCurrentPhase(refreshed);
   return {
     autoUnblocked,
@@ -874,10 +879,8 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     return { error: true, message: `Task ${result.task_id} not found` };
   }
 
-  const decisionEntries = buildDecisionEntries(result.decisions, phase.id, task.id, (state.decisions || []).length);
-  const allDecisions = [...(state.decisions || []), ...decisionEntries];
-  // H-1: Cap decisions to prevent unbounded growth
-  const decisions = allDecisions.length > MAX_DECISIONS ? allDecisions.slice(-MAX_DECISIONS) : allDecisions;
+  // Build new decision entries — actual append happens atomically inside update()'s lock
+  const newDecisions = buildDecisionEntries(result.decisions, phase.id, task.id, (state.decisions || []).length);
 
   if (result.outcome === 'checkpointed') {
     const reviewLevel = reclassifyReviewLevel(task, result);
@@ -917,10 +920,9 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       workflow_mode,
       current_task: null,
       current_review,
-      decisions,
       phases: [phasePatch],
       ...(Object.keys(evidenceUpdates).length > 0 ? { evidence: evidenceUpdates } : {}),
-    });
+    }, { _append_decisions: newDecisions });
     if (persistError) return persistError;
 
     return {
@@ -941,7 +943,6 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       workflow_mode: 'awaiting_user',
       current_task: null,
       current_review: null,
-      decisions,
       phases: [{
         id: phase.id,
         todo: [{
@@ -952,7 +953,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
           evidence_refs: result.evidence || [],
         }],
       }],
-    });
+    }, { _append_decisions: newDecisions });
     if (persistError) return persistError;
 
     return {
@@ -987,7 +988,6 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     workflow_mode: 'executing_task',
     current_task: task.id,
     current_review,
-    decisions,
     phases: [{
       id: phase.id,
       todo: [{
@@ -999,7 +999,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
         evidence_refs: result.evidence || [],
       }],
     }],
-  });
+  }, { _append_decisions: newDecisions });
   if (persistError) return persistError;
 
   return {
@@ -1076,7 +1076,8 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
     };
   }
 
-  const persistError = await persist(basePath, {
+  // Reset retry_count after successful debugging so executor gets fresh attempts
+  const refreshed = await persistAndRead(basePath, {
     workflow_mode: 'executing_task',
     current_task: task.id,
     current_review: null,
@@ -1084,14 +1085,13 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
       id: phase.id,
       todo: [{
         id: task.id,
+        retry_count: 0,
         debug_context,
       }],
     }],
   });
-  if (persistError) return persistError;
-
-  const refreshed = await read({ basePath });
   if (refreshed.error) return refreshed;
+
   const refreshedInfo = getPhaseAndTask(refreshed, task.id);
   return buildExecutorDispatch(refreshed, refreshedInfo.phase, refreshedInfo.task, {
     resumed_from_debugger: true,
@@ -1148,29 +1148,29 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     }
   }
 
-  // Propagation for critical issues with invalidates_downstream
+  // Collect propagation targets — actual invalidation runs atomically inside update()'s lock
+  const propagationTasks = [];
   for (const issue of (result.critical_issues || [])) {
     if (issue.invalidates_downstream && issue.task_id) {
-      propagateInvalidation(phase, issue.task_id, true);
-    }
-  }
-
-  // Collect propagation-affected task patches (tasks mutated in-memory by propagateInvalidation)
-  for (const task of (phase.todo || [])) {
-    if (task.lifecycle === 'needs_revalidation' && !taskPatches.some((p) => p.id === task.id)) {
-      taskPatches.push({ id: task.id, lifecycle: 'needs_revalidation', retry_count: 0, evidence_refs: [] });
+      propagationTasks.push({ phase_id: phase.id, task_id: issue.task_id, contract_changed: true });
     }
   }
 
   const hasCritical = (result.critical_issues || []).length > 0;
-  const reviewStatus = hasCritical ? 'rework_required' : 'accepted';
+  // Gate on spec_passed/quality_passed in addition to critical_issues:
+  // a reviewer returning spec_passed:false or quality_passed:false indicates
+  // rework is needed even without explicit critical_issues entries.
+  const specFailed = result.spec_passed === false;
+  const qualityFailed = result.quality_passed === false;
+  const needsRework = hasCritical || specFailed || qualityFailed;
+  const reviewStatus = needsRework ? 'rework_required' : 'accepted';
 
   // done is auto-recomputed by update() — no manual tracking needed
   const phaseUpdates = {
     id: phase.id,
     phase_review: {
       status: reviewStatus,
-      ...(hasCritical
+      ...(needsRework
         ? { retry_count: (phase.phase_review?.retry_count || 0) + 1 }
         : { retry_count: 0 }),
     },
@@ -1178,11 +1178,11 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   };
 
   // Transition phase back to active when rework is needed
-  if (hasCritical && phase.lifecycle === 'reviewing') {
+  if (needsRework && phase.lifecycle === 'reviewing') {
     phaseUpdates.lifecycle = 'active';
   }
 
-  if (!hasCritical && result.scope === 'phase') {
+  if (!needsRework && result.scope === 'phase') {
     phaseUpdates.phase_handoff = { required_reviews_passed: true };
   }
 
@@ -1198,15 +1198,16 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
 
   const persistError = await persist(basePath, {
     workflow_mode: workflowMode,
+    current_task: null,
     current_review: null,
     phases: [phaseUpdates],
     ...(Object.keys(evidenceUpdates).length > 0 ? { evidence: evidenceUpdates } : {}),
-  });
+  }, { _propagation_tasks: propagationTasks });
   if (persistError) return persistError;
 
   return {
     success: true,
-    action: hasCritical ? 'rework_required' : 'review_accepted',
+    action: needsRework ? 'rework_required' : 'review_accepted',
     workflow_mode: workflowMode,
     phase_id: phase.id,
     review_status: reviewStatus,

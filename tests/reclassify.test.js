@@ -1,7 +1,7 @@
 // tests/reclassify.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { reclassifyReviewLevel } from '../src/tools/state.js';
+import { reclassifyReviewLevel } from '../src/tools/state/index.js';
 
 describe('reclassifyReviewLevel', () => {
   it('upgrades L1 to L2 when contract_changed + auth', () => {

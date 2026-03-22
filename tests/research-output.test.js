@@ -8,7 +8,7 @@ describe('research output persistence', () => {
   it('stores researcher output into state and .gsd/research artifacts', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'gsd-research-output-'));
     try {
-      const { init, read, storeResearch } = await import('../src/tools/state.js');
+      const { init, read, storeResearch } = await import('../src/tools/state/index.js');
       await init({
         project: 'research-output',
         phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
@@ -57,7 +57,7 @@ describe('research output persistence', () => {
   it('applies refresh invalidation rules while replacing research artifacts', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'gsd-research-refresh-output-'));
     try {
-      const { init, read, storeResearch, update } = await import('../src/tools/state.js');
+      const { init, read, storeResearch, update } = await import('../src/tools/state/index.js');
       await init({
         project: 'research-refresh-output',
         phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A', research_basis: ['decision:jwt'] }] }],

@@ -1,7 +1,7 @@
 // tests/decisions.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchDecisionForBlocker } from '../src/tools/state.js';
+import { matchDecisionForBlocker } from '../src/tools/state/index.js';
 
 describe('matchDecisionForBlocker', () => {
   it('matches decision to blocked question', () => {

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ERROR_CODES, init, read, update, addEvidence, phaseComplete, pruneEvidence } from '../src/tools/state.js';
+import { ERROR_CODES, init, read, update, addEvidence, phaseComplete, pruneEvidence } from '../src/tools/state/index.js';
 
 describe('M-10: structured error codes', () => {
   let tempDir;

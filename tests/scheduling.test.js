@@ -1,7 +1,7 @@
 // tests/scheduling.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectRunnableTask } from '../src/tools/state.js';
+import { selectRunnableTask } from '../src/tools/state/index.js';
 
 describe('selectRunnableTask', () => {
   it('returns first pending task with no dependencies', () => {

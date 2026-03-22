@@ -34,7 +34,7 @@ task.level 当前值?
     └── 否 -> 保持当前级别
 ```
 
-来源: `reclassifyReviewLevel()` in `src/tools/state.js`
+来源: `reclassifyReviewLevel()` in `src/tools/state/`
 
 ## 审查流程
 

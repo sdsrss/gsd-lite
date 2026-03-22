@@ -1,7 +1,7 @@
 // tests/context-build.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutorContext } from '../src/tools/state.js';
+import { buildExecutorContext } from '../src/tools/state/index.js';
 
 describe('buildExecutorContext', () => {
   it('constructs context with all 6 fields', () => {

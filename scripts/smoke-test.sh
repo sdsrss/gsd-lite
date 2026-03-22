@@ -13,7 +13,7 @@ echo "Temp dir: $TMPDIR"
 # 1. State init
 echo -n "[1/$TOTAL] State init... "
 node -e "
-  import { init, read } from './src/tools/state.js';
+  import { init, read } from './src/tools/state/index.js';
   const r = await init({ project: 'smoke', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }], basePath: '$TMPDIR' });
   if (r.error) { console.error(JSON.stringify(r)); process.exit(1); }
   const s = await read({ basePath: '$TMPDIR' });
@@ -23,7 +23,7 @@ node -e "
 # 2. State update + lifecycle
 echo -n "[2/$TOTAL] Lifecycle transitions... "
 node -e "
-  import { update, read } from './src/tools/state.js';
+  import { update, read } from './src/tools/state/index.js';
   const bp = '$TMPDIR';
   let r = await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: bp });
   if (r.error) { console.error(JSON.stringify(r)); process.exit(1); }
@@ -70,7 +70,7 @@ TMPDIR_MP=$(mktemp -d)
 trap 'rm -rf "$TMPDIR" "$TMPDIR_MP"' EXIT
 echo -n "[7/$TOTAL] Multi-phase workflow... "
 node -e "
-  import { init, update, read, phaseComplete } from './src/tools/state.js';
+  import { init, update, read, phaseComplete } from './src/tools/state/index.js';
   import { resumeWorkflow, handleExecutorResult, handleReviewerResult } from './src/tools/orchestrator.js';
   const bp = '$TMPDIR_MP';
 
@@ -143,7 +143,7 @@ TMPDIR_SR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR" "$TMPDIR_MP" "$TMPDIR_SR"' EXIT
 echo -n "[8/$TOTAL] Stop/Resume roundtrip... "
 node -e "
-  import { init, update, read } from './src/tools/state.js';
+  import { init, update, read } from './src/tools/state/index.js';
   import { resumeWorkflow } from './src/tools/orchestrator.js';
   const bp = '$TMPDIR_SR';
 
@@ -181,7 +181,7 @@ TMPDIR_PC=$(mktemp -d)
 trap 'rm -rf "$TMPDIR" "$TMPDIR_MP" "$TMPDIR_SR" "$TMPDIR_PC"' EXIT
 echo -n "[9/$TOTAL] Phase complete... "
 node -e "
-  import { init, update, read, phaseComplete } from './src/tools/state.js';
+  import { init, update, read, phaseComplete } from './src/tools/state/index.js';
   import { handleExecutorResult, handleReviewerResult } from './src/tools/orchestrator.js';
   const bp = '$TMPDIR_PC';
 

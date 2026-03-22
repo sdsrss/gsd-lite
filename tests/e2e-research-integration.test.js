@@ -15,7 +15,7 @@ import {
 import {
   applyResearchRefresh,
   storeResearch,
-} from '../src/tools/state.js';
+} from '../src/tools/state/index.js';
 import { handleResearcherResult } from '../src/tools/orchestrator.js';
 
 // ── TC1: All 4 refresh rules fire simultaneously ──

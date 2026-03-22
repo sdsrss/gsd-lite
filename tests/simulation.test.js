@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 import { handleToolCall } from '../src/server.js';
-import { init, read, update, phaseComplete, addEvidence, setLockPath, buildExecutorContext } from '../src/tools/state.js';
+import { init, read, update, phaseComplete, addEvidence, setLockPath, buildExecutorContext } from '../src/tools/state/index.js';
 import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator.js';
 
 // ── Helpers ──
@@ -845,7 +845,7 @@ describe('Simulation 8: Research lifecycle', () => {
 
   it('8.4 Executor context includes research decisions', async () => {
     const state = await read({ basePath });
-    const { buildExecutorContext } = await import('../src/tools/state.js');
+    const { buildExecutorContext } = await import('../src/tools/state/index.js');
     const ctx = buildExecutorContext(state, '1.1', 1);
     assert.ok(!ctx.error);
     assert.equal(ctx.research_decisions.length, 1);

@@ -13,7 +13,7 @@ import {
   selectRunnableTask,
   buildExecutorContext,
   reclassifyReviewLevel,
-} from '../src/tools/state.js';
+} from '../src/tools/state/index.js';
 import { readJson } from '../src/utils.js';
 
 describe('E2E smoke: full project lifecycle', () => {

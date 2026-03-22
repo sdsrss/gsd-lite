@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, read, update } from '../src/tools/state.js';
+import { init, read, update } from '../src/tools/state/index.js';
 import { handleReviewerResult } from '../src/tools/orchestrator.js';
 
 function makeValidReviewerResult(overrides = {}) {
@@ -396,5 +396,67 @@ describe('handleReviewerResult', () => {
 
     const stateAfter = await read({ basePath: tempDir });
     assert.equal(stateAfter.phases[0].done, doneBefore + 1);
+  });
+
+  it('triggers rework when spec_passed is false even without critical_issues', async () => {
+    await setupCheckpointedTask(tempDir);
+
+    const result = await handleReviewerResult({
+      result: makeValidReviewerResult({
+        spec_passed: false,
+        quality_passed: true,
+        critical_issues: [],
+        accepted_tasks: [],
+        rework_tasks: ['1.1'],
+      }),
+      basePath: tempDir,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'rework_required');
+    assert.equal(result.review_status, 'rework_required');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].phase_review.status, 'rework_required');
+  });
+
+  it('clears current_task after handling reviewer result', async () => {
+    await setupCheckpointedTask(tempDir);
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_task',
+        current_task: '1.1',
+        current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' },
+      },
+      basePath: tempDir,
+    });
+
+    await handleReviewerResult({
+      result: makeValidReviewerResult(),
+      basePath: tempDir,
+    });
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.current_task, null, 'current_task should be null after reviewer result');
+    assert.equal(state.current_review, null, 'current_review should be null after reviewer result');
+  });
+
+  it('triggers rework when quality_passed is false even without critical_issues', async () => {
+    await setupCheckpointedTask(tempDir);
+
+    const result = await handleReviewerResult({
+      result: makeValidReviewerResult({
+        spec_passed: true,
+        quality_passed: false,
+        critical_issues: [],
+        accepted_tasks: [],
+        rework_tasks: ['1.1'],
+      }),
+      basePath: tempDir,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'rework_required');
+    assert.equal(result.review_status, 'rework_required');
   });
 });
