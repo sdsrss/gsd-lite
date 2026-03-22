@@ -1,5 +1,5 @@
 {
-  "description": "GSD-Lite hooks: statusline auto-registration + context health monitor",
+  "description": "GSD-Lite hooks: statusline + context monitor + session lifecycle",
   "hooks": {
     "SessionStart": [
       {
@@ -21,6 +21,18 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-context-monitor.cjs\"",
             "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-session-stop.cjs\"",
+            "timeout": 5
           }
         ]
       }

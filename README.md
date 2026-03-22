@@ -12,7 +12,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 - **Phase-based project management** — Break work into phases with ordered tasks, dependency tracking, and handoff gates
 - **State machine orchestration** — 12 workflow modes with precise state transitions, persistent to `state.json`
 - **Automatic task scheduling** — Gate-aware dependency resolution determines what runs next
-- **Session resilience** — Stop anytime, resume exactly where you left off — even across Claude Code restarts
+- **Session resilience** — Stop anytime, resume exactly where you left off — crash protection via Stop hook auto-saves state markers
 
 ### Quality Discipline (Built-in, Not Optional)
 - **TDD enforcement** — "No production code without a failing test first" baked into every executor dispatch
@@ -29,6 +29,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 ### Context Protection
 - **Subagent isolation** — Each task runs in its own agent context, preventing cross-contamination
 - **StatusLine monitoring** — Real-time context health tracking via Claude Code StatusLine
+- **Session lifecycle hooks** — Stop hook writes crash marker; SessionStart injects project status into CLAUDE.md; resume detects non-graceful exits
 - **Evidence-based verification** — Every claim backed by command output, not assertions
 - **Research with TTL** — Research artifacts include volatility ratings and expiration dates
 
@@ -240,8 +241,9 @@ gsd-lite/
 ├── agents/                 # 4 subagent prompts (executor, reviewer, researcher, debugger)
 ├── workflows/              # 6 core workflows (TDD, review, debug, research, deviation, execution-flow)
 ├── references/             # 8 reference docs
-├── hooks/                  # Context monitoring (StatusLine + PostToolUse + SessionStart + AutoUpdate)
-├── tests/                  # 779 tests (unit + simulation + E2E)
+├── hooks/                  # Session lifecycle (StatusLine + PostToolUse + SessionStart + Stop + AutoUpdate)
+│   └── lib/               # Shared hook utilities (gsd-finder)
+├── tests/                  # 804 tests (unit + simulation + E2E)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script
 └── uninstall.js            # Uninstall script
@@ -250,7 +252,7 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 779 tests
+npm test                    # Run all 804 tests
 npm run test:coverage       # Tests + coverage report (94%+ lines, 81%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file

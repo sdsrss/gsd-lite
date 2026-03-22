@@ -2,8 +2,10 @@
 // GSD-Lite SessionStart hook
 // 1. Cleans up stale temp files (throttled to once/day).
 // 2. Auto-registers statusLine in settings.json if not already configured.
-// 3. Shows notification if a previous background update completed or found a new version.
-// 4. Spawns background auto-update (detached, non-blocking).
+// 3. Self-heals .mcp.json if missing.
+// 4. Shows notification if a previous background update completed or found a new version.
+// 5. Spawns background auto-update (detached, non-blocking).
+// 6. Injects GSD project progress into stdout + CLAUDE.md (if active project found).
 // Idempotent: skips if statusLine already points to gsd-statusline, preserves
 // third-party statuslines.
 
@@ -124,4 +126,104 @@ setTimeout(() => process.exit(0), 4000).unref();
     );
     child.unref();
   } catch { /* silent — never block session start */ }
+
+  // ── Phase 6: GSD Project Progress Injection ──
+  // If an active GSD project exists, inject progress into stdout (additionalContext)
+  // and write a status block into CLAUDE.md for persistent visibility.
+  try {
+    const { findGsdDir, readState, getProgress } = require('./lib/gsd-finder.cjs');
+    const cwd = process.cwd();
+    const gsdDir = findGsdDir(cwd);
+    if (gsdDir) {
+      const state = readState(gsdDir);
+      const progress = getProgress(state);
+      if (progress) {
+        // Check for .session-end marker (previous non-graceful exit)
+        const markerPath = path.join(gsdDir, '.session-end');
+        let sessionEndInfo = null;
+        try {
+          if (fs.existsSync(markerPath)) {
+            sessionEndInfo = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+          }
+        } catch { /* skip */ }
+
+        // Stdout: only output session-end warning (crash recovery), skip routine progress
+        // Routine progress is handled by CLAUDE.md injection below — avoids noise
+        const shortHead = progress.gitHead ? progress.gitHead.substring(0, 7) : 'n/a';
+        if (sessionEndInfo) {
+          console.log(`⚠️ GSD: Previous session ended unexpectedly at ${sessionEndInfo.ended_at} (was: ${sessionEndInfo.workflow_mode_was}). Run /gsd:resume to recover.`);
+        }
+
+        // Write status block to CLAUDE.md
+        const projectRoot = path.dirname(gsdDir);
+        const claudeMdPath = path.join(projectRoot, 'CLAUDE.md');
+        const BEGIN_MARKER = '<!-- GSD-STATUS-BEGIN -->';
+        const END_MARKER = '<!-- GSD-STATUS-END -->';
+
+        const statusBlock = [
+          BEGIN_MARKER,
+          `### GSD Project: ${progress.project}`,
+          `- Phase: ${progress.currentPhase || '?'}/${progress.totalPhases} (${progress.phaseName})`,
+          `- Task: ${progress.currentTask || 'none'}${progress.taskName ? ` (${progress.taskName})` : ''}`,
+          `- Mode: ${progress.workflowMode}`,
+          `- Progress: ${progress.acceptedTasks}/${progress.totalTasks} tasks done`,
+          `- Last checkpoint: ${shortHead}`,
+          sessionEndInfo ? `- ⚠️ Previous session ended unexpectedly (${sessionEndInfo.ended_at})` : null,
+          END_MARKER,
+        ].filter(Boolean).join('\n');
+
+        try {
+          let content = '';
+          try {
+            content = fs.readFileSync(claudeMdPath, 'utf8');
+          } catch { /* file doesn't exist yet — will create */ }
+
+          const beginIdx = content.indexOf(BEGIN_MARKER);
+          const endIdx = content.indexOf(END_MARKER);
+
+          let newContent;
+          if (beginIdx !== -1 && endIdx !== -1) {
+            // Replace existing block
+            newContent = content.substring(0, beginIdx) + statusBlock + content.substring(endIdx + END_MARKER.length);
+          } else {
+            // Append to end (with blank line separator)
+            const separator = content.length > 0 && !content.endsWith('\n\n') ? (content.endsWith('\n') ? '\n' : '\n\n') : '';
+            newContent = content + separator + statusBlock + '\n';
+          }
+
+          // Only write if content changed
+          if (newContent !== content) {
+            const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;
+            fs.writeFileSync(tmpClaude, newContent);
+            fs.renameSync(tmpClaude, claudeMdPath);
+          }
+        } catch (e) {
+          if (process.env.GSD_DEBUG) process.stderr.write(`gsd-session-init: CLAUDE.md write failed: ${e.message}\n`);
+        }
+      }
+    } else {
+      // No active GSD project — clean up stale CLAUDE.md block if it exists
+      try {
+        const claudeMdPath = path.join(cwd, 'CLAUDE.md');
+        const BEGIN_MARKER = '<!-- GSD-STATUS-BEGIN -->';
+        const END_MARKER = '<!-- GSD-STATUS-END -->';
+        const content = fs.readFileSync(claudeMdPath, 'utf8');
+        const beginIdx = content.indexOf(BEGIN_MARKER);
+        const endIdx = content.indexOf(END_MARKER);
+        if (beginIdx !== -1 && endIdx !== -1) {
+          // Remove the block and any trailing newline
+          let newContent = content.substring(0, beginIdx) + content.substring(endIdx + END_MARKER.length);
+          // Clean up extra blank lines left behind
+          newContent = newContent.replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+          if (newContent !== content) {
+            const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;
+            fs.writeFileSync(tmpClaude, newContent);
+            fs.renameSync(tmpClaude, claudeMdPath);
+          }
+        }
+      } catch { /* no CLAUDE.md or no block to clean — skip */ }
+    }
+  } catch (e) {
+    if (process.env.GSD_DEBUG) process.stderr.write(`gsd-session-init phase 6: ${e.message}\n`);
+  }
 })().catch(() => {});

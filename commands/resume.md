@@ -28,6 +28,14 @@ description: Resume project execution from saved state with workspace validation
 <HARD-GATE id="resume-preflight">
 必须在恢复执行前完成所有校验，按以下优先级顺序:
 
+0. **Session End 检查:**
+   - 检查 `.gsd/.session-end` 文件是否存在
+   - 如果存在:
+     - 读取内容，向用户展示: "⚠️ 上次 session 在 {ended_at} 非正常结束，当时处于 {workflow_mode_was} (Phase {current_phase} / Task {current_task})"
+     - 删除 `.session-end` 文件
+     - 继续后续校验 (不覆写 workflow_mode — 由下面的校验决定)
+   - 如果不存在 → 跳过，继续后续校验
+
 1. **Git HEAD 校验:**
    - 运行 `git rev-parse HEAD` 获取当前 HEAD
    - 如果与 state.json 中的 `git_head` 不同:
