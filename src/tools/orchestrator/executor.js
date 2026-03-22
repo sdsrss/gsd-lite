@@ -20,6 +20,9 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     return { error: true, message: `Invalid executor result: ${validation.errors.join('; ')}` };
   }
 
+  // Note: read() is outside the state lock. This is safe because the MCP server
+  // processes tool calls sequentially (single-session, promise-queue serialized).
+  // persist() below re-acquires the lock and applies changes atomically.
   const state = await read({ basePath });
   if (state.error) return state;
   const { phase, task } = getPhaseAndTask(state, result.task_id);

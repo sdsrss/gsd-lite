@@ -176,7 +176,7 @@ describe('server tool handling', () => {
       });
 
       assert.equal(result.success, true);
-      assert.equal(result.action, 'dispatch_executor');
+      assert.equal(result.action, 'research_stored');
       assert.deepEqual(result.decision_ids, ['decision:jwt-rotation']);
     } finally {
       await rm(tempDir, { recursive: true, force: true });

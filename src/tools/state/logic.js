@@ -269,9 +269,17 @@ export function reclassifyReviewLevel(task, executorResult) {
   }
 
   // High confidence on non-sensitive L1 tasks → downgrade to L0 (self-review sufficient)
+  // Cross-validate: require objective evidence before trusting self-reported confidence.
+  // Without evidence or with failed tests, confidence claim is not credible.
   if (executorResult.confidence === 'high' && currentLevel === 'L1'
       && !executorResult.contract_changed) {
-    return 'L0';
+    const hasEvidence = Array.isArray(executorResult.evidence) && executorResult.evidence.length > 0;
+    const hasTestFailure = Array.isArray(executorResult.evidence)
+      && executorResult.evidence.some(e => e && e.type === 'test' && e.passed === false);
+    if (hasEvidence && !hasTestFailure) {
+      return 'L0';
+    }
+    // Insufficient evidence or test failure — stay at L1 despite high confidence claim
   }
 
   return currentLevel;

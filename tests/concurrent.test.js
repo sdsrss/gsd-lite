@@ -1,9 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile as fsWriteFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, update, read, setLockPath } from '../src/tools/state/index.js';
+import { withFileLock } from '../src/utils.js';
 
 describe('concurrent state operations (P2-11)', () => {
   let tempDir;
@@ -212,6 +213,22 @@ try {
 
     // Clean up worker script
     await ul(workerPath);
+  });
+
+  it('withFileLock throws on lock exhaustion instead of silent proceed', async () => {
+    // Create a non-stale lock file that will never be released (mtime = now)
+    const lockPath = join(tempDir, 'exhaust-test.lock');
+    await fsWriteFile(lockPath, '99999', { flag: 'w' });
+
+    // withFileLock should throw after retries exhaust (lock is fresh, not stale)
+    await assert.rejects(
+      () => withFileLock(lockPath, async () => 'should not reach'),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /Lock acquisition timeout/);
+        return true;
+      },
+    );
   });
 
   it('file lock prevents stale lock from blocking operations', async () => {

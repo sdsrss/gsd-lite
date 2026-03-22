@@ -16,6 +16,8 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
     return { error: true, message: `Invalid debugger result: ${validation.errors.join('; ')}` };
   }
 
+  // Note: read() is outside the state lock — safe under single-session sequential execution.
+  // See executor.js for rationale.
   const state = await read({ basePath });
   if (state.error) return state;
   const { phase, task } = getPhaseAndTask(state, result.task_id);

@@ -410,6 +410,7 @@ describe('TC7: handleResearcherResult end-to-end stores research and resumes wor
     });
 
     assert.equal(res.success, true);
+    assert.equal(res.action, 'research_stored');
     assert.deepEqual(res.stored_files, ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md']);
     assert.deepEqual(res.decision_ids, ['d_framework']);
 
@@ -420,10 +421,10 @@ describe('TC7: handleResearcherResult end-to-end stores research and resumes wor
     assert.equal(state.research.decision_index.d_framework.summary, 'Use React');
 
     // Same summary → rule 1 → task NOT invalidated by research refresh.
-    // handleResearcherResult calls resumeWorkflow which dispatches the executor,
-    // transitioning the task pending→running. This confirms no invalidation occurred.
+    // handleResearcherResult no longer auto-resumes; task stays pending.
+    // The caller (orchestrator loop) is responsible for calling resumeWorkflow() next.
     const task = state.phases[0].todo[0];
-    assert.equal(task.lifecycle, 'running', 'Task advanced to running (dispatched by resumeWorkflow, not invalidated)');
+    assert.equal(task.lifecycle, 'pending', 'Task stays pending (researcher no longer auto-advances)');
 
     // Verify artifacts written to disk
     const summaryContent = await readFile(join(dir, '.gsd', 'research', 'SUMMARY.md'), 'utf-8');

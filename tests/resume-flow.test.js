@@ -208,7 +208,7 @@ describe('resume flow matrix', () => {
       assert.equal(preflight.action, 'dispatch_researcher');
       assert.equal(preflight.workflow_mode, 'research_refresh_needed');
 
-      const resumed = await handleResearcherResult({
+      const stored = await handleResearcherResult({
         basePath: tempDir,
         result: {
           decision_ids: ['decision:jwt-rotation'],
@@ -226,6 +226,10 @@ describe('resume flow matrix', () => {
           'SUMMARY.md': '# Summary\nvolatility: medium\nexpires_at: 2099-03-16T10:30:00Z\ndecisions:\n- decision:jwt-rotation\n',
         },
       });
+      assert.equal(stored.action, 'research_stored');
+
+      // Caller now explicitly resumes (researcher no longer auto-advances)
+      const resumed = await resumeWorkflow({ basePath: tempDir });
       assert.equal(resumed.action, 'dispatch_executor');
 
       const state = await read({ basePath: tempDir });

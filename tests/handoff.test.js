@@ -132,7 +132,7 @@ describe('phase handoff gate', () => {
     assert.equal(state.phases[0].phase_handoff.direction_ok, true);
   });
 
-  it('fails handoff with run_verify: true when no package manager exists in temp dir', async () => {
+  it('fails handoff with run_verify: true when verification not provided', async () => {
     await prepareReviewingAcceptedPhase(tempDir);
     const reviewAccepted = await update({
       updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] },
@@ -140,7 +140,8 @@ describe('phase handoff gate', () => {
     });
     assert.equal(reviewAccepted.success, true);
 
-    // run_verify: true will call runAll() which needs a package.json — temp dir has none
+    // run_verify: true without verification parameter returns an error
+    // (state layer no longer executes external tools directly)
     const result = await phaseComplete({
       phase_id: 1,
       basePath: tempDir,
@@ -149,9 +150,7 @@ describe('phase handoff gate', () => {
     });
 
     assert.equal(result.error, true);
-    // runAll returns { error: true, message: 'Could not detect package manager' }
-    // This means verification failed, so the gate should fail
-    assert.match(result.message, /verification checks failed/i);
+    assert.match(result.message, /run_verify requires verification results/i);
   });
 
   it('completes phase when verification object is provided directly with all passing exit codes', async () => {

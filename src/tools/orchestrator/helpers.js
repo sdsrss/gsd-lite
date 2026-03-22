@@ -10,6 +10,7 @@ import { getGitHead, getGsdDir } from '../../utils.js';
 const MAX_DEBUG_RETRY = 3;
 const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
+const MAX_PHASE_REVIEW_RETRY = 5;
 
 // ── Result Contracts ──
 // Provided in dispatch responses so agents produce valid results on the first call.
@@ -424,6 +425,7 @@ export {
   MAX_DEBUG_RETRY,
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
+  MAX_PHASE_REVIEW_RETRY,
   RESULT_CONTRACTS,
   isTerminalWorkflowMode,
   parseTimestamp,

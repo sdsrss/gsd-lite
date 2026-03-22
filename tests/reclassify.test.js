@@ -47,11 +47,25 @@ describe('reclassifyReviewLevel', () => {
     assert.equal(newLevel, 'L2');
   });
 
-  it('downgrades L1 to L0 when confidence is high and no contract change', () => {
+  it('downgrades L1 to L0 when confidence is high, has evidence, and no contract change', () => {
+    const task = { id: '2.1', level: 'L1', name: 'add logging' };
+    const executorResult = { contract_changed: false, decisions: [], confidence: 'high', evidence: [{ type: 'test', passed: true }] };
+    const newLevel = reclassifyReviewLevel(task, executorResult);
+    assert.equal(newLevel, 'L0');
+  });
+
+  it('keeps L1 when confidence is high but no evidence provided', () => {
     const task = { id: '2.1', level: 'L1', name: 'add logging' };
     const executorResult = { contract_changed: false, decisions: [], confidence: 'high' };
     const newLevel = reclassifyReviewLevel(task, executorResult);
-    assert.equal(newLevel, 'L0');
+    assert.equal(newLevel, 'L1');
+  });
+
+  it('keeps L1 when confidence is high but tests failed', () => {
+    const task = { id: '2.1', level: 'L1', name: 'add logging' };
+    const executorResult = { contract_changed: false, decisions: [], confidence: 'high', evidence: [{ type: 'test', passed: false }] };
+    const newLevel = reclassifyReviewLevel(task, executorResult);
+    assert.equal(newLevel, 'L1');
   });
 
   it('keeps L1 when confidence is high but contract_changed', () => {
@@ -82,11 +96,11 @@ describe('reclassifyReviewLevel', () => {
     assert.equal(newLevel, 'L1');
   });
 
-  it('downgrades auth task to L0 when confidence high + no contract change', () => {
-    // Documenting intended behavior: sensitive keyword alone doesn't prevent
-    // L0 downgrade if confidence is high and no contract changed
+  it('downgrades auth task to L0 when confidence high + evidence + no contract change', () => {
+    // Sensitive keyword alone doesn't prevent L0 downgrade if confidence is high,
+    // evidence exists, and no contract changed
     const task = { id: '2.1', level: 'L1', name: 'auth session cleanup' };
-    const executorResult = { contract_changed: false, decisions: [], confidence: 'high' };
+    const executorResult = { contract_changed: false, decisions: [], confidence: 'high', evidence: [{ type: 'test', passed: true }] };
     const newLevel = reclassifyReviewLevel(task, executorResult);
     assert.equal(newLevel, 'L0');
   });

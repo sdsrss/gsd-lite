@@ -17,7 +17,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 ### Quality Discipline (Built-in, Not Optional)
 - **TDD enforcement** — "No production code without a failing test first" baked into every executor dispatch
 - **Anti-rationalization guards** — Red-flag checklists inline in every agent prompt, blocking common excuses to skip process
-- **Multi-level code review** — L0 self-review / L1 phase-batch review / L2 immediate independent review
+- **Multi-level code review** — L0 self-review / L1 phase-batch review / L2 immediate independent review / phase review retry limit
 - **Contract change propagation** — When an API contract changes, downstream tasks automatically invalidate
 
 ### Intelligent Failure Recovery
@@ -27,7 +27,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 - **Rework propagation** — Critical review issues cascade invalidation to dependent tasks
 
 ### Adaptive Review & Parallel Execution
-- **Confidence-based review adjustment** — Executor self-assesses confidence (high/medium/low); orchestrator auto-adjusts review level accordingly
+- **Confidence-based review adjustment** — Executor self-assesses confidence (high/medium/low); orchestrator auto-adjusts review level with evidence cross-validation
 - **Impact analysis before review** — Reviewer runs impact analysis on multi-file changes to catch missed downstream effects
 - **Parallel task scheduling** — Independent tasks within the same phase are identified for concurrent dispatch
 - **Auto PR suggestion** — Phase/project completion prompts PR creation with evidence summary
@@ -249,7 +249,7 @@ gsd-lite/
 ├── references/             # 8 reference docs
 ├── hooks/                  # Session lifecycle (StatusLine + PostToolUse + SessionStart + Stop + AutoUpdate)
 │   └── lib/               # Shared hook utilities (gsd-finder)
-├── tests/                  # 822 tests (unit + simulation + E2E)
+├── tests/                  # 826 tests (unit + simulation + E2E)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script
 └── uninstall.js            # Uninstall script
@@ -258,8 +258,8 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 822 tests
-npm run test:coverage       # Tests + coverage report (94%+ lines, 81%+ branches)
+npm test                    # Run all 826 tests
+npm run test:coverage       # Tests + coverage report (94%+ lines, 83%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file
 ```

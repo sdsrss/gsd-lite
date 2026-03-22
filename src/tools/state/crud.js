@@ -12,7 +12,6 @@ import {
   createInitialState,
   migrateState,
 } from '../../schema.js';
-import { runAll } from '../verify.js';
 import {
   ERROR_CODES,
   MAX_EVIDENCE_ENTRIES,
@@ -28,6 +27,11 @@ import { propagateInvalidation } from './logic.js';
 export async function init({ project, phases, research, force = false, basePath = process.cwd() }) {
   if (!project || typeof project !== 'string') {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'project must be a non-empty string' };
+  }
+  // Sanitize: strip HTML comment delimiters (could break marker-based CLAUDE.md injection) and cap length
+  project = project.replace(/<!--|-->/g, '').trim().slice(0, 200);
+  if (!project) {
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'project name is empty after sanitization' };
   }
   if (!Array.isArray(phases)) {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'phases must be an array' };
@@ -420,7 +424,14 @@ export async function phaseComplete({
       };
     }
 
-    const verificationResult = verification || (run_verify ? await runAll(basePath) : null);
+    if (run_verify && !verification) {
+      return {
+        error: true,
+        code: ERROR_CODES.INVALID_INPUT,
+        message: 'run_verify requires verification results to be passed via the verification parameter; the state layer does not execute external tools',
+      };
+    }
+    const verificationResult = verification || null;
     const testsPassed = verificationResult
       ? verificationPassed(verificationResult)
       : phase.phase_handoff.tests_passed === true;

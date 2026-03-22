@@ -459,4 +459,42 @@ describe('handleReviewerResult', () => {
     assert.equal(result.action, 'rework_required');
     assert.equal(result.review_status, 'rework_required');
   });
+
+  it('returns review_retry_exhausted when phase review retry limit exceeded', async () => {
+    await setupCheckpointedTask(tempDir);
+    // Set phase_review.retry_count to the limit (5)
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_phase',
+        current_review: { scope: 'phase', scope_id: 1 },
+        phases: [{
+          id: 1,
+          lifecycle: 'reviewing',
+          phase_review: { status: 'rework_required', retry_count: 5 },
+        }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleReviewerResult({
+      result: makeValidReviewerResult({
+        scope: 'phase',
+        scope_id: 1,
+        spec_passed: false,
+        quality_passed: false,
+        accepted_tasks: [],
+        rework_tasks: ['1.1'],
+      }),
+      basePath: tempDir,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'review_retry_exhausted');
+    assert.equal(result.workflow_mode, 'awaiting_user');
+    assert.ok(result.retry_count > 5, 'retry_count exceeds limit');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.workflow_mode, 'awaiting_user');
+    assert.equal(state.current_review.stage, 'review_retry_exhausted');
+  });
 });

@@ -65,6 +65,7 @@ const LOCK_MAX_RETRIES = 100; // 5 seconds total
  */
 export async function withFileLock(lockPath, fn) {
   let acquired = false;
+  let nonLockError = false;
   for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
     try {
       await writeFile(lockPath, String(process.pid), { flag: 'wx' });
@@ -84,9 +85,19 @@ export async function withFileLock(lockPath, fn) {
         }
         await new Promise(r => setTimeout(r, LOCK_RETRY_MS));
       } else {
-        break; // Non-EEXIST error — proceed without lock
+        // Non-EEXIST error (e.g., read-only fs) — proceed without lock
+        nonLockError = true;
+        break;
       }
     }
+  }
+
+  // Lock exhaustion (retries depleted while another process held the lock):
+  // throw to prevent concurrent unlocked writes that cause data corruption.
+  // Non-EEXIST errors (read-only fs, permission denied) still proceed without lock
+  // since locking is physically impossible in those environments.
+  if (!acquired && !nonLockError) {
+    throw new Error(`Lock acquisition timeout: could not acquire ${lockPath} after ${LOCK_MAX_RETRIES} retries (${LOCK_MAX_RETRIES * LOCK_RETRY_MS}ms)`);
   }
 
   try {

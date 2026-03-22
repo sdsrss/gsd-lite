@@ -1,6 +1,7 @@
 import { read } from '../state/index.js';
 import { validateReviewerResult } from '../../schema.js';
 import {
+  MAX_PHASE_REVIEW_RETRY,
   getCurrentPhase,
   getTaskById,
   persist,
@@ -15,6 +16,8 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     return { error: true, message: `Invalid reviewer result: ${validation.errors.join('; ')}` };
   }
 
+  // Note: read() is outside the state lock — safe under single-session sequential execution.
+  // See executor.js for rationale.
   const state = await read({ basePath });
   if (state.error) return state;
 
@@ -70,6 +73,40 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   const specFailed = result.spec_passed === false;
   const qualityFailed = result.quality_passed === false;
   const needsRework = hasCritical || specFailed || qualityFailed;
+
+  // Compute retry count once for both exhaustion check and state update
+  const currentRetryCount = phase.phase_review?.retry_count || 0;
+  const nextRetryCount = needsRework ? currentRetryCount + 1 : 0;
+
+  // Phase review retry limit: prevent infinite reviewing↔active cycles
+  if (needsRework && nextRetryCount > MAX_PHASE_REVIEW_RETRY) {
+    const persistError = await persist(basePath, {
+      workflow_mode: 'awaiting_user',
+      current_task: null,
+      current_review: {
+        scope: 'phase',
+        scope_id: phase.id,
+        stage: 'review_retry_exhausted',
+        retry_count: nextRetryCount,
+      },
+      phases: [{
+        id: phase.id,
+        lifecycle: phase.lifecycle === 'reviewing' ? 'active' : phase.lifecycle,
+        phase_review: { status: 'rework_required', retry_count: nextRetryCount },
+      }],
+    });
+    if (persistError) return persistError;
+
+    return {
+      success: true,
+      action: 'review_retry_exhausted',
+      workflow_mode: 'awaiting_user',
+      phase_id: phase.id,
+      retry_count: nextRetryCount,
+      message: `Phase ${phase.id} review failed ${nextRetryCount} times (limit: ${MAX_PHASE_REVIEW_RETRY}). User intervention required.`,
+    };
+  }
+
   const reviewStatus = needsRework ? 'rework_required' : 'accepted';
 
   // done is auto-recomputed by update() — no manual tracking needed
@@ -77,9 +114,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     id: phase.id,
     phase_review: {
       status: reviewStatus,
-      ...(needsRework
-        ? { retry_count: (phase.phase_review?.retry_count || 0) + 1 }
-        : { retry_count: 0 }),
+      retry_count: nextRetryCount,
     },
     todo: taskPatches,
   };

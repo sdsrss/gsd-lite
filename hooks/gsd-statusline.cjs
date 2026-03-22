@@ -6,24 +6,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-
-/**
- * Walk from startDir up to filesystem root looking for a .gsd directory.
- * Returns the absolute path to .gsd if found, or null.
- */
-function findGsdDir(startDir) {
-  let dir = startDir;
-  while (true) {
-    const candidate = path.join(dir, '.gsd');
-    try {
-      if (fs.statSync(candidate).isDirectory()) return candidate;
-    } catch {
-      const parent = path.dirname(dir);
-      if (parent === dir) return null; // reached filesystem root
-      dir = parent;
-    }
-  }
-}
+const { findGsdDir } = require('./lib/gsd-finder.cjs');
 
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
