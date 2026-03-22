@@ -17,6 +17,7 @@ export const ERROR_CODES = {
   TERMINAL_STATE: 'TERMINAL_STATE',
   TRANSITION_ERROR: 'TRANSITION_ERROR',
   HANDOFF_GATE: 'HANDOFF_GATE',
+  VERSION_CONFLICT: 'VERSION_CONFLICT',
 };
 
 // C-1: Serialize all state mutations to prevent TOCTOU races
@@ -61,6 +62,7 @@ export function normalizeResearchArtifacts(artifacts) {
   const normalized = {};
   for (const fileName of RESEARCH_FILES) {
     const content = artifacts[fileName];
+    if (!content) { normalized[fileName] = '\n'; continue; }
     normalized[fileName] = content.endsWith('\n') ? content : `${content}\n`;
   }
   return normalized;

@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execSync, spawnSync } = require('node:child_process');
+const { semverSortComparator } = require('./lib/semver-sort.cjs');
 
 // ── Configuration ──────────────────────────────────────────
 const GITHUB_REPO = 'sdsrss/gsd-lite';
@@ -195,12 +196,13 @@ async function withFileLock(fn) {
     }
   }
 
+  if (!acquired) {
+    return null;
+  }
   try {
     return await fn();
   } finally {
-    if (acquired) {
-      try { fs.rmSync(STATE_LOCK_FILE, { force: true }); } catch {}
-    }
+    try { fs.rmSync(STATE_LOCK_FILE, { force: true }); } catch {}
   }
 }
 
@@ -209,7 +211,7 @@ async function withFileLock(fn) {
 // 1. PLUGIN_AUTO_UPDATE env set → recursive guard (auto-update already in progress)
 // 2. Running from a git clone → dev mode (developer working on source)
 function shouldSkipUpdateCheck() {
-  if (process.env.PLUGIN_AUTO_UPDATE) return true;
+  if (process.env.PLUGIN_AUTO_UPDATE === '1') return true;
   return isDevMode();
 }
 
@@ -460,15 +462,8 @@ function pruneOldCacheVersions(cacheBase, keepCount = 3, verbose = false) {
       .map(e => e.name);
     if (entries.length <= keepCount) return;
 
-    // Sort by semver: split into [major, minor, patch] and compare numerically
-    const sorted = entries.slice().sort((a, b) => {
-      const pa = a.split('.').map(Number);
-      const pb = b.split('.').map(Number);
-      for (let i = 0; i < 3; i++) {
-        if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
-      }
-      return 0;
-    });
+    // Sort by semver using shared comparator
+    const sorted = entries.slice().sort(semverSortComparator);
 
     // Detect versions with active processes to avoid disrupting running sessions
     let activeVersions;

@@ -6,8 +6,11 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const _require = createRequire(import.meta.url);
+const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -116,8 +119,23 @@ export function main() {
   }
 
   // Reset managed runtime directory to avoid stale files on reinstall
+  // Preserve runtime/ subdirectory (update-state.json, update-notification.json)
   if (!DRY_RUN && existsSync(RUNTIME_DIR)) {
+    const runtimeSubdir = join(RUNTIME_DIR, 'runtime');
+    const preserveRuntime = existsSync(runtimeSubdir);
+    let runtimeBackup;
+    if (preserveRuntime) {
+      runtimeBackup = join(RUNTIME_DIR, '..', '.gsd-runtime-backup');
+      try { cpSync(runtimeSubdir, runtimeBackup, { recursive: true }); } catch { runtimeBackup = null; }
+    }
     rmSync(RUNTIME_DIR, { recursive: true, force: true });
+    if (runtimeBackup) {
+      try {
+        mkdirSync(join(RUNTIME_DIR, 'runtime'), { recursive: true });
+        cpSync(runtimeBackup, join(RUNTIME_DIR, 'runtime'), { recursive: true });
+        rmSync(runtimeBackup, { recursive: true, force: true });
+      } catch { /* best effort */ }
+    }
   }
 
   // 1. Commands
@@ -242,14 +260,7 @@ export function main() {
         const entries = readdirSync(cacheBase, { withFileTypes: true })
           .filter(e => e.isDirectory()).map(e => e.name);
         if (entries.length > 3) {
-          const sorted = entries.slice().sort((a, b) => {
-            const pa = a.split('.').map(Number);
-            const pb = b.split('.').map(Number);
-            for (let i = 0; i < 3; i++) {
-              if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
-            }
-            return 0;
-          });
+          const sorted = entries.slice().sort(semverSortComparator);
           // Detect versions with active processes to avoid disrupting running sessions
           let activeVersions;
           try {

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const SOURCE = join(import.meta.dirname, '..', 'hooks', 'gsd-auto-update.cjs');
+const LIB_DIR = join(import.meta.dirname, '..', 'hooks', 'lib');
 const require = createRequire(import.meta.url);
 
 async function loadAutoUpdate(mode, version = '0.3.0') {
@@ -18,14 +19,16 @@ async function loadAutoUpdate(mode, version = '0.3.0') {
   let modulePath;
   if (mode === 'plugin') {
     const pluginRoot = join(root, 'plugin-root');
-    await mkdir(join(pluginRoot, 'hooks'), { recursive: true });
+    await mkdir(join(pluginRoot, 'hooks', 'lib'), { recursive: true });
     cpSync(SOURCE, join(pluginRoot, 'hooks', 'gsd-auto-update.cjs'));
+    cpSync(LIB_DIR, join(pluginRoot, 'hooks', 'lib'), { recursive: true });
     await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: 'gsd-lite', version }) + '\n');
     modulePath = join(pluginRoot, 'hooks', 'gsd-auto-update.cjs');
   } else {
-    await mkdir(join(claudeDir, 'hooks'), { recursive: true });
+    await mkdir(join(claudeDir, 'hooks', 'lib'), { recursive: true });
     await mkdir(join(claudeDir, 'gsd'), { recursive: true });
     cpSync(SOURCE, join(claudeDir, 'hooks', 'gsd-auto-update.cjs'));
+    cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
     await writeFile(join(claudeDir, 'gsd', 'package.json'), JSON.stringify({ name: 'gsd-lite', version }) + '\n');
     modulePath = join(claudeDir, 'hooks', 'gsd-auto-update.cjs');
   }

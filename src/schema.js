@@ -712,6 +712,47 @@ export function migrateState(state) {
   return state;
 }
 
+/**
+ * Detect circular task dependencies within each phase using Kahn's algorithm.
+ * @param {Array} phases - Array of phase objects in state format (each has .id and .todo[])
+ * @returns {string|null} Error message if cycle detected, null otherwise
+ */
+export function detectCycles(phases) {
+  for (const phase of phases) {
+    const tasks = phase.todo || [];
+    const taskIds = tasks.map(t => t.id);
+    const inDegree = new Map(taskIds.map(id => [id, 0]));
+    const adj = new Map(taskIds.map(id => [id, []]));
+
+    for (const task of tasks) {
+      for (const dep of (task.requires || [])) {
+        if (dep.kind === 'task' && inDegree.has(dep.id)) {
+          adj.get(dep.id).push(task.id);
+          inDegree.set(task.id, inDegree.get(task.id) + 1);
+        }
+      }
+    }
+
+    const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
+    let sorted = 0;
+    while (queue.length > 0) {
+      const node = queue.shift();
+      sorted++;
+      for (const neighbor of adj.get(node)) {
+        const d = inDegree.get(neighbor) - 1;
+        inDegree.set(neighbor, d);
+        if (d === 0) queue.push(neighbor);
+      }
+    }
+
+    if (sorted < taskIds.length) {
+      const cycleNodes = [...inDegree.entries()].filter(([, d]) => d > 0).map(([id]) => id);
+      return `Circular dependency detected in phase ${phase.id}: ${cycleNodes.join(', ')}`;
+    }
+  }
+  return null;
+}
+
 export function createInitialState({ project, phases }) {
   if (!Array.isArray(phases)) {
     return { error: true, message: 'phases must be an array' };
@@ -764,40 +805,22 @@ export function createInitialState({ project, phases }) {
     }
   }
 
-  // M-7: Detect circular dependencies within each phase (Kahn's algorithm)
-  for (const [pi, p] of phases.entries()) {
-    const tasks = p.tasks || [];
-    const taskIds = tasks.map((t, ti) => `${pi + 1}.${t.index ?? (ti + 1)}`);
-    const inDegree = new Map(taskIds.map(id => [id, 0]));
-    const adj = new Map(taskIds.map(id => [id, []]));
-    for (const [ti, t] of tasks.entries()) {
-      const id = `${pi + 1}.${t.index ?? (ti + 1)}`;
-      for (const dep of (t.requires || [])) {
-        if (dep.kind === 'task' && inDegree.has(dep.id)) {
-          adj.get(dep.id).push(id);
-          inDegree.set(id, inDegree.get(id) + 1);
-        }
-      }
-    }
-    const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
-    let sorted = 0;
-    while (queue.length > 0) {
-      const node = queue.shift();
-      sorted++;
-      for (const neighbor of adj.get(node)) {
-        const d = inDegree.get(neighbor) - 1;
-        inDegree.set(neighbor, d);
-        if (d === 0) queue.push(neighbor);
-      }
-    }
-    if (sorted < taskIds.length) {
-      const cycleNodes = [...inDegree.entries()].filter(([, d]) => d > 0).map(([id]) => id);
-      return { error: true, message: `Circular dependency detected in phase ${pi + 1}: ${cycleNodes.join(', ')}` };
-    }
+  // M-7: Detect circular dependencies within each phase (shared Kahn's algorithm)
+  const tempPhases = phases.map((p, pi) => ({
+    id: pi + 1,
+    todo: (p.tasks || []).map((t, ti) => ({
+      id: `${pi + 1}.${t.index ?? (ti + 1)}`,
+      requires: t.requires || [],
+    })),
+  }));
+  const cycleError = detectCycles(tempPhases);
+  if (cycleError) {
+    return { error: true, message: cycleError };
   }
   return {
     project,
     schema_version: 1,
+    _version: 0,
     workflow_mode: 'executing_task',
     plan_version: 1,
     git_head: null,

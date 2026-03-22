@@ -1,7 +1,8 @@
 // State CRUD operations
 
 import { dirname, join } from 'node:path';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject, clearGsdDirCache } from '../../utils.js';
 import {
   CANONICAL_FIELDS,
@@ -11,6 +12,7 @@ import {
   validateTransition,
   createInitialState,
   migrateState,
+  detectCycles,
 } from '../../schema.js';
 import {
   ERROR_CODES,
@@ -20,6 +22,25 @@ import {
   withStateLock,
 } from './constants.js';
 import { propagateInvalidation } from './logic.js';
+
+/**
+ * Compute SHA-256 content hashes for an array of file paths.
+ * Returns an object mapping relative-to-gsdDir paths to hex hashes.
+ * Missing/unreadable files are silently skipped.
+ */
+async function computePlanHashes(filePaths, gsdDir) {
+  const { relative } = await import('node:path');
+  const hashes = {};
+  for (const filePath of filePaths) {
+    try {
+      const content = await readFile(filePath, 'utf-8');
+      hashes[relative(gsdDir, filePath)] = createHash('sha256').update(content).digest('hex');
+    } catch {
+      // File doesn't exist or is unreadable — skip
+    }
+  }
+  return hashes;
+}
 
 /**
  * Initialize a new GSD project: creates .gsd/, state.json, plan.md, phases/
@@ -95,6 +116,8 @@ export async function init({ project, phases, research, force = false, basePath 
     // Date.toISOString() truncates to milliseconds. Without ceil, the stored timestamp
     // can be slightly less than the file's actual mtime, causing false plan-drift detection.
     state.context.last_session = new Date(Math.ceil(Math.max(...mtimes))).toISOString();
+    // Store content hashes for plan drift detection (hash-based, not mtime-based)
+    state.context.plan_hashes = await computePlanHashes(trackedFiles, gsdDir);
     await writeJson(statePath, state);
 
     return {
@@ -150,7 +173,7 @@ export async function read({ fields, basePath = process.cwd(), validate = false 
 /**
  * Update state.json with canonical field guard and full validation.
  */
-export async function update({ updates, basePath = process.cwd(), _append_decisions, _propagation_tasks } = {}) {
+export async function update({ updates, basePath = process.cwd(), expectedVersion, _append_decisions, _propagation_tasks } = {}) {
   if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'updates must be a non-null object' };
   }
@@ -178,6 +201,18 @@ export async function update({ updates, basePath = process.cwd(), _append_decisi
       return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
     const state = migrateState(result.data);
+
+    // Optimistic concurrency: check version if caller provided expectedVersion
+    if (expectedVersion !== undefined && expectedVersion !== null) {
+      const onDiskVersion = state._version ?? 0;
+      if (onDiskVersion !== expectedVersion) {
+        return {
+          error: true,
+          code: ERROR_CODES.VERSION_CONFLICT,
+          message: `State was modified by another session (expected version ${expectedVersion}, found ${onDiskVersion})`,
+        };
+      }
+    }
 
     // Guard: reject workflow_mode changes FROM terminal states
     if (updates.workflow_mode) {
@@ -304,6 +339,9 @@ export async function update({ updates, basePath = process.cwd(), _append_decisi
       };
     }
 
+    // Optimistic concurrency: increment _version on every successful write
+    merged._version = (merged._version ?? 0) + 1;
+
     await writeJson(statePath, merged);
     return { success: true, state: merged };
   });
@@ -362,7 +400,7 @@ export async function phaseComplete({
     if (!result.ok) {
       return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
-    const state = result.data;
+    const state = migrateState(result.data);
 
     const phase = state.phases.find((p) => p.id === phase_id);
     if (!phase) {
@@ -497,6 +535,11 @@ export async function phaseComplete({
     // Prune evidence from old phases (in-memory to avoid double read/write)
     await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
 
+    // Validate final state before persisting (match direction_ok=false branch)
+    const finalValidation = validateState(state);
+    if (!finalValidation.valid) {
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${finalValidation.errors.join('; ')}` };
+    }
     await writeJson(statePath, state);
     return { success: true };
   });
@@ -669,7 +712,7 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
     }
 
     // Detect circular dependencies after all patches
-    const cycleError = _detectCycles(state);
+    const cycleError = detectCycles(state.phases);
     if (cycleError) {
       return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: cycleError };
     }
@@ -851,10 +894,10 @@ function _applyPatchOp(state, op) {
         return { error: true, message: `requires.gate must be one of ${validGates.join(', ')}` };
       }
 
-      // Validate target exists
+      // Validate target exists (task deps must be same-phase to match selectRunnableTask resolution)
       if (requires.kind === 'task') {
-        const targetExists = state.phases.some(p => p.todo?.some(t => t.id === requires.id));
-        if (!targetExists) return { error: true, message: `Dependency target task ${requires.id} not found` };
+        const targetInSamePhase = phase.todo?.some(t => t.id === requires.id);
+        if (!targetInSamePhase) return { error: true, message: `Dependency target task ${requires.id} not found in same phase (cross-phase task dependencies are not supported)` };
       } else {
         const phaseId = Number(requires.id);
         if (!state.phases.some(p => p.id === phaseId)) {
@@ -874,42 +917,6 @@ function _applyPatchOp(state, op) {
     default:
       return { error: true, message: `Unknown operation: ${op.op}` };
   }
-}
-
-function _detectCycles(state) {
-  for (const phase of state.phases) {
-    const tasks = phase.todo || [];
-    const taskIds = tasks.map(t => t.id);
-    const inDegree = new Map(taskIds.map(id => [id, 0]));
-    const adj = new Map(taskIds.map(id => [id, []]));
-
-    for (const task of tasks) {
-      for (const dep of (task.requires || [])) {
-        if (dep.kind === 'task' && inDegree.has(dep.id)) {
-          adj.get(dep.id).push(task.id);
-          inDegree.set(task.id, inDegree.get(task.id) + 1);
-        }
-      }
-    }
-
-    const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
-    let sorted = 0;
-    while (queue.length > 0) {
-      const node = queue.shift();
-      sorted++;
-      for (const neighbor of adj.get(node)) {
-        const d = inDegree.get(neighbor) - 1;
-        inDegree.set(neighbor, d);
-        if (d === 0) queue.push(neighbor);
-      }
-    }
-
-    if (sorted < taskIds.length) {
-      const cycleNodes = [...inDegree.entries()].filter(([, d]) => d > 0).map(([id]) => id);
-      return `Circular dependency detected in phase ${phase.id}: ${cycleNodes.join(', ')}`;
-    }
-  }
-  return null;
 }
 
 /**
