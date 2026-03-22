@@ -9,24 +9,40 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const _findCache = new Map();
+
 /**
  * Walk from startDir up to filesystem root looking for a .gsd directory
  * that contains state.json. Returns the absolute path to .gsd or null.
+ * Results are cached per startDir (positive hits only — null is not cached
+ * so that a later-created .gsd directory can be discovered).
  */
 function findGsdDir(startDir) {
+  if (_findCache.has(startDir)) return _findCache.get(startDir);
+
   let dir = startDir;
   while (true) {
     const candidate = path.join(dir, '.gsd');
     try {
       if (fs.statSync(candidate).isDirectory()) {
         // Only return if state.json exists (not just an empty .gsd dir)
-        if (fs.existsSync(path.join(candidate, 'state.json'))) return candidate;
+        if (fs.existsSync(path.join(candidate, 'state.json'))) {
+          _findCache.set(startDir, candidate);
+          return candidate;
+        }
       }
     } catch { /* skip */ }
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) return null; // Don't cache negative results
     dir = parent;
   }
+}
+
+/**
+ * Clear the findGsdDir result cache. Useful for testing.
+ */
+function clearFindGsdDirCache() {
+  _findCache.clear();
 }
 
 /**
@@ -81,4 +97,4 @@ function getProgress(state) {
   };
 }
 
-module.exports = { findGsdDir, readState, getProgress };
+module.exports = { findGsdDir, clearFindGsdDirCache, readState, getProgress };

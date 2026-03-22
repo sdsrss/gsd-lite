@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { findGsdDir, readState, getProgress } = require('../hooks/lib/gsd-finder.cjs');
+const { findGsdDir, readState, getProgress, clearFindGsdDirCache } = require('../hooks/lib/gsd-finder.cjs');
 
 describe('gsd-finder shared utilities', () => {
   describe('findGsdDir', () => {
@@ -46,6 +46,69 @@ describe('gsd-finder shared utilities', () => {
         const result = findGsdDir(root);
         assert.equal(result, null);
       } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('returns cached result on repeated calls', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'gsd-finder-'));
+      try {
+        clearFindGsdDirCache();
+        const gsdDir = join(root, '.gsd');
+        await mkdir(gsdDir, { recursive: true });
+        await writeFile(join(gsdDir, 'state.json'), '{}');
+
+        const first = findGsdDir(root);
+        assert.equal(first, gsdDir);
+
+        // Remove the directory — cached result should still be returned
+        await rm(join(root, '.gsd'), { recursive: true, force: true });
+        const second = findGsdDir(root);
+        assert.equal(second, gsdDir, 'should return cached result even after directory removal');
+      } finally {
+        clearFindGsdDirCache();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('clearFindGsdDirCache resets cache', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'gsd-finder-'));
+      try {
+        const gsdDir = join(root, '.gsd');
+        await mkdir(gsdDir, { recursive: true });
+        await writeFile(join(gsdDir, 'state.json'), '{}');
+
+        const first = findGsdDir(root);
+        assert.equal(first, gsdDir);
+
+        // Remove directory and clear cache — should now return null
+        await rm(join(root, '.gsd'), { recursive: true, force: true });
+        clearFindGsdDirCache();
+        const second = findGsdDir(root);
+        assert.equal(second, null, 'should re-traverse after cache clear');
+      } finally {
+        clearFindGsdDirCache();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('does not cache negative results', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'gsd-finder-'));
+      try {
+        clearFindGsdDirCache();
+        // No .gsd directory — should return null
+        const first = findGsdDir(root);
+        assert.equal(first, null);
+
+        // Now create .gsd — should find it (null was not cached)
+        const gsdDir = join(root, '.gsd');
+        await mkdir(gsdDir, { recursive: true });
+        await writeFile(join(gsdDir, 'state.json'), '{}');
+
+        const second = findGsdDir(root);
+        assert.equal(second, gsdDir, 'should find .gsd after creation since null is not cached');
+      } finally {
+        clearFindGsdDirCache();
         await rm(root, { recursive: true, force: true });
       }
     });
