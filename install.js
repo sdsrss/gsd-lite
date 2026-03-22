@@ -13,12 +13,13 @@ const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // Single source of truth for hook files (used by copy loop and registration)
-const HOOK_FILES = ['gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-context-monitor.cjs', 'gsd-statusline.cjs'];
+const HOOK_FILES = ['gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-context-monitor.cjs', 'gsd-statusline.cjs', 'gsd-session-stop.cjs'];
 
 // Hook registration config: hookType → { file identifier, matcher, timeout? }
 const HOOK_REGISTRY = [
   { hookType: 'SessionStart', identifier: 'gsd-session-init', matcher: 'startup', timeout: 5 },
   { hookType: 'PostToolUse', identifier: 'gsd-context-monitor', matcher: '*' },
+  { hookType: 'Stop', identifier: 'gsd-session-stop', matcher: '*', timeout: 3 },
 ];
 
 function log(msg) { console.log(msg); }
@@ -134,6 +135,11 @@ export function main() {
   // 5. Hooks (copy scripts only, skip hooks.json to avoid overwriting other plugins)
   for (const hookFile of HOOK_FILES) {
     copyFile(join(__dirname, 'hooks', hookFile), join(CLAUDE_DIR, 'hooks', hookFile), `hooks/${hookFile}`);
+  }
+  // 5b. Hook library dependencies (e.g. gsd-finder.cjs used by statusline + session-init)
+  const hookLibDir = join(__dirname, 'hooks', 'lib');
+  if (existsSync(hookLibDir)) {
+    copyDir(hookLibDir, join(CLAUDE_DIR, 'hooks', 'lib'), 'hooks/lib → ~/.claude/hooks/lib/');
   }
 
   // 6. Stable runtime for MCP server

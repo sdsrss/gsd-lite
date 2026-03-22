@@ -38,11 +38,21 @@ export function main() {
   removeDir(join(CLAUDE_DIR, 'gsd-lite'), 'legacy gsd-lite runtime/');
 
   // Remove hook files (both legacy and current names)
-  for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-session-init.cjs', 'gsd-auto-update.cjs']) {
+  for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-session-stop.cjs']) {
     const hookFile = join(CLAUDE_DIR, 'hooks', name);
     if (existsSync(hookFile)) {
       rmSync(hookFile);
       log(`  ✓ Removed hooks/${name}`);
+    }
+  }
+  // Remove hook library dependencies
+  const hookLibDir = join(CLAUDE_DIR, 'hooks', 'lib');
+  if (existsSync(hookLibDir)) {
+    // Only remove GSD-owned files, not other plugins' libs
+    const gsdLibFile = join(hookLibDir, 'gsd-finder.cjs');
+    if (existsSync(gsdLibFile)) {
+      rmSync(gsdLibFile);
+      log('  ✓ Removed hooks/lib/gsd-finder.cjs');
     }
   }
 
@@ -123,6 +133,7 @@ export function main() {
         ['PostToolUse', 'gsd-context-monitor'],
         ['PostToolUse', 'context-monitor.js'],
         ['SessionStart', 'gsd-session-init'],
+        ['Stop', 'gsd-session-stop'],
       ]) {
         if (Array.isArray(settings.hooks[hookType])) {
           const len = settings.hooks[hookType].length;

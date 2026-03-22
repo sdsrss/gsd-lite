@@ -2016,4 +2016,46 @@ describe('orchestrator skeleton', () => {
     assert.equal(result.task_id, '1.1');
     assert.equal(result.parallel_available, undefined);
   });
+
+  it('auto-starts pending parallel tasks when executor result is submitted', async () => {
+    await init({
+      project: 'parallel-auto-start',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'Task A', level: 'L1' },
+        { index: 2, name: 'Task B', level: 'L0' },
+      ]}],
+      basePath: tempDir,
+    });
+
+    // Resume only starts task 1.1 as running; 1.2 stays pending
+    const resume = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(resume.task_id, '1.1');
+    assert.ok(resume.parallel_available?.length > 0);
+
+    // Submit executor result for parallel task 1.2 (still pending)
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.2',
+        outcome: 'checkpointed',
+        summary: 'Completed Task B',
+        checkpoint_commit: 'abc123',
+        files_changed: ['b.js'],
+        decisions: [],
+        blockers: [],
+        contract_changed: false,
+        confidence: 'high',
+        evidence: [],
+      },
+    });
+
+    // Should succeed — auto-start should handle pending → running → accepted
+    assert.equal(result.success, true, `Expected success but got: ${JSON.stringify(result)}`);
+    assert.equal(result.auto_accepted, true);
+
+    // Verify the task is now accepted in state
+    const state = await read({ basePath: tempDir });
+    const task = state.phases[0].todo.find(t => t.id === '1.2');
+    assert.equal(task.lifecycle, 'accepted');
+  });
 });

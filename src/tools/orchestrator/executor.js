@@ -30,6 +30,16 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     return { error: true, message: `Task ${result.task_id} not found` };
   }
 
+  // Auto-start parallel tasks: if a task is still pending (dispatched via parallel_available
+  // but not explicitly started by orchestrator-resume), transition it to running first.
+  if (task.lifecycle === 'pending') {
+    const startError = await persist(basePath, {
+      phases: [{ id: phase.id, todo: [{ id: task.id, lifecycle: 'running' }] }],
+    });
+    if (startError) return startError;
+    task.lifecycle = 'running';
+  }
+
   // Build new decision entries — actual append happens atomically inside update()'s lock
   const newDecisions = buildDecisionEntries(result.decisions, phase.id, task.id, (state.decisions || []).length);
 

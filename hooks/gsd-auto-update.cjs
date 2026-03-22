@@ -337,7 +337,7 @@ function validateExtractedPackage(extractDir) {
 // ── Download & Install ─────────────────────────────────────
 async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
-  const backupPath = path.join(pluginRoot, 'package.json.bak');
+  const backupPath = path.join(runtimeDir, 'package.json.bak');
   let backedUp = false;
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -492,11 +492,17 @@ function syncPluginCache(extractedDir, verbose = false) {
 
     // Install dependencies in cache dir
     if (!fs.existsSync(path.join(newCachePath, 'node_modules', '@modelcontextprotocol'))) {
-      spawnSync('npm', ['install', '--omit=dev', '--ignore-scripts'], {
+      const npmResult = spawnSync('npm', ['install', '--omit=dev', '--ignore-scripts'], {
         cwd: newCachePath,
         stdio: 'pipe',
         timeout: 60000,
       });
+      if (npmResult.status !== 0) {
+        // npm install failed — don't update registry to point to broken cache
+        if (verbose) console.error('  npm install failed in cache dir, aborting cache sync');
+        fs.rmSync(newCachePath, { recursive: true, force: true });
+        return;
+      }
     }
 
     // Update installed_plugins.json to point to new cache path
@@ -506,6 +512,23 @@ function syncPluginCache(extractedDir, verbose = false) {
     const tmpPlugins = pluginsFile + `.${process.pid}.tmp`;
     fs.writeFileSync(tmpPlugins, JSON.stringify(plugins, null, 2) + '\n');
     fs.renameSync(tmpPlugins, pluginsFile);
+
+    // Update settings.json statusLine if it points to the old cache path
+    try {
+      const settingsPath = path.join(claudeDir, 'settings.json');
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      if (settings.statusLine?.command?.includes('/plugins/cache/gsd/gsd/')) {
+        const oldCmd = settings.statusLine.command;
+        const updated = oldCmd.replace(/\/plugins\/cache\/gsd\/gsd\/[^/]+\//g, `/plugins/cache/gsd/gsd/${newVersion}/`);
+        if (updated !== oldCmd) {
+          settings.statusLine.command = updated;
+          const tmpSettings = settingsPath + `.${process.pid}.tmp`;
+          fs.writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n');
+          fs.renameSync(tmpSettings, settingsPath);
+          if (verbose) console.log('  StatusLine path updated to new version');
+        }
+      }
+    } catch {}
 
     if (verbose) console.log(`  Plugin cache synced to v${newVersion}`);
   } catch (err) {
