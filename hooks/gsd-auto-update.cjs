@@ -299,15 +299,8 @@ async function fetchLatestRelease(token) {
 }
 
 // ── Version Comparison (semver) ────────────────────────────
-function compareVersions(a, b) {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
-    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
-  }
-  return 0;
-}
+// Reuse shared comparator; callers only check sign (> 0, < 0, === 0)
+const compareVersions = semverSortComparator;
 
 function getCurrentVersion(mode = getInstallMode()) {
   const candidates = mode === 'manual'

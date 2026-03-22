@@ -1,6 +1,6 @@
 // State CRUD operations
 
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject, clearGsdDirCache } from '../../utils.js';
@@ -29,7 +29,6 @@ import { propagateInvalidation } from './logic.js';
  * Missing/unreadable files are silently skipped.
  */
 async function computePlanHashes(filePaths, gsdDir) {
-  const { relative } = await import('node:path');
   const hashes = {};
   for (const filePath of filePaths) {
     try {
