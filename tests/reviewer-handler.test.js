@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update } from '../src/tools/state/index.js';
-import { handleReviewerResult } from '../src/tools/orchestrator.js';
+import { handleReviewerResult } from '../src/tools/orchestrator/index.js';
 
 function makeValidReviewerResult(overrides = {}) {
   return {

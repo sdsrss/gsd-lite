@@ -11,7 +11,7 @@ import { execSync } from 'node:child_process';
 
 import { handleToolCall } from '../src/server.js';
 import { init, read, update, phaseComplete, addEvidence, setLockPath, buildExecutorContext } from '../src/tools/state/index.js';
-import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator.js';
+import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 // ── Helpers ──
 

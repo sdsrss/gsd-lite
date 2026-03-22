@@ -36,7 +36,7 @@ node -e "
 # 3. Orchestrator resume
 echo -n "[3/$TOTAL] Orchestrator resume... "
 node -e "
-  import { resumeWorkflow } from './src/tools/orchestrator.js';
+  import { resumeWorkflow } from './src/tools/orchestrator/index.js';
   const r = await resumeWorkflow({ basePath: '$TMPDIR' });
   if (!r.success) { console.error(JSON.stringify(r)); process.exit(1); }
   if (r.action !== 'trigger_review') { console.error('expected trigger_review, got ' + r.action); process.exit(1); }
@@ -71,7 +71,7 @@ trap 'rm -rf "$TMPDIR" "$TMPDIR_MP"' EXIT
 echo -n "[7/$TOTAL] Multi-phase workflow... "
 node -e "
   import { init, update, read, phaseComplete } from './src/tools/state/index.js';
-  import { resumeWorkflow, handleExecutorResult, handleReviewerResult } from './src/tools/orchestrator.js';
+  import { resumeWorkflow, handleExecutorResult, handleReviewerResult } from './src/tools/orchestrator/index.js';
   const bp = '$TMPDIR_MP';
 
   // Create 2-phase project with 1 task each
@@ -144,7 +144,7 @@ trap 'rm -rf "$TMPDIR" "$TMPDIR_MP" "$TMPDIR_SR"' EXIT
 echo -n "[8/$TOTAL] Stop/Resume roundtrip... "
 node -e "
   import { init, update, read } from './src/tools/state/index.js';
-  import { resumeWorkflow } from './src/tools/orchestrator.js';
+  import { resumeWorkflow } from './src/tools/orchestrator/index.js';
   const bp = '$TMPDIR_SR';
 
   // Create project
@@ -182,7 +182,7 @@ trap 'rm -rf "$TMPDIR" "$TMPDIR_MP" "$TMPDIR_SR" "$TMPDIR_PC"' EXIT
 echo -n "[9/$TOTAL] Phase complete... "
 node -e "
   import { init, update, read, phaseComplete } from './src/tools/state/index.js';
-  import { handleExecutorResult, handleReviewerResult } from './src/tools/orchestrator.js';
+  import { handleExecutorResult, handleReviewerResult } from './src/tools/orchestrator/index.js';
   const bp = '$TMPDIR_PC';
 
   // Create 2-phase project

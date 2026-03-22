@@ -12,7 +12,7 @@ import {
   read,
   update,
 } from './e2e-helpers.js';
-import { resumeWorkflow } from '../src/tools/orchestrator.js';
+import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 // ── TC1: executing_task — selects next runnable task ──
 

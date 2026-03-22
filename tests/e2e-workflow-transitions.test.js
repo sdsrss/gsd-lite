@@ -13,7 +13,7 @@ import {
   handleExecutorResult,
   handleReviewerResult,
   resumeWorkflow,
-} from '../src/tools/orchestrator.js';
+} from '../src/tools/orchestrator/index.js';
 import {
   selectRunnableTask,
 } from '../src/tools/state/index.js';

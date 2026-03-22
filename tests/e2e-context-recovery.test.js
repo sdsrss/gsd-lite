@@ -11,7 +11,7 @@ import {
   update,
   addEvidence,
 } from './e2e-helpers.js';
-import { resumeWorkflow } from '../src/tools/orchestrator.js';
+import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 /**
  * Helper: read state and build a context update that preserves last_session

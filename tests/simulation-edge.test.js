@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 import { init, read, update, addEvidence, setLockPath, selectRunnableTask, applyResearchRefresh, propagateInvalidation, reclassifyReviewLevel, matchDecisionForBlocker, buildExecutorContext } from '../src/tools/state/index.js';
-import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, resumeWorkflow } from '../src/tools/orchestrator.js';
+import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 let basePath;
 

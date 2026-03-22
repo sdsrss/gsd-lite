@@ -12,7 +12,7 @@ import {
   handleReviewerResult,
   handleResearcherResult,
   resumeWorkflow,
-} from '../src/tools/orchestrator.js';
+} from '../src/tools/orchestrator/index.js';
 
 describe('orchestrator skeleton', () => {
   let tempDir;

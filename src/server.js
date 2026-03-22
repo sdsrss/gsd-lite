@@ -41,7 +41,7 @@ import {
   handleResearcherResult,
   handleReviewerResult,
   resumeWorkflow,
-} from './tools/orchestrator.js';
+} from './tools/orchestrator/index.js';
 
 const server = new Server(
   { name: 'gsd', version: PKG_VERSION },

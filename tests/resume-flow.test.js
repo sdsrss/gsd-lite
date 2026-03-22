@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update } from '../src/tools/state/index.js';
-import { handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator.js';
+import { handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 async function withProject(name, fn, { git = false, research = false } = {}) {
   const tempDir = await mkdtemp(join(tmpdir(), `gsd-${name}-`));

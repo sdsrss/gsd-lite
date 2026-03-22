@@ -12,7 +12,7 @@ import {
   handleExecutorResult,
   handleReviewerResult,
   handleDebuggerResult,
-} from '../src/tools/orchestrator.js';
+} from '../src/tools/orchestrator/index.js';
 import {
   reclassifyReviewLevel,
 } from '../src/tools/state/index.js';
