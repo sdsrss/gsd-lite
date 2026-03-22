@@ -1,4 +1,5 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 import {
   update,
@@ -117,9 +118,8 @@ function getDirectionDriftPhase(state) {
   )) || null;
 }
 
-async function detectPlanDrift(basePath, lastSession) {
-  const lastSessionTs = parseTimestamp(lastSession);
-  if (lastSessionTs === null) return [];
+async function detectPlanDrift(basePath, storedHashes) {
+  if (!storedHashes || typeof storedHashes !== 'object') return [];
 
   const gsdDir = await getGsdDir(basePath);
   if (!gsdDir) return [];
@@ -136,12 +136,19 @@ async function detectPlanDrift(basePath, lastSession) {
 
   const changedFiles = [];
   for (const filePath of candidates) {
+    const relPath = relative(gsdDir, filePath);
+    const storedHash = storedHashes[relPath];
+    if (!storedHash) continue; // New file or no stored hash — skip
     try {
-      const fileStat = await stat(filePath);
-      if (fileStat.mtimeMs > lastSessionTs) {
-        changedFiles.push(relative(gsdDir, filePath));
+      const content = await readFile(filePath, 'utf-8');
+      const currentHash = createHash('sha256').update(content).digest('hex');
+      if (currentHash !== storedHash) {
+        changedFiles.push(relPath);
       }
-    } catch {}
+    } catch {
+      // File removed — count as drift
+      changedFiles.push(relPath);
+    }
   }
 
   return changedFiles.sort();
@@ -166,7 +173,7 @@ async function evaluatePreflight(state, basePath) {
     });
   }
 
-  const changed_files = await detectPlanDrift(basePath, state.context?.last_session);
+  const changed_files = await detectPlanDrift(basePath, state.context?.plan_hashes);
   if (changed_files.length > 0) {
     hints.push({
       workflow_mode: 'replan_required',

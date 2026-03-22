@@ -17,6 +17,42 @@ import {
   tryAutoUnblock,
 } from './helpers.js';
 
+/**
+ * Build a compact display-ready summary from state and response.
+ * Included in every successful resumeWorkflow response to avoid redundant state reads.
+ * @param {object} state - The state at the time of the resume call
+ * @param {object} [response] - The response object (may contain task_id from dispatched task)
+ */
+function _buildResumeSummary(state, response) {
+  const phase = getCurrentPhase(state);
+  const totalTasks = phase?.todo?.length || 0;
+  const doneTasks = (phase?.todo || []).filter(t =>
+    t.lifecycle === 'accepted' || t.lifecycle === 'checkpointed',
+  ).length;
+
+  // Use task_id from response if available (sub-functions persist current_task after state read)
+  const taskId = response?.task_id || state.current_task;
+  const currentTask = taskId
+    ? (phase?.todo || []).find(t => t.id === taskId)
+    : null;
+
+  const decisions = state.decisions || [];
+  const recentDecisions = decisions.slice(-3).map(d => ({
+    id: d.id,
+    summary: d.summary,
+  }));
+
+  return {
+    workflow_mode: state.workflow_mode,
+    current_phase: `${state.current_phase || '?'}/${state.total_phases || '?'}`,
+    current_task: currentTask
+      ? { id: currentTask.id, name: currentTask.name || null }
+      : (taskId ? { id: taskId, name: null } : null),
+    phase_progress: `${doneTasks}/${totalTasks}`,
+    ...(recentDecisions.length > 0 ? { recent_decisions: recentDecisions } : {}),
+  };
+}
+
 async function resumeAwaitingClear(state, basePath) {
   const health = await readContextHealth(basePath);
   if (health !== null && health < CONTEXT_RESUME_THRESHOLD) {
@@ -249,18 +285,20 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
           phases: [{ id: phase.id, todo: patches }],
         });
         if (persistError) return persistError;
-        // Re-read state after unblock and continue
+        // Re-read state after unblock and continue (recursive call adds its own summary)
         return resumeWorkflow({ basePath, _depth: _depth + 1 });
       }
     }
   }
 
   const preflight = await evaluatePreflight(state, basePath);
+  let result;
+
   if (preflight.override) {
     const persistError = await persist(basePath, preflight.override.updates);
     if (persistError) return persistError;
 
-    return {
+    result = {
       success: true,
       action: preflight.override.action,
       workflow_mode: preflight.override.workflow_mode,
@@ -273,206 +311,232 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
       ...(preflight.override.dirty_phase ? { dirty_phase: preflight.override.dirty_phase } : {}),
       ...(preflight.hints && preflight.hints.length > 1 ? { pending_issues: preflight.hints.slice(1) } : {}),
     };
-  }
+  } else {
+    switch (state.workflow_mode) {
+      case 'executing_task':
+        result = await resumeExecutingTask(state, basePath);
+        break;
+      case 'awaiting_clear':
+        result = await resumeAwaitingClear(state, basePath);
+        break;
+      case 'awaiting_user': {
+        if (state.current_review?.stage === 'direction_drift') {
+          const driftPhaseId = state.current_review.scope_id || state.current_phase;
+          const driftPhase = state.phases?.find((phase) => phase.id === driftPhaseId) || null;
+          result = {
+            success: true,
+            action: 'awaiting_user',
+            workflow_mode: 'awaiting_user',
+            phase_id: driftPhaseId,
+            drift_phase: driftPhase ? { id: driftPhase.id, name: driftPhase.name } : { id: driftPhaseId, name: null },
+            auto_unblocked: [],
+            blockers: [],
+            current_review: state.current_review,
+            message: 'Direction drift detected; user decision is required before execution can continue',
+          };
+          break;
+        }
 
-  switch (state.workflow_mode) {
-    case 'executing_task':
-      return resumeExecutingTask(state, basePath);
-    case 'awaiting_clear':
-      return resumeAwaitingClear(state, basePath);
-    case 'awaiting_user': {
-      if (state.current_review?.stage === 'direction_drift') {
-        const driftPhaseId = state.current_review.scope_id || state.current_phase;
-        const driftPhase = state.phases?.find((phase) => phase.id === driftPhaseId) || null;
-        return {
+        const phase = getCurrentPhase(state);
+        const autoUnblock = await tryAutoUnblock(state, phase, basePath);
+        if (autoUnblock.error) return autoUnblock;
+
+        if (autoUnblock.blockers.length === 0) {
+          const persistError = await persist(basePath, {
+            workflow_mode: 'executing_task',
+            current_task: null,
+            current_review: null,
+          });
+          if (persistError) return persistError;
+          // Recursive call adds its own summary
+          const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
+          if (resumed.error) return resumed;
+          return { ...resumed, auto_unblocked: autoUnblock.autoUnblocked };
+        }
+
+        result = {
           success: true,
           action: 'awaiting_user',
           workflow_mode: 'awaiting_user',
-          phase_id: driftPhaseId,
-          drift_phase: driftPhase ? { id: driftPhase.id, name: driftPhase.name } : { id: driftPhaseId, name: null },
-          auto_unblocked: [],
-          blockers: [],
-          current_review: state.current_review,
-          message: 'Direction drift detected; user decision is required before execution can continue',
+          phase_id: state.current_phase,
+          auto_unblocked: autoUnblock.autoUnblocked,
+          blockers: autoUnblock.blockers,
+          message: autoUnblock.blockers.length > 0
+            ? 'Blocked tasks still require user input'
+            : 'No blocked tasks remain',
         };
+        break;
       }
-
-      const phase = getCurrentPhase(state);
-      const autoUnblock = await tryAutoUnblock(state, phase, basePath);
-      if (autoUnblock.error) return autoUnblock;
-
-      if (autoUnblock.blockers.length === 0) {
-        const persistError = await persist(basePath, {
-          workflow_mode: 'executing_task',
-          current_task: null,
-          current_review: null,
-        });
+      case 'reviewing_phase': {
+        const phase = getCurrentPhase(state);
+        const current_review = state.current_review || { scope: 'phase', scope_id: state.current_phase };
+        const persistError = state.current_review ? null : await persist(basePath, { current_review });
         if (persistError) return persistError;
-        const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
-        if (resumed.error) return resumed;
-        return { ...resumed, auto_unblocked: autoUnblock.autoUnblocked };
+
+        result = {
+          success: true,
+          action: 'dispatch_reviewer',
+          workflow_mode: 'reviewing_phase',
+          review_scope: 'phase',
+          phase_id: phase?.id || state.current_phase,
+          current_review,
+          review_targets: getReviewTargets(phase, 'phase', current_review.scope_id).map((task) => ({
+            id: task.id,
+            level: task.level,
+            checkpoint_commit: task.checkpoint_commit || null,
+            files_changed: task.files_changed || [],
+          })),
+          result_contract: RESULT_CONTRACTS.reviewer,
+        };
+        break;
       }
+      case 'reviewing_task': {
+        const phase = getCurrentPhase(state);
+        const current_review = state.current_review || (state.current_task
+          ? { scope: 'task', scope_id: state.current_task, stage: 'spec' }
+          : null);
+        if (!current_review?.scope_id) {
+          return { error: true, message: 'reviewing_task mode requires current_review.scope_id or current_task' };
+        }
+        const persistError = state.current_review ? null : await persist(basePath, { current_review });
+        if (persistError) return persistError;
 
-      return {
-        success: true,
-        action: 'awaiting_user',
-        workflow_mode: 'awaiting_user',
-        phase_id: state.current_phase,
-        auto_unblocked: autoUnblock.autoUnblocked,
-        blockers: autoUnblock.blockers,
-        message: autoUnblock.blockers.length > 0
-          ? 'Blocked tasks still require user input'
-          : 'No blocked tasks remain',
-      };
-    }
-    case 'reviewing_phase': {
-      const phase = getCurrentPhase(state);
-      const current_review = state.current_review || { scope: 'phase', scope_id: state.current_phase };
-      const persistError = state.current_review ? null : await persist(basePath, { current_review });
-      if (persistError) return persistError;
-
-      return {
-        success: true,
-        action: 'dispatch_reviewer',
-        workflow_mode: 'reviewing_phase',
-        review_scope: 'phase',
-        phase_id: phase?.id || state.current_phase,
-        current_review,
-        review_targets: getReviewTargets(phase, 'phase', current_review.scope_id).map((task) => ({
-          id: task.id,
-          level: task.level,
-          checkpoint_commit: task.checkpoint_commit || null,
-          files_changed: task.files_changed || [],
-        })),
-        result_contract: RESULT_CONTRACTS.reviewer,
-      };
-    }
-    case 'reviewing_task': {
-      const phase = getCurrentPhase(state);
-      const current_review = state.current_review || (state.current_task
-        ? { scope: 'task', scope_id: state.current_task, stage: 'spec' }
-        : null);
-      if (!current_review?.scope_id) {
-        return { error: true, message: 'reviewing_task mode requires current_review.scope_id or current_task' };
+        const [task] = getReviewTargets(phase, 'task', current_review.scope_id);
+        result = {
+          success: true,
+          action: 'dispatch_reviewer',
+          workflow_mode: 'reviewing_task',
+          review_scope: 'task',
+          phase_id: phase?.id || state.current_phase,
+          current_review,
+          review_target: task ? {
+            id: task.id,
+            level: task.level,
+            checkpoint_commit: task.checkpoint_commit || null,
+            files_changed: task.files_changed || [],
+          } : null,
+          result_contract: RESULT_CONTRACTS.reviewer,
+        };
+        break;
       }
-      const persistError = state.current_review ? null : await persist(basePath, { current_review });
-      if (persistError) return persistError;
-
-      const [task] = getReviewTargets(phase, 'task', current_review.scope_id);
-      return {
-        success: true,
-        action: 'dispatch_reviewer',
-        workflow_mode: 'reviewing_task',
-        review_scope: 'task',
-        phase_id: phase?.id || state.current_phase,
-        current_review,
-        review_target: task ? {
-          id: task.id,
-          level: task.level,
-          checkpoint_commit: task.checkpoint_commit || null,
-          files_changed: task.files_changed || [],
-        } : null,
-        result_contract: RESULT_CONTRACTS.reviewer,
-      };
-    }
-    case 'completed':
-      return {
-        success: true,
-        action: 'noop',
-        workflow_mode: state.workflow_mode,
-        completed_phases: (state.phases || []).filter((phase) => phase.lifecycle === 'accepted').length,
-        total_phases: state.total_phases,
-        message: 'Workflow already completed',
-        pr_suggestion: {
-          recommended: true,
-          message: 'Project complete. Consider creating a PR with `gh pr create` if not already done.',
-        },
-      };
-    case 'failed': {
-      const failedPhases = [];
-      const failedTasks = [];
-      for (const phase of state.phases || []) {
-        if (phase.lifecycle === 'failed') failedPhases.push({ id: phase.id, name: phase.name });
-        for (const t of phase.todo || []) {
-          if (t.lifecycle === 'failed') {
-            failedTasks.push({
-              id: t.id,
-              name: t.name,
-              phase_id: phase.id,
-              retry_count: t.retry_count || 0,
-              last_failure_summary: t.last_failure_summary || null,
-              debug_context: t.debug_context || null,
-            });
+      case 'completed':
+        result = {
+          success: true,
+          action: 'noop',
+          workflow_mode: state.workflow_mode,
+          completed_phases: (state.phases || []).filter((phase) => phase.lifecycle === 'accepted').length,
+          total_phases: state.total_phases,
+          message: 'Workflow already completed',
+          pr_suggestion: {
+            recommended: true,
+            message: 'Project complete. Consider creating a PR with `gh pr create` if not already done.',
+          },
+        };
+        break;
+      case 'failed': {
+        const failedPhases = [];
+        const failedTasks = [];
+        for (const phase of state.phases || []) {
+          if (phase.lifecycle === 'failed') failedPhases.push({ id: phase.id, name: phase.name });
+          for (const t of phase.todo || []) {
+            if (t.lifecycle === 'failed') {
+              failedTasks.push({
+                id: t.id,
+                name: t.name,
+                phase_id: phase.id,
+                retry_count: t.retry_count || 0,
+                last_failure_summary: t.last_failure_summary || null,
+                debug_context: t.debug_context || null,
+              });
+            }
           }
         }
+        result = {
+          success: true,
+          action: 'await_recovery_decision',
+          workflow_mode: state.workflow_mode,
+          failed_phases: failedPhases,
+          failed_tasks: failedTasks,
+          recovery_options: ['retry_failed', 'skip_failed', 'replan'],
+          message: 'Workflow is in failed state. Recovery options available.',
+        };
+        break;
       }
-      return {
-        success: true,
-        action: 'await_recovery_decision',
-        workflow_mode: state.workflow_mode,
-        failed_phases: failedPhases,
-        failed_tasks: failedTasks,
-        recovery_options: ['retry_failed', 'skip_failed', 'replan'],
-        message: 'Workflow is in failed state. Recovery options available.',
-      };
+      case 'paused_by_user':
+        result = {
+          success: true,
+          action: 'await_manual_intervention',
+          workflow_mode: state.workflow_mode,
+          resume_to: state.current_review?.scope === 'phase'
+            ? 'reviewing_phase'
+            : state.current_review?.scope === 'task'
+              ? 'reviewing_task'
+              : 'executing_task',
+          current_review: state.current_review || null,
+          current_task: state.current_task || null,
+          message: 'Project is paused. Confirm to resume execution.',
+        };
+        break;
+      case 'planning':
+        result = {
+          success: true,
+          action: 'await_manual_intervention',
+          workflow_mode: state.workflow_mode,
+          guidance: 'Complete planning and call state-init to initialize the project',
+          message: 'Project is in planning mode; complete the plan and initialize with state-init',
+        };
+        break;
+      case 'reconcile_workspace': {
+        const reconGitHead = await getGitHead(basePath);
+        result = {
+          success: true,
+          action: 'reconcile_workspace',
+          workflow_mode: state.workflow_mode,
+          expected_head: state.git_head,
+          actual_head: reconGitHead,
+          guidance: 'Workspace git HEAD has diverged. Verify changes and update git_head via state-update, then set workflow_mode to executing_task',
+          message: `Git HEAD mismatch: saved=${state.git_head}, current=${reconGitHead}`,
+        };
+        break;
+      }
+      case 'replan_required':
+        result = {
+          success: true,
+          action: 'replan_required',
+          workflow_mode: state.workflow_mode,
+          guidance: 'Plan files modified since last session. Review changes, update the plan if needed, then set workflow_mode to executing_task via state-update',
+          message: 'Plan artifacts modified since last session; review and re-align before resuming',
+        };
+        break;
+      case 'research_refresh_needed': {
+        const expiredResearch = collectExpiredResearch(state);
+        result = {
+          success: true,
+          action: 'dispatch_researcher',
+          workflow_mode: state.workflow_mode,
+          expired_research: expiredResearch,
+          guidance: 'Research cache expired. Dispatch researcher sub-agent to refresh, then call orchestrator-handle-researcher-result',
+          message: 'Research has expired and must be refreshed before execution can resume',
+        };
+        break;
+      }
+      default:
+        return {
+          error: true,
+          message: `workflow_mode "${state.workflow_mode}" is not yet supported by the orchestrator skeleton`,
+        };
     }
-    case 'paused_by_user':
-      return {
-        success: true,
-        action: 'await_manual_intervention',
-        workflow_mode: state.workflow_mode,
-        resume_to: state.current_review?.scope === 'phase'
-          ? 'reviewing_phase'
-          : state.current_review?.scope === 'task'
-            ? 'reviewing_task'
-            : 'executing_task',
-        current_review: state.current_review || null,
-        current_task: state.current_task || null,
-        message: 'Project is paused. Confirm to resume execution.',
-      };
-    case 'planning':
-      return {
-        success: true,
-        action: 'await_manual_intervention',
-        workflow_mode: state.workflow_mode,
-        guidance: 'Complete planning and call state-init to initialize the project',
-        message: 'Project is in planning mode; complete the plan and initialize with state-init',
-      };
-    case 'reconcile_workspace': {
-      const reconGitHead = await getGitHead(basePath);
-      return {
-        success: true,
-        action: 'reconcile_workspace',
-        workflow_mode: state.workflow_mode,
-        expected_head: state.git_head,
-        actual_head: reconGitHead,
-        guidance: 'Workspace git HEAD has diverged. Verify changes and update git_head via state-update, then set workflow_mode to executing_task',
-        message: `Git HEAD mismatch: saved=${state.git_head}, current=${reconGitHead}`,
-      };
-    }
-    case 'replan_required':
-      return {
-        success: true,
-        action: 'replan_required',
-        workflow_mode: state.workflow_mode,
-        guidance: 'Plan files modified since last session. Review changes, update the plan if needed, then set workflow_mode to executing_task via state-update',
-        message: 'Plan artifacts modified since last session; review and re-align before resuming',
-      };
-    case 'research_refresh_needed': {
-      const expiredResearch = collectExpiredResearch(state);
-      return {
-        success: true,
-        action: 'dispatch_researcher',
-        workflow_mode: state.workflow_mode,
-        expired_research: expiredResearch,
-        guidance: 'Research cache expired. Dispatch researcher sub-agent to refresh, then call orchestrator-handle-researcher-result',
-        message: 'Research has expired and must be refreshed before execution can resume',
-      };
-    }
-    default:
-      return {
-        error: true,
-        message: `workflow_mode "${state.workflow_mode}" is not yet supported by the orchestrator skeleton`,
-      };
   }
+
+  // Attach display-ready summary to all successful responses
+  if (result && result.success && !result.summary) {
+    const summary = _buildResumeSummary(state, result);
+    // Use the response's workflow_mode if it differs from state (e.g., preflight override)
+    if (result.workflow_mode && result.workflow_mode !== state.workflow_mode) {
+      summary.workflow_mode = result.workflow_mode;
+    }
+    result.summary = summary;
+  }
+
+  return result;
 }

@@ -9,19 +9,20 @@ description: Resume project execution from saved state with workspace validation
 
 <process>
 
-## STEP 1: 读取状态
+## STEP 1: 调用 orchestrator-resume 获取状态摘要
 
-读取 `.gsd/state.json`:
-- 如果文件不存在 → 告知用户 "未找到 GSD 项目状态，请先运行 /gsd:start 或 /gsd:prd"，停止
-- 如果文件损坏或解析失败 → 告知用户并停止
+调用 MCP tool `orchestrator-resume`，使用响应中的 `summary` 字段展示状态给用户:
+- 如果响应为 error 且 message 包含 "No .gsd directory" → 告知用户 "未找到 GSD 项目状态，请先运行 /gsd:start 或 /gsd:prd"，停止
+- 如果响应为 error → 告知用户错误信息并停止
 
-提取关键 canonical fields:
+`summary` 字段包含:
 - `workflow_mode` — 当前工作流状态
-- `current_phase` / `current_task` — 当前执行位置
-- `current_review` — 当前审查状态
-- `git_head` — 上次记录的 Git HEAD
-- `plan_version` — 计划版本号
-- `research.expires_at` — 研究过期时间
+- `current_phase` — 当前阶段 (格式: "N/M")
+- `current_task` — 当前任务 (id + name)
+- `phase_progress` — 阶段进度 (格式: "done/total")
+- `recent_decisions` — 最近 2-3 个决策 (如有)
+
+注意: 不需要单独读取 state.json，`orchestrator-resume` 的响应已包含所有需要展示的信息。
 
 ## STEP 2: 前置校验
 
@@ -55,10 +56,15 @@ description: Resume project execution from saved state with workspace validation
    - 或 research.decision_index 中有条目的 expires_at 已过期
    - → 覆写 `workflow_mode = research_refresh_needed`
 
-5. **全部通过:**
+5. **Dirty-phase 回滚检测:**
+   - 检查已完成 phase 中是否有 `needs_revalidation` 状态的 task
+   - 如有 → 回滚 `current_phase` 到最早的 dirty phase
+   - → 覆写 `workflow_mode = executing_task`
+
+6. **全部通过:**
    - 保持原 `workflow_mode` 不变
 
-校验顺序: 1→2→3→4，首个命中的覆写生效 (不累积)
+校验顺序: 1→2→3→4→5，首个命中的覆写生效 (不累积)
 </HARD-GATE>
 
 ## STEP 3: 按 workflow_mode 恢复
@@ -106,8 +112,8 @@ description: Resume project execution from saved state with workspace validation
 ### `awaiting_clear` — 继续自动执行
 
 - 上下文已通过 /clear 清理
-- 直接继续自动执行主路径
-- 从 `current_phase` + `current_task` 恢复调度
+- 再次验证上下文健康度 ≥ 40%，不足则要求再次 /clear
+- 验证通过后从 `current_phase` + `current_task` 恢复调度
 
 ---
 
@@ -208,17 +214,17 @@ description: Resume project execution from saved state with workspace validation
 
 ## STEP 4: 显示当前进度 + 下一动作
 
-每次恢复后都展示简要进度面板:
+每次恢复后使用 `orchestrator-resume` 响应中的 `summary` 字段展示简要进度面板:
 
 ```
-项目: {project}
-模式: {workflow_mode}
-进度: Phase {current_phase}/{total_phases} | Task {done}/{tasks}
-当前: {current_task} — {task_name}
-下一步: {根据 workflow_mode 推导的下一动作}
+模式: {summary.workflow_mode}
+进度: Phase {summary.current_phase} | Task {summary.phase_progress}
+当前: {summary.current_task.id} — {summary.current_task.name}
+决策: {summary.recent_decisions (如有)}
+下一步: {根据 action 推导的下一动作}
 ```
 
-所有展示数据从 canonical fields 实时推导，不使用 derived fields。
+注意: 所有展示数据直接取自 `summary` 字段，不需要额外读取 state.json。
 
 ## STEP 5: 自动执行循环
 

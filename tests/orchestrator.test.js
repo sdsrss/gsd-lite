@@ -266,16 +266,8 @@ describe('orchestrator skeleton', () => {
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
-    await update({
-      updates: {
-        context: {
-          last_session: new Date(Date.now() - 5000).toISOString(),
-          remaining_percentage: 100,
-        },
-      },
-      basePath: tempDir,
-    });
 
+    // Content hash drift: write different content to phase file (hashes stored at init)
     writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# changed\n');
 
     const result = await resumeWorkflow({ basePath: tempDir });
@@ -2057,5 +2049,207 @@ describe('orchestrator skeleton', () => {
     const state = await read({ basePath: tempDir });
     const task = state.phases[0].todo.find(t => t.id === '1.2');
     assert.equal(task.lifecycle, 'accepted');
+  });
+
+  // ── Improvement #5: Plan drift uses content hash instead of mtime ──
+
+  it('stores plan_hashes in context at init time', async () => {
+    await init({
+      project: 'hash-init',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    const state = await read({ basePath: tempDir });
+    assert.ok(state.context.plan_hashes, 'plan_hashes should be present in context');
+    assert.ok(typeof state.context.plan_hashes === 'object', 'plan_hashes should be an object');
+    // Should have entries for plan.md and phase-1.md
+    const keys = Object.keys(state.context.plan_hashes);
+    assert.ok(keys.length >= 2, `Expected at least 2 hash entries, got ${keys.length}`);
+    // Each value should be a hex string (SHA-256 = 64 chars)
+    for (const hash of Object.values(state.context.plan_hashes)) {
+      assert.ok(typeof hash === 'string' && hash.length === 64, `Expected 64-char hex hash, got: ${hash}`);
+    }
+  });
+
+  it('does NOT detect plan drift when file is touched but content unchanged', async () => {
+    await init({
+      project: 'hash-no-drift',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // Touch the phase file (changes mtime but not content)
+    const phaseFile = join(tempDir, '.gsd', 'phases', 'phase-1.md');
+    const { utimesSync, readFileSync } = await import('node:fs');
+    const content = readFileSync(phaseFile, 'utf-8');
+    const future = new Date(Date.now() + 10000);
+    utimesSync(phaseFile, future, future);
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    // Should NOT trigger replan_required — content hasn't changed
+    assert.notEqual(result.workflow_mode, 'replan_required',
+      'touch without content change should not trigger plan drift');
+  });
+
+  it('detects plan drift when file content actually changes', async () => {
+    await init({
+      project: 'hash-real-drift',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# completely different content\n');
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.workflow_mode, 'replan_required');
+    assert.ok(result.changed_files.includes('phases/phase-1.md'));
+  });
+
+  it('does NOT detect drift when plan files do not exist (graceful)', async () => {
+    await init({
+      project: 'hash-no-files',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // Remove plan files
+    const { unlinkSync } = await import('node:fs');
+    try { unlinkSync(join(tempDir, '.gsd', 'plan.md')); } catch {}
+    try { unlinkSync(join(tempDir, '.gsd', 'phases', 'phase-1.md')); } catch {}
+
+    // Also clear the stored hashes to simulate fresh state without files
+    await update({
+      updates: { context: { last_session: new Date().toISOString(), remaining_percentage: 100, plan_hashes: {} } },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    // Should not crash, and should not trigger replan_required
+    assert.notEqual(result.workflow_mode, 'replan_required');
+  });
+
+  // ── Improvement #3: resumeWorkflow responses include display summary ──
+
+  it('includes summary field in dispatch_executor response', async () => {
+    await init({
+      project: 'summary-executor',
+      phases: [
+        { name: 'Core', tasks: [{ index: 1, name: 'Task A' }, { index: 2, name: 'Task B' }] },
+        { name: 'Polish', tasks: [{ index: 1, name: 'Task C' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'dispatch_executor');
+    assert.ok(result.summary, 'response should include summary field');
+    assert.equal(result.summary.workflow_mode, 'executing_task');
+    assert.equal(result.summary.current_phase, '1/2');
+    assert.ok(result.summary.current_task, 'summary should include current_task');
+    assert.ok(result.summary.phase_progress, 'summary should include phase_progress');
+  });
+
+  it('includes summary field in completed response', async () => {
+    await init({
+      project: 'summary-completed',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // Walk task through proper lifecycle: pending → running → accepted
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] },
+      basePath: tempDir,
+    });
+    // Transition: executing_task → reviewing_phase, phase: active → reviewing
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_phase',
+        current_review: { scope: 'phase', scope_id: 1 },
+        phases: [{ id: 1, lifecycle: 'reviewing' }],
+      },
+      basePath: tempDir,
+    });
+    // Transition: reviewing_phase → completed, phase: reviewing → accepted
+    await update({
+      updates: { workflow_mode: 'completed', phases: [{ id: 1, lifecycle: 'accepted' }] },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.ok(result.summary, 'completed response should include summary');
+    assert.equal(result.summary.workflow_mode, 'completed');
+  });
+
+  it('includes summary field in awaiting_user response', async () => {
+    await init({
+      project: 'summary-awaiting',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        workflow_mode: 'awaiting_user',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'blocked', blocked_reason: 'Need input' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.ok(result.summary, 'awaiting_user response should include summary');
+    assert.equal(result.summary.workflow_mode, 'awaiting_user');
+  });
+
+  it('includes recent_decisions in summary when decisions exist', async () => {
+    await init({
+      project: 'summary-decisions',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        decisions: [
+          { id: 'd1', summary: 'Use PostgreSQL' },
+          { id: 'd2', summary: 'Use REST over GraphQL' },
+          { id: 'd3', summary: 'Deploy on AWS' },
+          { id: 'd4', summary: 'Use TypeScript' },
+        ],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.ok(result.summary, 'response should include summary');
+    assert.ok(Array.isArray(result.summary.recent_decisions), 'summary should have recent_decisions array');
+    assert.ok(result.summary.recent_decisions.length <= 3, 'recent_decisions should be at most 3');
+    assert.ok(result.summary.recent_decisions.length >= 1, 'recent_decisions should have at least 1 entry');
+  });
+
+  it('includes summary with preflight override response', async () => {
+    // Set up a git repo so getGitHead returns a real value
+    execSync('git init', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email test@test.com', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name Test User', { cwd: tempDir, stdio: 'ignore' });
+    writeFileSync(join(tempDir, 'README.md'), 'init\n');
+    execSync('git add README.md', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git commit -m init', { cwd: tempDir, stdio: 'ignore' });
+
+    await init({
+      project: 'summary-preflight',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({ updates: { git_head: 'deadbeef' }, basePath: tempDir });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    assert.equal(result.workflow_mode, 'reconcile_workspace');
+    assert.ok(result.summary, 'preflight override response should include summary');
+    assert.equal(result.summary.workflow_mode, 'reconcile_workspace');
   });
 });
