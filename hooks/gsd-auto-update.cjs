@@ -470,8 +470,22 @@ function pruneOldCacheVersions(cacheBase, keepCount = 3, verbose = false) {
       return 0;
     });
 
+    // Detect versions with active processes to avoid disrupting running sessions
+    let activeVersions;
+    try {
+      const psOutput = spawnSync('ps', ['aux'], { stdio: 'pipe', timeout: 5000 });
+      const lines = (psOutput.stdout || '').toString();
+      activeVersions = new Set(
+        entries.filter(ver => lines.includes(`/cache/gsd/gsd/${ver}/`))
+      );
+    } catch { activeVersions = new Set(); }
+
     const toRemove = sorted.slice(0, sorted.length - keepCount);
     for (const ver of toRemove) {
+      if (activeVersions.has(ver)) {
+        if (verbose) console.log(`  Skipped ${ver} (active process detected)`);
+        continue;
+      }
       const verPath = path.join(cacheBase, ver);
       fs.rmSync(verPath, { recursive: true, force: true });
       if (verbose) console.log(`  Pruned old cache: ${ver}`);

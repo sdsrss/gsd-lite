@@ -250,11 +250,21 @@ export function main() {
             }
             return 0;
           });
+          // Detect versions with active processes to avoid disrupting running sessions
+          let activeVersions;
+          try {
+            const psOut = execSync('ps aux', { stdio: 'pipe', timeout: 5000 }).toString();
+            activeVersions = new Set(entries.filter(v => psOut.includes(`/cache/gsd/gsd/${v}/`)));
+          } catch { activeVersions = new Set(); }
+
           const toRemove = sorted.slice(0, sorted.length - 3);
+          let pruned = 0;
           for (const ver of toRemove) {
+            if (activeVersions.has(ver)) continue; // skip versions with running processes
             rmSync(join(cacheBase, ver), { recursive: true, force: true });
+            pruned++;
           }
-          log(`  ✓ Pruned ${toRemove.length} old cache version(s), kept latest 3`);
+          if (pruned > 0) log(`  ✓ Pruned ${pruned} old cache version(s), kept latest 3`);
         }
       } catch { /* best effort */ }
     }
