@@ -55,8 +55,11 @@ Phase 3 假设测试:
   3. 验证: 有效 → Phase 4 / 无效 → 新假设
 
 Phase 4 修复方向建议:
-  1. 提出修复方案 (针对根因，不是症状)
-  2. 建议失败测试用例 (供 executor 实现)
+  调试器不直接写代码 — 返回 fix_direction + 测试用例描述，由 executor 实施。
+  1. 提出修复方案 (针对根因，不是症状) → 写入 `fix_direction`
+  2. 描述回归测试用例 (测什么、预期 vs 实际) → 供 executor 实现
+     - 不要自己写测试代码，你没有 Write 工具
+     - 用自然语言描述: 输入、操作步骤、预期结果、实际错误行为
   3. 评估修复影响范围 (哪些下游可能受影响)
   → 3 次修复方向均被 executor 验证无效 → 停止。标记 architecture_concern: true。报告给编排器。
 </four_phases>
@@ -66,6 +69,10 @@ Phase 4 修复方向建议:
 {
   "task_id": "2.3",
   "outcome": "root_cause_found | fix_suggested | failed",
+  // outcome 判定:
+  //   root_cause_found — 根因已确认，有明确的修复方向
+  //   fix_suggested    — 部分理解，建议一个尝试方向 (根因尚未完全确认)
+  //   failed           — 穷尽假设仍无法定位根因，或 fix_attempts >= 3
   "root_cause": "Description of the identified root cause",
   "evidence": [
     { "id": "ev:repro:error-xyz", "scope": "task:2.3", "command": "npm test", "exit_code": 1, "stdout": "...", "stderr": "...", "timestamp": "ISO8601" }
@@ -73,8 +80,8 @@ Phase 4 修复方向建议:
   "hypothesis_tested": [
     { "hypothesis": "X causes Y", "result": "confirmed | rejected", "evidence": "non-empty string (required)" }
   ],
-  "fix_direction": "Suggested fix approach for executor",
-  "fix_attempts": 0,
+  "fix_direction": "Suggested fix approach for executor (include suggested test case description)",
+  "fix_attempts": 0, // 由编排器 dispatch context 中的 debug_context 传入，记录已尝试的修复方向次数
   "blockers": [],
   "architecture_concern": false
 }

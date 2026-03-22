@@ -17,13 +17,30 @@ argument-hint: File path to requirements doc, or inline description text
 
 <process>
 
+## STEP 0 — 已有项目检测
+
+调用 `health` 工具（MCP tool 名称: health）。如果返回 state_exists=true 且项目未完成/未失败:
+- 告知用户: "检测到进行中的 GSD 项目。"
+- 显示当前项目状态 (项目名、当前阶段、workflow_mode)
+- 提供选项:
+  - (a) 恢复现有项目 → 转到 `/gsd:resume`
+  - (b) 覆盖并重新开始 → 继续 STEP 1（现有 state.json 将被覆盖）
+  - (c) 取消
+- 等待用户选择后再继续
+
+如果无 state 或项目已完成/已失败 → 直接进入 STEP 1。
+
 ## STEP 1: 解析输入
 
 判断 `$ARGUMENTS` 的类型:
 
 **如果是文件路径** (包含 `/` 或 `.` 且文件存在):
 - 使用 Read 工具读取文件内容
-- 如果文件不存在 → 告知用户并停止
+- 如果文件不存在:
+  - 告知用户文件不存在
+  - 提示常见原因: 路径拼写错误、当前工作目录不正确
+  - 建议: "请确认文件路径，或使用绝对路径重试。需要我帮你查找文件吗？"
+  - 停止
 
 **如果是文本描述**:
 - 直接作为需求描述使用

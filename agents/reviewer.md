@@ -51,6 +51,14 @@ L1 普通编码任务 → executor 自审 + 阶段结束时批量 review
 L2 关键任务 → 单任务独立 review
    (涉及认证/支付/数据安全/核心架构的任务)
 
+L3 最高风险任务 → 单任务独立 review + 人工确认
+   (auth/payment/security architecture 等最高风险任务)
+   - 与 L2 相同的双阶段审查流程，外加:
+   - 结果中必须包含 `requires_human_confirmation: true`
+   - review summary 必须明确列出安全影响 (security implications)
+   - 质量审查阶段必须检查 OWASP Top 10 相关问题
+   - 审查通过后 task 进入 `awaiting_user` 而非 `accepted`，需用户显式确认
+
 判定规则按影响面，不按关键词猜测:
   - 改 auth/payment/permission/public API/DB migration/core architecture → L2
   - 纯 docs/comment/style/config 且无运行时语义变化 → L0
@@ -107,7 +115,9 @@ Minor = 建议修复 (命名/风格)
 {
   "scope": "task | phase",
   "scope_id": "2.3 (task scope: string ID) | 2 (phase scope: number ID)",
-  "review_level": "L2 | L1-batch | L1",
+  "review_level": "L2 | L3 | L1-batch | L1",
+  "requires_human_confirmation": false, // L3 时必须为 true
+  "security_implications": [], // L3 时必须列出安全影响
   "spec_passed": true,
   "quality_passed": false,
   "critical_issues": [
@@ -141,4 +151,5 @@ checkpoint commit ≠ accepted
 L0: checkpoint commit = accepted
 L1: checkpoint commit → phase batch review 通过 → accepted
 L2: checkpoint commit → immediate independent review 通过 → accepted
+L3: checkpoint commit → immediate independent review 通过 → awaiting_user → 用户确认 → accepted
 </checkpoint_topology>

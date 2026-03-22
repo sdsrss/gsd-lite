@@ -33,6 +33,18 @@
 - 审查通过 → accepted
 - 审查不通过 → 立即返工
 
+### L3: 即时独立审查 + 人工确认
+
+**适用范围:** 最高风险任务 (auth/payment/security architecture)。
+
+- 与 L2 相同的双阶段审查流程，外加:
+- reviewer 必须检查 OWASP Top 10 相关问题
+- reviewer 结果包含 `requires_human_confirmation: true` + `security_implications` 列表
+- 审查通过后 → task 进入 `awaiting_user` (非直接 accepted)
+- 编排器向用户展示审查摘要 + 安全影响
+- 用户显式确认 → accepted，释放下游依赖
+- 用户拒绝 → 返工
+
 ### 判定规则
 
 ```
@@ -49,6 +61,7 @@ planner 在计划阶段分配级别，但执行时可能发现实际影响面不
 - executor 报告 `contract_changed: true` + 涉及 auth/payment/public API → 自动升级为 L2
 - executor 标注 `[LEVEL-UP] 建议升级为 L2 因为 ...` → 编排器采纳
 - **不主动降级** — planner 标了 L2 但实际很简单，仍按 L2 审查 (安全优先)
+- **例外**: L1 + `confidence: 'high'` + `contract_changed: false` + 有 evidence 且无测试失败 → 自动降为 L0 (自审即可)
 
 ---
 
@@ -58,6 +71,7 @@ planner 在计划阶段分配级别，但执行时可能发现实际影响面不
 L0: checkpoint commit = accepted (自审即可)
 L1: checkpoint commit → [继续执行后续 task] → phase 批量 review → accepted
 L2: checkpoint commit → [等待] → 即时独立 review → accepted
+L3: checkpoint commit → [等待] → 即时独立 review → awaiting_user → 用户确认 → accepted
 ```
 
 关键区别:
@@ -119,7 +133,7 @@ L2: checkpoint commit → [等待] → 即时独立 review → accepted
 ```json
 {
   "scope": "task | phase",
-  "scope_id": "2.3 | phase-2",
+  "scope_id": "2.3 | 2",
   "review_level": "L2 | L1-batch",
   "spec_passed": true,
   "quality_passed": false,
@@ -134,7 +148,10 @@ L2: checkpoint commit → [等待] → 即时独立 review → accepted
   "minor_issues": [],
   "accepted_tasks": ["2.1", "2.2"],
   "rework_tasks": ["2.3"],
-  "evidence": ["ev:test:phase-2", "ev:lint:phase-2"]
+  "evidence": [
+    {"id": "ev:test:phase-2", "scope": "task:2.3"},
+    {"id": "ev:lint:phase-2", "scope": "task:2.3"}
+  ]
 }
 ```
 
