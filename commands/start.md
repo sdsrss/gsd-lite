@@ -58,3 +58,11 @@ argument-hint: Optional feature or project description
 使用 Read 工具读取 `workflows/execution-flow.md`，严格按照其中 STEP 5-12 执行。
 
 </process>
+
+<EXTREMELY-IMPORTANT>
+## 编排器纪律
+- 只有编排器写 state.json，子代理不直接写
+- 所有摘要/提示在展示时从 canonical fields 推导，不持久化 derived fields
+- 子代理返回结构化 JSON，不解析自然语言
+- 上下文 < 35% → 保存状态 + workflow_mode = awaiting_clear + 停止执行
+</EXTREMELY-IMPORTANT>

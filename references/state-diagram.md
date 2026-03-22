@@ -62,7 +62,7 @@ stateDiagram-v2
 | `reviewing` | `accepted`, `active` |
 | `accepted` | *(终态，无后续转换)* |
 | `blocked` | `active` |
-| `failed` | *(终态，无后续转换)* |
+| `failed` | `active` (H-3: 用户显式恢复) |
 
 ### Mermaid 图
 
@@ -81,15 +81,16 @@ stateDiagram-v2
 
     blocked --> active : 阻塞解除
 
+    failed --> active : H-3 用户显式恢复 (resume 提供 retry/skip/replan)
+
     accepted --> [*]
-    failed --> [*]
 ```
 
 ### 关键路径说明
 
 - **正常路径**: `pending -> active -> reviewing -> accepted`
 - **返工路径**: `active -> reviewing -> active -> reviewing -> accepted` (最多循环)
-- **失败路径**: `active -> failed` (终态，不可恢复)
+- **失败路径**: `active -> failed -> active` (H-3: 可通过 resume 恢复)
 - **Phase 推进**: 当前 phase `accepted` 后，下一个 `pending` phase 自动转为 `active`
 
 来源: `PHASE_LIFECYCLE` in `src/schema.js`

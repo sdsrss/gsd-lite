@@ -102,4 +102,3 @@ Suggested Actions:
 - If a check cannot be performed (e.g., tool unavailable), report INFO rather than FAIL
 - Always show all 5 checks in the summary, even if some are INFO/skipped
 </rules>
-</output>

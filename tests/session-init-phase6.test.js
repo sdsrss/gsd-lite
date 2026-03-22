@@ -72,7 +72,7 @@ function runSessionInit(cwd, pluginRoot, home) {
         ...process.env,
         HOME: home,
         CLAUDE_CONFIG_DIR: join(home, '.claude'),
-        PLUGIN_AUTO_UPDATE: '0',
+        PLUGIN_AUTO_UPDATE: '1',
       },
     }
   );

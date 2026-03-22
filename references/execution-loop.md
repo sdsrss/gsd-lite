@@ -81,7 +81,7 @@ executor 上下文传递协议 (orchestrator → executor):
 **审查级别运行时重分类:**
 - executor 报告 `contract_changed: true` + 涉及 auth/payment/public API → 自动升级为 L2
 - executor 标注 `[LEVEL-UP]` → 编排器采纳
-- 不主动降级 (安全优先)
+- 不主动降级 (安全优先)，L1 + high confidence + 有 evidence 且无测试失败 → L0 例外
 
 ### 11.6 — 处理 reviewer 结果
 
