@@ -192,12 +192,36 @@ export function main() {
     }
 
     // Register statusLine (top-level setting) and hooks
-    if (!settings.hooks) settings.hooks = {};
-    const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
-    const statusLineRegistered = registerStatusLine(settings, statuslinePath);
+    // When installed as a plugin, hooks are managed by hooks.json via the plugin system.
+    // Only register in settings.json for manual installs to avoid double execution.
+    let statusLineRegistered = false;
     let hooksRegistered = false;
-    for (const config of HOOK_REGISTRY) {
-      if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
+    if (!isPluginInstall) {
+      if (!settings.hooks) settings.hooks = {};
+      const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
+      statusLineRegistered = registerStatusLine(settings, statuslinePath);
+      for (const config of HOOK_REGISTRY) {
+        if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
+      }
+    } else {
+      // Clean up stale manual hook entries left from previous install.js runs
+      if (settings.hooks) {
+        let cleaned = false;
+        for (const [hookType, identifier] of [
+          ['PostToolUse', 'gsd-context-monitor'],
+          ['SessionStart', 'gsd-session-init'],
+          ['Stop', 'gsd-session-stop'],
+        ]) {
+          if (Array.isArray(settings.hooks[hookType])) {
+            const before = settings.hooks[hookType].length;
+            settings.hooks[hookType] = settings.hooks[hookType].filter(e =>
+              !e.hooks?.some(h => h.command?.includes(identifier)));
+            if (settings.hooks[hookType].length < before) cleaned = true;
+            if (settings.hooks[hookType].length === 0) delete settings.hooks[hookType];
+          }
+        }
+        if (cleaned) log('  ✓ Removed stale manual hook entries (plugin hooks.json handles registration)');
+      }
     }
 
     const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;
