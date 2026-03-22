@@ -46,6 +46,24 @@ describe('executor result contract', () => {
     const r = { ...validResult, checkpoint_commit: null };
     assert.equal(validateExecutorResult(r).valid, false);
   });
+
+  it('accepts valid confidence values', () => {
+    for (const c of ['high', 'medium', 'low']) {
+      const r = { ...validResult, confidence: c };
+      assert.ok(validateExecutorResult(r).valid, `confidence="${c}" should be valid`);
+    }
+  });
+
+  it('rejects invalid confidence value', () => {
+    const r = { ...validResult, confidence: 'very-high' };
+    assert.equal(validateExecutorResult(r).valid, false);
+  });
+
+  it('accepts result without confidence (optional field)', () => {
+    const r = { ...validResult };
+    delete r.confidence;
+    assert.ok(validateExecutorResult(r).valid);
+  });
 });
 
 describe('reviewer result contract', () => {

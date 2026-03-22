@@ -197,4 +197,48 @@ describe('selectRunnableTask', () => {
     const result = selectRunnableTask(phase, { phases: [phase] });
     assert.equal(result.mode, 'trigger_review');
   });
+
+  // Parallel task scheduling tests
+  it('returns parallel_available when multiple independent tasks are runnable', () => {
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'pending', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [], retry_count: 0 },
+        { id: '1.3', lifecycle: 'pending', requires: [], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.1');
+    assert.ok(Array.isArray(result.parallel_available));
+    assert.equal(result.parallel_available.length, 2);
+    assert.equal(result.parallel_available[0].id, '1.2');
+    assert.equal(result.parallel_available[1].id, '1.3');
+  });
+
+  it('does not include parallel_available when only one task is runnable', () => {
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'pending', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.1');
+    assert.equal(result.parallel_available, undefined);
+  });
+
+  it('parallel_available excludes tasks with unmet dependencies', () => {
+    const phase = {
+      todo: [
+        { id: '1.1', lifecycle: 'pending', requires: [], retry_count: 0 },
+        { id: '1.2', lifecycle: 'pending', requires: [], retry_count: 0 },
+        { id: '1.3', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], retry_count: 0 },
+      ],
+    };
+    const result = selectRunnableTask(phase, {});
+    assert.equal(result.task.id, '1.1');
+    assert.ok(Array.isArray(result.parallel_available));
+    assert.equal(result.parallel_available.length, 1);
+    assert.equal(result.parallel_available[0].id, '1.2');
+  });
 });

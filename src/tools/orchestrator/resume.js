@@ -118,7 +118,16 @@ async function resumeExecutingTask(state, basePath) {
       }],
     });
     if (persistError) return persistError;
-    return buildExecutorDispatch(state, phase, task);
+    const dispatch = buildExecutorDispatch(state, phase, task);
+    // Expose parallel-available tasks so callers can dispatch multiple subagents
+    if (selection.parallel_available?.length > 0) {
+      dispatch.parallel_available = selection.parallel_available.map(t => ({
+        id: t.id,
+        name: t.name,
+        level: t.level || 'L1',
+      }));
+    }
+    return dispatch;
   }
 
   if (selection.mode === 'trigger_review') {
@@ -179,12 +188,20 @@ async function resumeExecutingTask(state, basePath) {
       });
       if (advanceError) return advanceError;
     }
+    // Check if this is the last phase — suggest PR creation
+    const isLastPhase = phase.id === state.total_phases;
     return {
       success: true,
       action: 'complete_phase',
       workflow_mode: 'executing_task',
       phase_id: phase.id,
       message: 'All tasks accepted and review passed; phase ready for completion',
+      ...(isLastPhase ? {
+        pr_suggestion: {
+          recommended: true,
+          message: 'All phases complete. Consider creating a PR with `gh pr create`.',
+        },
+      } : {}),
     };
   }
 
@@ -366,6 +383,10 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
         completed_phases: (state.phases || []).filter((phase) => phase.lifecycle === 'accepted').length,
         total_phases: state.total_phases,
         message: 'Workflow already completed',
+        pr_suggestion: {
+          recommended: true,
+          message: 'Project complete. Consider creating a PR with `gh pr create` if not already done.',
+        },
       };
     case 'failed': {
       const failedPhases = [];

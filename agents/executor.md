@@ -55,6 +55,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
   "decisions": ["[DECISION] use optimistic locking by version column"],
   "blockers": [],
   "contract_changed": true,
+  "confidence": "high",
   "evidence": [
     {"id": "ev:test:users-update", "scope": "task:2.3"},
     {"id": "ev:typecheck:phase-2", "scope": "task:2.3"}
@@ -67,6 +68,13 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 - 改了共享类型定义 / 接口 → true
 - 只改了内部实现逻辑、不影响外部调用方 → false
 - 拿不准时 → true (安全优先)
+
+`confidence` 判定指南 (用于审查级别自动调整):
+- "high" — 测试全通过 + 改动明确 + 无意外复杂度
+- "medium" — 测试通过但有不确定性 (边界条件、并发、外部依赖)
+- "low" — 有已知风险/跳过的测试/不确定的副作用
+- 拿不准时 → "medium"
+- 编排器会根据 confidence 自动升/降审查级别
 </result_contract>
 
 <uncertainty_handling>

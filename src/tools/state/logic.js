@@ -66,7 +66,10 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
   }
 
   if (runnableTasks.length > 0) {
-    return { task: runnableTasks[0] };
+    return {
+      task: runnableTasks[0],
+      ...(runnableTasks.length > 1 ? { parallel_available: runnableTasks.slice(1) } : {}),
+    };
   }
 
   const awaitingReview = phase.todo.filter(t => t.lifecycle === 'checkpointed');
@@ -236,8 +239,9 @@ const SENSITIVE_KEYWORDS = /\b(auth|payment|security|public.?api|login|token|cre
 
 /**
  * Reclassify review level at runtime based on executor results.
- * Upgrades L1->L2 when contract_changed + sensitive keywords or [LEVEL-UP].
- * Never downgrades.
+ * Upgrades L1->L2 when: contract_changed + sensitive keywords, [LEVEL-UP], or low confidence.
+ * Downgrades L1->L0 when: confidence is high and no contract change.
+ * Never downgrades L2/L3.
  */
 export function reclassifyReviewLevel(task, executorResult) {
   const currentLevel = task.level || 'L1';
@@ -257,6 +261,17 @@ export function reclassifyReviewLevel(task, executorResult) {
   // Check for contract change + sensitive keyword in task name
   if (executorResult.contract_changed && SENSITIVE_KEYWORDS.test(task.name || '')) {
     return 'L2';
+  }
+
+  // Confidence-based adjustment: low confidence upgrades L1 → L2
+  if (executorResult.confidence === 'low' && currentLevel === 'L1') {
+    return 'L2';
+  }
+
+  // High confidence on non-sensitive L1 tasks → downgrade to L0 (self-review sufficient)
+  if (executorResult.confidence === 'high' && currentLevel === 'L1'
+      && !executorResult.contract_changed) {
+    return 'L0';
   }
 
   return currentLevel;

@@ -1903,4 +1903,117 @@ describe('orchestrator skeleton', () => {
     assert.equal(state.workflow_mode, 'executing_task');
     assert.equal(state.current_task, '1.1');
   });
+
+  it('includes pr_suggestion when complete_phase is the last phase', async () => {
+    await init({
+      project: 'pr-suggestion-last-phase',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({
+      updates: {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: [{ id: 1, phase_review: { status: 'accepted' }, phase_handoff: { required_reviews_passed: true } }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.action, 'complete_phase');
+    assert.ok(result.pr_suggestion, 'pr_suggestion should be present for last phase');
+    assert.equal(result.pr_suggestion.recommended, true);
+  });
+
+  it('does not include pr_suggestion for non-last phase complete_phase', async () => {
+    await init({
+      project: 'pr-suggestion-mid-phase',
+      phases: [
+        { name: 'Phase 1', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Phase 2', tasks: [{ index: 1, name: 'Task B' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({
+      updates: {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: [{ id: 1, phase_review: { status: 'accepted' }, phase_handoff: { required_reviews_passed: true } }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.action, 'complete_phase');
+    assert.equal(result.pr_suggestion, undefined, 'pr_suggestion should NOT be present for non-last phase');
+  });
+
+  it('includes pr_suggestion in completed workflow mode', async () => {
+    await init({
+      project: 'pr-suggestion-completed',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // Walk through valid lifecycles: task pending→running→checkpointed→accepted, phase pending→active→reviewing→accepted
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
+    await update({ updates: { workflow_mode: 'reviewing_phase' }, basePath: tempDir });
+    await update({ updates: { workflow_mode: 'completed' }, basePath: tempDir });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.action, 'noop');
+    assert.ok(result.pr_suggestion, 'pr_suggestion should be present in completed mode');
+    assert.equal(result.pr_suggestion.recommended, true);
+  });
+
+  it('exposes parallel_available when multiple independent tasks are runnable', async () => {
+    await init({
+      project: 'parallel-dispatch',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'Independent A' },
+        { index: 2, name: 'Independent B' },
+        { index: 3, name: 'Independent C' },
+      ]}],
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.action, 'dispatch_executor');
+    assert.equal(result.task_id, '1.1');
+    assert.ok(Array.isArray(result.parallel_available), 'parallel_available should be an array');
+    assert.equal(result.parallel_available.length, 2);
+    assert.equal(result.parallel_available[0].id, '1.2');
+    assert.equal(result.parallel_available[0].name, 'Independent B');
+    assert.ok(result.parallel_available[0].level, 'parallel_available entries should have level');
+    assert.equal(result.parallel_available[1].id, '1.3');
+  });
+
+  it('does not include parallel_available when only one task is runnable', async () => {
+    await init({
+      project: 'single-dispatch',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'First' },
+        { index: 2, name: 'Depends on First', requires: [{ kind: 'task', id: '1.1' }] },
+      ]}],
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.action, 'dispatch_executor');
+    assert.equal(result.task_id, '1.1');
+    assert.equal(result.parallel_available, undefined);
+  });
 });

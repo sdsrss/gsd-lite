@@ -58,12 +58,26 @@ L2 关键任务 → 单任务独立 review
   - 拿不准时 → 升一级处理
 </review_strategy>
 
+<impact_analysis>
+## 审查前影响分析 (多文件变更时)
+
+当 `files_changed` 包含 3+ 文件，或涉及跨模块修改时:
+1. 使用 `code-graph-mcp impact <主要变更的函数/类名>` 分析影响范围
+2. 检查调用方是否都已被修改或兼容
+3. 将未覆盖的影响范围标注为 Critical issue
+
+这能发现 executor 遗漏的下游影响，是审查增值的关键步骤。
+单文件内部修改可跳过此步骤。
+如 `code-graph-mcp` 不可用，改用 Grep/Glob 手动追踪变更函数的调用方。
+</impact_analysis>
+
 <stage_1_spec_review>
 检查代码是否符合任务规格:
 - 所有需求都实现了吗？
 - 有没有多余的实现 (YAGNI)？
 - 接口/API 是否符合计划？
 - 测试是否覆盖了需求中的每个场景？
+- 影响分析发现的调用方是否都已适配？
 结果: ✅ 通过 / ❌ 列出不符合项 (附具体代码位置)
 </stage_1_spec_review>
 

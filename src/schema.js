@@ -586,6 +586,10 @@ export function validateExecutorResult(r) {
   if (r.outcome === 'checkpointed' && typeof r.checkpoint_commit !== 'string') {
     errors.push('checkpointed outcome requires checkpoint_commit');
   }
+  // confidence is optional; when present must be one of the valid values
+  if ('confidence' in r && !['high', 'medium', 'low'].includes(r.confidence)) {
+    errors.push('confidence must be "high", "medium", or "low"');
+  }
   return { valid: errors.length === 0, errors };
 }
 

@@ -26,6 +26,12 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 - **Blocked task handling** — Blocked tasks are parked; execution continues with remaining tasks
 - **Rework propagation** — Critical review issues cascade invalidation to dependent tasks
 
+### Adaptive Review & Parallel Execution
+- **Confidence-based review adjustment** — Executor self-assesses confidence (high/medium/low); orchestrator auto-adjusts review level accordingly
+- **Impact analysis before review** — Reviewer runs impact analysis on multi-file changes to catch missed downstream effects
+- **Parallel task scheduling** — Independent tasks within the same phase are identified for concurrent dispatch
+- **Auto PR suggestion** — Phase/project completion prompts PR creation with evidence summary
+
 ### Context Protection
 - **Subagent isolation** — Each task runs in its own agent context, preventing cross-contamination
 - **StatusLine monitoring** — Real-time context health tracking via Claude Code StatusLine
@@ -243,7 +249,7 @@ gsd-lite/
 ├── references/             # 8 reference docs
 ├── hooks/                  # Session lifecycle (StatusLine + PostToolUse + SessionStart + Stop + AutoUpdate)
 │   └── lib/               # Shared hook utilities (gsd-finder)
-├── tests/                  # 804 tests (unit + simulation + E2E)
+├── tests/                  # 822 tests (unit + simulation + E2E)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script
 └── uninstall.js            # Uninstall script
@@ -252,7 +258,7 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 804 tests
+npm test                    # Run all 822 tests
 npm run test:coverage       # Tests + coverage report (94%+ lines, 81%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file

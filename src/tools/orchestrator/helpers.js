@@ -23,6 +23,7 @@ const RESULT_CONTRACTS = {
     decisions: '{ id, title, rationale }[] — architectural decisions made',
     blockers: '{ description, type }[] — what blocked progress (when outcome="blocked")',
     contract_changed: 'boolean — true if external API/behavior contract changed',
+    confidence: '"high" | "medium" | "low" (optional) — executor self-assessed confidence; affects review level',
     evidence: '{ type, detail }[] — verification evidence (test results, lint, etc.)',
   },
   reviewer: {
