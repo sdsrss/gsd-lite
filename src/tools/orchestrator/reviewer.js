@@ -74,6 +74,23 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   const qualityFailed = result.quality_passed === false;
   const needsRework = hasCritical || specFailed || qualityFailed;
 
+  // Safety: if rework is needed but no tasks were targeted for rework,
+  // fall back to marking all non-accepted checkpointed/accepted tasks as needs_revalidation
+  // to prevent infinite review loops (no runnable tasks → trigger_review → same result).
+  if (needsRework && taskPatches.filter(p => p.lifecycle === 'needs_revalidation').length === 0) {
+    for (const task of (phase.todo || [])) {
+      if (task.lifecycle === 'checkpointed' || task.lifecycle === 'accepted') {
+        taskPatches.push({
+          id: task.id,
+          lifecycle: 'needs_revalidation',
+          retry_count: 0,
+          evidence_refs: [],
+          last_review_feedback: ['Reviewer indicated rework needed but did not specify tasks; all completed tasks require revalidation'],
+        });
+      }
+    }
+  }
+
   // Compute retry count once for both exhaustion check and state update
   const currentRetryCount = phase.phase_review?.retry_count || 0;
   const nextRetryCount = needsRework ? currentRetryCount + 1 : 0;

@@ -286,6 +286,7 @@ async function fetchLatestRelease(token) {
     if (!res.ok) return null;
 
     const data = await res.json();
+    if (!data.tag_name || !data.tarball_url) return null;
     return {
       version: data.tag_name.replace(/^v/, ''),
       tarballUrl: data.tarball_url,

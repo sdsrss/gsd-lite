@@ -5,6 +5,7 @@ import { writeFile, rename, unlink } from 'node:fs/promises';
 import { ensureDir, readJson, writeJson, getStatePath } from '../../utils.js';
 import {
   TASK_LIFECYCLE,
+  migrateState,
   validateResearchArtifacts,
   validateResearchDecisionIndex,
   validateResearcherResult,
@@ -439,7 +440,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: current.error };
     }
 
-    const state = current.data;
+    const state = migrateState(current.data);
     const gsdDir = dirname(statePath);
     const researchDir = join(gsdDir, 'research');
     await ensureDir(researchDir);
@@ -503,6 +504,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
     }
 
+    state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
     return {
       success: true,

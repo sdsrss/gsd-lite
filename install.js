@@ -170,8 +170,13 @@ export function main() {
     copyDir(localNM, join(RUNTIME_DIR, 'node_modules'), 'runtime/node_modules (copied)');
   } else if (!DRY_RUN) {
     log('  ⧗ Installing runtime dependencies...');
-    execSync('npm ci --omit=dev', { cwd: RUNTIME_DIR, stdio: 'pipe' });
-    log('  ✓ runtime dependencies installed');
+    try {
+      execSync('npm ci --omit=dev', { cwd: RUNTIME_DIR, stdio: 'pipe' });
+      log('  ✓ runtime dependencies installed');
+    } catch (err) {
+      log(`  ✗ Failed to install runtime dependencies: ${err.message}`);
+      process.exit(1);
+    }
   } else {
     log('  [dry-run] Would install runtime dependencies');
   }

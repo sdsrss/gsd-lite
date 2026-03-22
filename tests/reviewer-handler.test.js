@@ -460,6 +460,36 @@ describe('handleReviewerResult', () => {
     assert.equal(result.review_status, 'rework_required');
   });
 
+  it('fallback targets accepted tasks when rework needed but no checkpointed tasks remain', async () => {
+    await setupCheckpointedTask(tempDir);
+
+    // Advance task 1.1 to accepted (no checkpointed tasks left)
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] },
+      basePath: tempDir,
+    });
+
+    // Reviewer says spec_passed:false with empty rework_tasks — fallback should kick in
+    const result = await handleReviewerResult({
+      result: makeValidReviewerResult({
+        spec_passed: false,
+        quality_passed: true,
+        critical_issues: [],
+        accepted_tasks: [],
+        rework_tasks: [],
+      }),
+      basePath: tempDir,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'rework_required');
+    assert.ok(result.rework_count > 0, 'fallback should produce rework patches for accepted tasks');
+
+    const state = await read({ basePath: tempDir });
+    const task = state.phases[0].todo.find(t => t.id === '1.1');
+    assert.equal(task.lifecycle, 'needs_revalidation', 'accepted task should be marked for revalidation');
+  });
+
   it('returns review_retry_exhausted when phase review retry limit exceeded', async () => {
     await setupCheckpointedTask(tempDir);
     // Set phase_review.retry_count to the limit (5)

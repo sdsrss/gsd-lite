@@ -1831,6 +1831,47 @@ describe('orchestrator skeleton', () => {
     assert.equal(state.current_phase, 2);
   });
 
+  it('dirty-phase rollback takes priority over expired research refresh', async () => {
+    await init({
+      project: 'dirty-vs-research',
+      phases: [
+        { name: 'Foundation', tasks: [{ index: 1, name: 'Task A' }] },
+        { name: 'Features', tasks: [{ index: 1, name: 'Task B' }] },
+      ],
+      basePath: tempDir,
+    });
+
+    // Complete phase 1, advance to phase 2
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted', done: 1, phase_review: { status: 'accepted' }, phase_handoff: { required_reviews_passed: true, tests_passed: true } }] }, basePath: tempDir });
+    await update({ updates: { current_phase: 2, phases: [{ id: 2, lifecycle: 'active' }] }, basePath: tempDir });
+
+    // Set up both: dirty phase 1 AND expired research
+    await update({
+      updates: {
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'needs_revalidation', evidence_refs: [] }] }],
+        research: {
+          expires_at: '2000-01-01T00:00:00Z',
+          decision_index: {
+            'decision:db': { summary: 'Use PostgreSQL', expires_at: '2000-01-01T00:00:00Z' },
+          },
+        },
+      },
+      basePath: tempDir,
+    });
+
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(result.success, true);
+    // Dirty-phase rollback should win over research refresh
+    assert.equal(result.action, 'rollback_to_dirty_phase');
+    assert.deepEqual(result.dirty_phase, { id: 1, name: 'Foundation' });
+    // Research hint should still be reported as a pending issue
+    assert.ok(result.pending_issues?.length >= 1, 'should report research as pending issue');
+    assert.ok(result.pending_issues.some(h => /expired|refresh/i.test(h)), 'research hint should still be reported');
+  });
+
   it('triggers immediate L3 review for checkpointed L3 task (like L2)', async () => {
     await init({
       project: 'orchestrator-l3-review',

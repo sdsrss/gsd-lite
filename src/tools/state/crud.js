@@ -251,6 +251,11 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     // Deep merge phases by ID instead of shallow replace [I-1]
     const merged = { ...state, ...updates };
 
+    // Deep merge context by key (preserves plan_hashes, last_session, etc.)
+    if (updates.context && isPlainObject(updates.context)) {
+      merged.context = { ...(state.context || {}), ...updates.context };
+    }
+
     // Deep merge evidence by key (preserves existing entries)
     if (updates.evidence && isPlainObject(updates.evidence)) {
       merged.evidence = { ...(state.evidence || {}), ...updates.evidence };
@@ -326,10 +331,13 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       await _pruneEvidenceFromState(merged, merged.current_phase, gsdDir);
     }
 
-    // Use incremental validation for simple updates (no phases changes)
-    const validation = !updates.phases
-      ? validateStateUpdate(state, updates)
-      : validateState(merged);
+    // Use incremental validation for simple updates (no phases/propagation/decisions changes)
+    const needsFullValidation = updates.phases
+      || (_append_decisions?.length > 0)
+      || (_propagation_tasks?.length > 0);
+    const validation = needsFullValidation
+      ? validateState(merged)
+      : validateStateUpdate(state, updates);
     if (!validation.valid) {
       return {
         error: true,
@@ -495,6 +503,7 @@ export async function phaseComplete({
       if (!driftValidation.valid) {
         return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${driftValidation.errors.join('; ')}` };
       }
+      state._version = (state._version ?? 0) + 1;
       await writeJson(statePath, state);
       return {
         success: true,
@@ -525,6 +534,8 @@ export async function phaseComplete({
     } else if (state.current_phase === phase_id && phase_id >= state.total_phases) {
       // Final phase completed — mark workflow as completed
       state.workflow_mode = 'completed';
+      state.current_task = null;
+      state.current_review = null;
     }
 
     // Update git_head to current commit
@@ -539,6 +550,7 @@ export async function phaseComplete({
     if (!finalValidation.valid) {
       return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${finalValidation.errors.join('; ')}` };
     }
+    state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
     return { success: true };
   });
@@ -570,7 +582,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
     if (!result.ok) {
       return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
-    const state = result.data;
+    const state = migrateState(result.data);
 
     if (!state.evidence) {
       state.evidence = {};
@@ -585,6 +597,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
       await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
     }
 
+    state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
     return { success: true };
   });
@@ -650,11 +663,14 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
     if (!result.ok) {
       return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
     }
-    const state = result.data;
+    const state = migrateState(result.data);
 
     const gsdDir = dirname(statePath);
     const archived = await _pruneEvidenceFromState(state, currentPhase, gsdDir);
-    if (archived > 0) await writeJson(statePath, state);
+    if (archived > 0) {
+      state._version = (state._version ?? 0) + 1;
+      await writeJson(statePath, state);
+    }
 
     return { success: true, archived };
   });
@@ -734,6 +750,7 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
       return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${validation.errors.join('; ')}` };
     }
 
+    state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
     return { success: true, applied, plan_version: state.plan_version };
   });

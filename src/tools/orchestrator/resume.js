@@ -53,7 +53,7 @@ function _buildResumeSummary(state, response) {
   };
 }
 
-async function resumeAwaitingClear(state, basePath) {
+async function resumeAwaitingClear(state, basePath, _depth = 0) {
   const health = await readContextHealth(basePath);
   if (health !== null && health < CONTEXT_RESUME_THRESHOLD) {
     const persistError = await persist(basePath, {
@@ -83,7 +83,7 @@ async function resumeAwaitingClear(state, basePath) {
   }
   const persistError = await persist(basePath, updates);
   if (persistError) return persistError;
-  return resumeWorkflow({ basePath });
+  return resumeWorkflow({ basePath, _depth: _depth + 1 });
 }
 
 async function resumeExecutingTask(state, basePath) {
@@ -319,7 +319,7 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
         result = await resumeExecutingTask(state, basePath);
         break;
       case 'awaiting_clear':
-        result = await resumeAwaitingClear(state, basePath);
+        result = await resumeAwaitingClear(state, basePath, _depth);
         break;
       case 'awaiting_user': {
         if (state.current_review?.stage === 'direction_drift') {

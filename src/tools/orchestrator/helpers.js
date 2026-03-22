@@ -208,20 +208,11 @@ async function evaluatePreflight(state, basePath) {
     }
   }
 
-  const expired_research = collectExpiredResearch(state);
-  if (expired_research.length > 0) {
-    hints.push({
-      workflow_mode: 'research_refresh_needed',
-      action: 'dispatch_researcher',
-      updates: { workflow_mode: 'research_refresh_needed' },
-      expired_research,
-      message: 'Research cache expired and must be refreshed before execution resumes',
-    });
-  }
-
-  // P0-2: Dirty-phase detection — rollback current_phase to earliest phase
+  // Dirty-phase detection — rollback current_phase to earliest phase
   // that has needs_revalidation tasks, ensuring earlier invalidated work
   // is re-executed before proceeding with later phases.
+  // Priority: placed before research expiry because dirty-phase rollback is a
+  // safety-critical action (prevents executing later phases on stale foundations).
   // Use filter+reduce (not .find) to guarantee lowest-ID match regardless of array order.
   const dirtyPhases = (state.phases || []).filter(p =>
     p.id < state.current_phase
@@ -242,6 +233,17 @@ async function evaluatePreflight(state, basePath) {
       },
       dirty_phase: { id: earliestDirtyPhase.id, name: earliestDirtyPhase.name },
       message: `Phase ${earliestDirtyPhase.id} has invalidated tasks; rolling back from phase ${state.current_phase}`,
+    });
+  }
+
+  const expired_research = collectExpiredResearch(state);
+  if (expired_research.length > 0) {
+    hints.push({
+      workflow_mode: 'research_refresh_needed',
+      action: 'dispatch_researcher',
+      updates: { workflow_mode: 'research_refresh_needed' },
+      expired_research,
+      message: 'Research cache expired and must be refreshed before execution resumes',
     });
   }
 
