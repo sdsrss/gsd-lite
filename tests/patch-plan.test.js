@@ -8,10 +8,11 @@ import { init, read, patchPlan, setLockPath } from '../src/tools/state/index.js'
 
 let tempDir;
 
+const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@test.com', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@test.com' };
+
 async function setup() {
   tempDir = await mkdtemp(join(tmpdir(), 'gsd-patch-'));
-  execSync('git init', { cwd: tempDir, stdio: 'ignore' });
-  execSync('git commit --allow-empty -m "init"', { cwd: tempDir, stdio: 'ignore' });
+  execSync('git init && git commit --allow-empty -m "init"', { cwd: tempDir, env: gitEnv, stdio: 'ignore' });
   setLockPath(null);
   await init({
     project: 'patch-test',
