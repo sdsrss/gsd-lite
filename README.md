@@ -213,8 +213,8 @@ All state lives in `.gsd/state.json` — a single source of truth with:
 |-----------|-----|----------|
 | Commands | 32 | **6** |
 | Agents | 12 | **4** |
-| Source files | 100+ | **~35** |
-| Installer | 2465 lines | **~80 lines** |
+| Source files | 100+ | **~48** |
+| Installer | 2465 lines | **~290 lines** |
 | User interactions | 6+ confirmations | **Typically 2** |
 | TDD / Anti-rationalization | No | **Yes** |
 | State machine recovery | Partial | **Full (12 modes)** |
@@ -249,7 +249,7 @@ gsd-lite/
 ├── references/             # 8 reference docs
 ├── hooks/                  # Session lifecycle (StatusLine + PostToolUse + SessionStart + Stop + AutoUpdate)
 │   └── lib/               # Shared hook utilities (gsd-finder)
-├── tests/                  # 826 tests (unit + simulation + E2E)
+├── tests/                  # 866 tests (unit + simulation + E2E)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script
 └── uninstall.js            # Uninstall script
@@ -258,7 +258,7 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 826 tests
+npm test                    # Run all 866 tests
 npm run test:coverage       # Tests + coverage report (94%+ lines, 83%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file

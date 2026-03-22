@@ -153,8 +153,8 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     workflow_mode: workflowMode,
     phase_id: phase.id,
     review_status: reviewStatus,
-    accepted_count: result.accepted_tasks?.length || 0,
-    rework_count: result.rework_tasks?.length || 0,
+    accepted_count: taskPatches.filter(p => p.lifecycle === 'accepted').length,
+    rework_count: taskPatches.filter(p => p.lifecycle === 'needs_revalidation').length,
     critical_count: result.critical_issues?.length || 0,
   };
 }

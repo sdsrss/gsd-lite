@@ -112,7 +112,7 @@ process.stdin.on('end', () => {
     if (isCritical) {
       message = `CONTEXT CRITICAL: Usage at ${usedPct}%. Remaining: ${remaining}%. `
         + 'Context is nearly exhausted. Complete current task checkpoint immediately, '
-        + 'set workflow_mode = awaiting_clear via gsd-state-update, and tell user to /clear then /gsd:resume.';
+        + 'set workflow_mode = awaiting_clear via state-update, and tell user to /clear then /gsd:resume.';
     } else {
       message = `CONTEXT WARNING: Usage at ${usedPct}%. Remaining: ${remaining}%. `
         + 'Context is getting limited. Avoid starting new complex work. Complete current task then save state.';

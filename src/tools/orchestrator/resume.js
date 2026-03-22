@@ -109,26 +109,28 @@ async function resumeExecutingTask(state, basePath) {
     };
   }
 
-  if (state.current_task) {
-    const currentTask = getTaskById(phase, state.current_task);
-    if (currentTask?.lifecycle === 'running') {
-      const isRetrying = (currentTask.retry_count || 0) > 0;
-      const persistError = await persist(basePath, {
-        workflow_mode: 'executing_task',
-        current_task: currentTask.id,
-        current_review: null,
-      });
-      if (persistError) return persistError;
-      return buildExecutorDispatch(state, phase, currentTask, {
-        resumed: true,
-        interruption_recovered: !isRetrying,
-        ...(isRetrying ? {
-          retry_after_failure: true,
-          retry_count: currentTask.retry_count,
-          last_failure_summary: currentTask.last_failure_summary,
-        } : {}),
-      });
-    }
+  // Find the running task — either from current_task or by scanning (orphan recovery)
+  const runningTask = state.current_task
+    ? getTaskById(phase, state.current_task)
+    : (phase.todo || []).find(t => t.lifecycle === 'running');
+
+  if (runningTask?.lifecycle === 'running') {
+    const isRetrying = (runningTask.retry_count || 0) > 0;
+    const persistError = await persist(basePath, {
+      workflow_mode: 'executing_task',
+      current_task: runningTask.id,
+      current_review: null,
+    });
+    if (persistError) return persistError;
+    return buildExecutorDispatch(state, phase, runningTask, {
+      resumed: true,
+      interruption_recovered: !isRetrying,
+      ...(isRetrying ? {
+        retry_after_failure: true,
+        retry_count: runningTask.retry_count,
+        last_failure_summary: runningTask.last_failure_summary,
+      } : {}),
+    });
   }
 
   const selection = selectRunnableTask(phase, state);
