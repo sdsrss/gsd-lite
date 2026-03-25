@@ -22,9 +22,9 @@ export const WORKFLOW_MODES = [
 export const WORKFLOW_TRANSITIONS = {
   planning:                 ['executing_task', 'paused_by_user'],
   executing_task:           ['planning', 'reviewing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'failed'],
-  reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'failed'],
-  reviewing_phase:          ['executing_task', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'completed', 'failed'],
-  awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear'],
+  reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'failed'],
+  reviewing_phase:          ['executing_task', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'completed', 'failed'],
+  awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required'],
   awaiting_clear:           ['executing_task', 'paused_by_user'],
   paused_by_user:           ['executing_task', 'awaiting_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'reviewing_task', 'reviewing_phase'],
   reconcile_workspace:      ['executing_task', 'paused_by_user'],
@@ -173,7 +173,7 @@ export function validateStateUpdate(state, updates) {
     switch (key) {
       case 'workflow_mode': {
         if (!WORKFLOW_MODES.includes(updates.workflow_mode)) {
-          errors.push(`Invalid workflow_mode: ${updates.workflow_mode}`);
+          errors.push(`Invalid workflow_mode: ${updates.workflow_mode} (valid: ${WORKFLOW_MODES.join(', ')})`);
           break;
         }
         // Transition whitelist — reject unlisted transitions
@@ -310,7 +310,7 @@ export function validateState(state) {
     errors.push('schema_version must be a finite number');
   }
   if (!WORKFLOW_MODES.includes(state.workflow_mode)) {
-    errors.push(`Invalid workflow_mode: ${state.workflow_mode}`);
+    errors.push(`Invalid workflow_mode: ${state.workflow_mode} (valid: ${WORKFLOW_MODES.join(', ')})`);
   }
   if (!Number.isFinite(state.plan_version)) {
     errors.push('plan_version must be a finite number');

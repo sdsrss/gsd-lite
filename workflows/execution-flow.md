@@ -129,12 +129,47 @@
 
 **自动执行循环:** 进入执行后，持续循环直到遇到终止条件:
 1. 调用 `orchestrator-resume` 获取 action
-2. 按 action 派发对应子代理 (executor/reviewer/researcher/debugger)
-3. 收到结果后调用对应 `orchestrator-handle-*-result`
-4. 回到步骤 1
-5. 终止: action ∈ {idle, awaiting_user, completed, failed, await_manual_intervention}
+2. 按 action 执行对应操作 (见下方 action 处理表)
+3. 操作完成后回到步骤 1
+4. 终止: action ∈ {idle, awaiting_user, completed, failed, await_manual_intervention}
 
-不要在循环中间停下来等用户确认 — 让编排器驱动。`complete_phase` action → 调 `phase-complete` MCP tool → 自动推进下一 phase。
+不要在循环中间停下来等用户确认 — 让编排器驱动。
+
+**Action 处理表:**
+
+| action | 操作 |
+|--------|------|
+| `dispatch_executor` | 派发 `executor` 子代理执行 task → 结果调用 `orchestrator-handle-executor-result` |
+| `dispatch_reviewer` | 派发 `reviewer` 子代理审查 → 结果调用 `orchestrator-handle-reviewer-result` |
+| `dispatch_debugger` | 派发 `debugger` 子代理调试 → 结果调用 `orchestrator-handle-debugger-result` |
+| `dispatch_researcher` | 派发 `researcher` 子代理研究 → 结果调用 `orchestrator-handle-researcher-result` |
+| `retry_executor` | 重新派发 executor (带 retry 上下文)，同 dispatch_executor |
+| `complete_phase` | 调用 `phase-complete` MCP tool (参数见下方) → 自动推进下一 phase |
+| `rework_required` | 有 task 需要返工 → 继续循环 (resume 会自动选择返工 task) |
+| `review_accepted` | 审查通过 → 继续循环 |
+| `continue_execution` | L0/auto-accept 后 → 继续循环 |
+| `replan_required` | 计划文件被修改。**自动处理:** 确认计划无误后，调用 `state-update({updates: {workflow_mode: "executing_task"}})` → 继续循环 |
+| `reconcile_workspace` | Git HEAD 不一致。检查变更，调用 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: "executing_task"}})` → 继续循环 |
+| `rollback_to_dirty_phase` | 早期 phase 有失效 task。**自动处理:** 继续循环 (resume 已回滚 current_phase) |
+| `idle` | 当前 phase 无可运行 task。检查 task 状态和依赖关系，必要时向用户报告 |
+| `await_recovery_decision` | 工作流处于 failed 状态。向用户展示失败信息和恢复选项 (retry/skip/replan) |
+
+**`phase-complete` 参数:**
+```
+phase-complete({
+  phase_id: <当前 phase 编号>,
+  run_verify: true,          // 自动运行 lint/typecheck/test
+  direction_ok: true         // 方向校验通过 (如有偏差设为 false)
+})
+```
+如果没有 lint/typecheck/test 工具，可改用 `verification` 参数传入预计算结果:
+```
+phase-complete({
+  phase_id: <phase>,
+  verification: { lint: {exit_code: 0}, typecheck: {exit_code: 0}, test: {exit_code: 0} },
+  direction_ok: true
+})
+```
 </execution_loop>
 
 ## STEP 12 — 最终报告

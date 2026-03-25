@@ -5,6 +5,7 @@ import {
   update,
   buildExecutorContext,
   matchDecisionForBlocker,
+  computePlanHashes,
 } from '../state/index.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
 
@@ -173,15 +174,32 @@ async function evaluatePreflight(state, basePath) {
     });
   }
 
-  const changed_files = await detectPlanDrift(basePath, state.context?.plan_hashes);
-  if (changed_files.length > 0) {
-    hints.push({
-      workflow_mode: 'replan_required',
-      action: 'await_manual_intervention',
-      updates: { workflow_mode: 'replan_required' },
-      changed_files,
-      message: 'Plan artifacts changed after the last recorded session',
-    });
+  // Plan drift detection — only run when no prior blocking hint (git_head mismatch)
+  // exists, because establishing a baseline in a suspect workspace state would
+  // anchor hashes to potentially wrong files.
+  if (hints.length === 0) {
+    const storedHashes = state.context?.plan_hashes;
+    if (!storedHashes || Object.keys(storedHashes).length === 0) {
+      // No baseline hashes — compute and persist them now (first resume after init).
+      // This avoids false drift when state-init creates placeholders that the agent
+      // subsequently overwrites with real plan content.
+      const freshHashes = await computePlanHashes(basePath);
+      if (Object.keys(freshHashes).length > 0) {
+        const hashPersistErr = await persist(basePath, { context: { plan_hashes: freshHashes } });
+        if (hashPersistErr) return { override: hashPersistErr };
+      }
+    } else {
+      const changed_files = await detectPlanDrift(basePath, storedHashes);
+      if (changed_files.length > 0) {
+        hints.push({
+          workflow_mode: 'replan_required',
+          action: 'await_manual_intervention',
+          updates: { workflow_mode: 'replan_required' },
+          changed_files,
+          message: 'Plan artifacts changed after the last recorded session',
+        });
+      }
+    }
   }
 
   const skipDirectionDrift = state.workflow_mode === 'awaiting_user'

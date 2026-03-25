@@ -147,7 +147,9 @@ describe('resume flow matrix', () => {
     }, { git: true });
 
     await withProject('resume-replan', async (tempDir) => {
-      // Content hash drift: write different content to phase file (hashes stored at init)
+      // First resume establishes baseline hashes (lazy computation)
+      await resumeWorkflow({ basePath: tempDir });
+      // Content hash drift: write different content after baseline established
       writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# modified\n');
       const replan = await resumeWorkflow({ basePath: tempDir });
       assert.equal(replan.workflow_mode, 'replan_required');

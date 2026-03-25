@@ -266,8 +266,10 @@ describe('orchestrator skeleton', () => {
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
+    // First resume establishes baseline hashes
+    await resumeWorkflow({ basePath: tempDir });
 
-    // Content hash drift: write different content to phase file (hashes stored at init)
+    // Content hash drift: write different content to phase file (hashes now stored)
     writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# changed\n');
 
     const result = await resumeWorkflow({ basePath: tempDir });
@@ -2094,20 +2096,24 @@ describe('orchestrator skeleton', () => {
 
   // ── Improvement #5: Plan drift uses content hash instead of mtime ──
 
-  it('stores plan_hashes in context at init time', async () => {
+  it('lazy-computes plan_hashes on first resume (not at init time)', async () => {
     await init({
       project: 'hash-init',
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
-    const state = await read({ basePath: tempDir });
-    assert.ok(state.context.plan_hashes, 'plan_hashes should be present in context');
-    assert.ok(typeof state.context.plan_hashes === 'object', 'plan_hashes should be an object');
-    // Should have entries for plan.md and phase-1.md
-    const keys = Object.keys(state.context.plan_hashes);
+    // After init, plan_hashes should be null (not eagerly computed)
+    const stateAfterInit = await read({ basePath: tempDir });
+    assert.equal(stateAfterInit.context.plan_hashes, undefined,
+      'plan_hashes should not be set at init time');
+
+    // First resume computes the baseline
+    await resumeWorkflow({ basePath: tempDir });
+    const stateAfterResume = await read({ basePath: tempDir });
+    assert.ok(stateAfterResume.context.plan_hashes, 'plan_hashes should be present after first resume');
+    const keys = Object.keys(stateAfterResume.context.plan_hashes);
     assert.ok(keys.length >= 2, `Expected at least 2 hash entries, got ${keys.length}`);
-    // Each value should be a hex string (SHA-256 = 64 chars)
-    for (const hash of Object.values(state.context.plan_hashes)) {
+    for (const hash of Object.values(stateAfterResume.context.plan_hashes)) {
       assert.ok(typeof hash === 'string' && hash.length === 64, `Expected 64-char hex hash, got: ${hash}`);
     }
   });
@@ -2118,10 +2124,12 @@ describe('orchestrator skeleton', () => {
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
+    // First resume establishes baseline hashes
+    await resumeWorkflow({ basePath: tempDir });
+
     // Touch the phase file (changes mtime but not content)
     const phaseFile = join(tempDir, '.gsd', 'phases', 'phase-1.md');
-    const { utimesSync, readFileSync } = await import('node:fs');
-    const content = readFileSync(phaseFile, 'utf-8');
+    const { utimesSync } = await import('node:fs');
     const future = new Date(Date.now() + 10000);
     utimesSync(phaseFile, future, future);
 
@@ -2137,7 +2145,10 @@ describe('orchestrator skeleton', () => {
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
+    // First resume establishes baseline hashes
+    await resumeWorkflow({ basePath: tempDir });
 
+    // Now change content — should trigger drift on next resume
     writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# completely different content\n');
 
     const result = await resumeWorkflow({ basePath: tempDir });
@@ -2166,6 +2177,61 @@ describe('orchestrator skeleton', () => {
     const result = await resumeWorkflow({ basePath: tempDir });
     // Should not crash, and should not trigger replan_required
     assert.notEqual(result.workflow_mode, 'replan_required');
+  });
+
+  it('auto-refreshes plan_hashes when transitioning from replan_required', async () => {
+    await init({
+      project: 'hash-replan-refresh',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // First resume establishes baseline
+    await resumeWorkflow({ basePath: tempDir });
+    const baseline = await read({ basePath: tempDir });
+    const oldHashes = { ...baseline.context.plan_hashes };
+
+    // Change file content to trigger drift
+    writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# new plan content\n');
+
+    // Resume detects drift → replan_required
+    const drift = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(drift.workflow_mode, 'replan_required');
+
+    // Agent resolves replan by setting workflow_mode back to executing_task
+    await update({ updates: { workflow_mode: 'executing_task' }, basePath: tempDir });
+    const refreshed = await read({ basePath: tempDir });
+
+    // Hashes should be updated to reflect new file content
+    assert.ok(refreshed.context.plan_hashes, 'plan_hashes should exist after replan resolve');
+    assert.notDeepEqual(refreshed.context.plan_hashes, oldHashes,
+      'plan_hashes should be refreshed after leaving replan_required');
+
+    // Next resume should NOT trigger replan_required again
+    const next = await resumeWorkflow({ basePath: tempDir });
+    assert.notEqual(next.workflow_mode, 'replan_required',
+      'should not re-trigger drift after hashes were refreshed');
+  });
+
+  it('first resume after init does NOT trigger replan even if plan files were rewritten', async () => {
+    await init({
+      project: 'hash-rewrite-no-drift',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    // Simulate what /gsd:start does: overwrite placeholders with real content
+    writeFileSync(join(tempDir, '.gsd', 'plan.md'), '# Real plan\n\n## Phase 1: Core\n');
+    writeFileSync(join(tempDir, '.gsd', 'phases', 'phase-1.md'), '# Phase 1: Core\n\n### Task 1.1: Task A\n...\n');
+
+    // First resume should NOT trigger replan (lazy baseline)
+    const result = await resumeWorkflow({ basePath: tempDir });
+    assert.notEqual(result.workflow_mode, 'replan_required',
+      'first resume should compute baseline, not trigger drift');
+    assert.equal(result.action, 'dispatch_executor');
+
+    // Verify baseline was computed from the rewritten content
+    const state = await read({ basePath: tempDir });
+    assert.ok(state.context.plan_hashes, 'baseline should be computed');
+    assert.ok(Object.keys(state.context.plan_hashes).length >= 2);
   });
 
   // ── Improvement #3: resumeWorkflow responses include display summary ──
