@@ -13,10 +13,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const pluginRoot = path.resolve(__dirname, '..');
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const settingsPath = path.join(claudeDir, 'settings.json');
-const statuslineScript = path.join(pluginRoot, 'hooks', 'gsd-statusline.cjs');
 
 // Safety: exit after 4s regardless (hook timeout is 5s)
 setTimeout(() => process.exit(0), 4000).unref();
@@ -49,21 +47,38 @@ setTimeout(() => process.exit(0), 4000).unref();
   } catch { /* silent */ }
 
   // ── Phase 2: StatusLine auto-registration ──
+  // StatusLine is a top-level settings.json config that the plugin system
+  // (hooks.json) cannot manage. Self-heal if not registered.
   try {
-    if (fs.existsSync(statuslineScript)) {
+    const stableStatuslinePath = path.join(claudeDir, 'hooks', 'gsd-statusline.cjs');
+    if (fs.existsSync(stableStatuslinePath)) {
       let settings = {};
       try {
         settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       } catch { /* Can't read settings — skip registration */ }
 
-      if (settings && !settings.statusLine?.command) {
-        settings.statusLine = {
-          type: 'command',
-          command: `node ${JSON.stringify(statuslineScript)}`
-        };
-        const tmpPath = settingsPath + `.gsd-tmp-${process.pid}`;
-        fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
-        fs.renameSync(tmpPath, settingsPath);
+      if (settings) {
+        const current = settings.statusLine?.command || '';
+
+        if (current.includes('gsd-statusline')) {
+          // Already registered — nothing to do
+        } else if (!current) {
+          // No statusLine — register directly
+          settings.statusLine = {
+            type: 'command',
+            command: `node ${JSON.stringify(stableStatuslinePath)}`
+          };
+          const tmpPath = settingsPath + `.gsd-tmp-${process.pid}`;
+          fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
+          fs.renameSync(tmpPath, settingsPath);
+        } else if (current.includes('statusline-composite')) {
+          // Composite system (e.g., code-graph) — register as provider
+          try {
+            const { registerProvider } = require('./lib/statusline-composite.cjs');
+            registerProvider(stableStatuslinePath);
+          } catch { /* composite helper not available */ }
+        }
+        // else: some other statusLine, don't overwrite
       }
     }
   } catch { /* silent */ }

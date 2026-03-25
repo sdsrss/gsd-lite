@@ -21,9 +21,12 @@ describe('session init update notifications', () => {
     try {
       await mkdir(join(pluginRoot, 'hooks'), { recursive: true });
       await mkdir(join(claudeDir, 'gsd', 'runtime'), { recursive: true });
+      await mkdir(join(claudeDir, 'hooks'), { recursive: true });
       cpSync(SESSION_INIT, join(pluginRoot, 'hooks', 'gsd-session-init.cjs'));
       cpSync(STATUSLINE, join(pluginRoot, 'hooks', 'gsd-statusline.cjs'));
       cpSync(AUTO_UPDATE, join(pluginRoot, 'hooks', 'gsd-auto-update.cjs'));
+      // Also copy statusline to stable path (install.js always does this)
+      cpSync(STATUSLINE, join(claudeDir, 'hooks', 'gsd-statusline.cjs'));
       await writeFile(notifPath, JSON.stringify({
         kind: 'available',
         from: '0.3.0',
@@ -43,7 +46,7 @@ describe('session init update notifications', () => {
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf8'));
       assert.deepEqual(settings.statusLine, {
         type: 'command',
-        command: `node ${JSON.stringify(join(pluginRoot, 'hooks', 'gsd-statusline.cjs'))}`,
+        command: `node ${JSON.stringify(join(claudeDir, 'hooks', 'gsd-statusline.cjs'))}`,
       });
     } finally {
       await rm(root, { recursive: true, force: true });

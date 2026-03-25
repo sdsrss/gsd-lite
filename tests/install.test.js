@@ -83,6 +83,88 @@ describe('install and uninstall scripts', () => {
     }
   });
 
+  it('registers GSD in composite statusLine registry when composite is active', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-composite-');
+    try {
+      // Set up a composite statusLine in settings.json
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node "/path/to/statusline-composite.js"',
+        },
+      }, null, 2));
+
+      // Create the composite registry
+      const registryDir = join(home, '.cache', 'code-graph');
+      await mkdir(registryDir, { recursive: true });
+      await writeFile(join(registryDir, 'statusline-registry.json'), JSON.stringify([
+        { id: 'code-graph', command: 'node "/path/to/cg-statusline.js"', needsStdin: false },
+      ]));
+
+      runScript('install.js', home);
+
+      const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
+
+      // Composite statusLine should be preserved (not overwritten)
+      assert.ok(settings.statusLine.command.includes('statusline-composite'),
+        'Composite statusLine should be preserved');
+
+      // GSD should be registered as a provider in the composite registry
+      const registry = JSON.parse(await readFile(
+        join(registryDir, 'statusline-registry.json'), 'utf-8'));
+      const gsdEntry = registry.find(p => p.id === 'gsd');
+      assert.ok(gsdEntry, 'GSD should be registered in composite registry');
+      assert.ok(gsdEntry.command.includes('gsd-statusline'),
+        'GSD command should reference gsd-statusline');
+      assert.equal(gsdEntry.needsStdin, true, 'GSD needs stdin for context data');
+
+      // GSD should appear before code-graph in registry
+      const gsdIdx = registry.findIndex(p => p.id === 'gsd');
+      const cgIdx = registry.findIndex(p => p.id === 'code-graph');
+      assert.ok(gsdIdx < cgIdx, 'GSD should appear before code-graph for display priority');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('registers GSD in composite registry even in plugin mode', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-composite-plugin-');
+    try {
+      // Simulate plugin installation
+      const pluginsDir = join(claudeDir, 'plugins');
+      await mkdir(pluginsDir, { recursive: true });
+      await writeFile(join(pluginsDir, 'installed_plugins.json'), JSON.stringify({
+        plugins: { 'gsd@gsd': { version: '0.6.0' } },
+      }));
+
+      // Set up composite statusLine
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node "/path/to/statusline-composite.js"',
+        },
+      }, null, 2));
+
+      // Create composite registry
+      const registryDir = join(home, '.cache', 'code-graph');
+      await mkdir(registryDir, { recursive: true });
+      await writeFile(join(registryDir, 'statusline-registry.json'), JSON.stringify([
+        { id: 'code-graph', command: 'node "/path/to/cg-statusline.js"', needsStdin: false },
+      ]));
+
+      runScript('install.js', home);
+
+      // GSD should be in composite registry
+      const registry = JSON.parse(await readFile(
+        join(registryDir, 'statusline-registry.json'), 'utf-8'));
+      const gsdEntry = registry.find(p => p.id === 'gsd');
+      assert.ok(gsdEntry,
+        'Plugin mode should still register GSD in composite statusLine registry');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('removes managed hooks during uninstall', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-uninstall-');
     try {
@@ -99,10 +181,53 @@ describe('install and uninstall scripts', () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  it('removes GSD from composite statusLine registry on uninstall', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-uninstall-composite-');
+    try {
+      // Set up composite statusLine
+      const registryDir = join(home, '.cache', 'code-graph');
+      await mkdir(registryDir, { recursive: true });
+
+      // Install with composite active
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node "/path/to/statusline-composite.js"',
+        },
+      }, null, 2));
+      await writeFile(join(registryDir, 'statusline-registry.json'), JSON.stringify([
+        { id: 'code-graph', command: 'node "/path/to/cg-statusline.js"', needsStdin: false },
+      ]));
+
+      runScript('install.js', home);
+
+      // Verify GSD was registered
+      let registry = JSON.parse(await readFile(
+        join(registryDir, 'statusline-registry.json'), 'utf-8'));
+      assert.ok(registry.find(p => p.id === 'gsd'),
+        'GSD should be registered after install');
+
+      // Uninstall
+      runScript('uninstall.js', home);
+
+      // GSD should be removed from composite registry
+      registry = JSON.parse(await readFile(
+        join(registryDir, 'statusline-registry.json'), 'utf-8'));
+      assert.equal(registry.find(p => p.id === 'gsd'), undefined,
+        'GSD should be removed from composite registry after uninstall');
+
+      // code-graph entry should be preserved
+      assert.ok(registry.find(p => p.id === 'code-graph'),
+        'code-graph entry should be preserved after GSD uninstall');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('plugin-mode install', () => {
-  it('skips hook registration and removes MCP entry when installed as plugin', async () => {
+  it('registers statusLine but skips hooks/MCP when installed as plugin', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-plugin-install-');
     try {
       // Simulate plugin installation by creating installed_plugins.json
@@ -124,11 +249,14 @@ describe('plugin-mode install', () => {
       assert.equal(settings.mcpServers?.gsd, undefined,
         'Plugin mode should remove manual MCP entry');
 
-      // No statusLine should be registered
-      assert.equal(settings.statusLine, undefined,
-        'Plugin mode should not register statusLine in settings.json');
+      // StatusLine SHOULD be registered (plugin system cannot manage it)
+      const statuslinePath = join(claudeDir, 'hooks', 'gsd-statusline.cjs');
+      assert.deepEqual(settings.statusLine, {
+        type: 'command',
+        command: `node ${JSON.stringify(statuslinePath)}`,
+      }, 'Plugin mode should still register statusLine in settings.json');
 
-      // No hook entries should be registered
+      // No hook entries should be registered (hooks.json handles them)
       const postToolUse = settings.hooks?.PostToolUse;
       if (postToolUse) {
         const gsdHook = postToolUse.find(e =>

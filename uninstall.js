@@ -5,6 +5,7 @@ import { existsSync, rmSync, readFileSync, writeFileSync, renameSync } from 'nod
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
@@ -26,6 +27,16 @@ function removeDir(path, label) {
 
 export function main() {
   log('GSD-Lite Uninstaller\n');
+
+  // Clean up GSD entry from composite statusLine registry before removing files
+  try {
+    const _require = createRequire(import.meta.url);
+    const compositeLib = join(CLAUDE_DIR, 'hooks', 'lib', 'statusline-composite.cjs');
+    if (existsSync(compositeLib)) {
+      const { removeProvider } = _require(compositeLib);
+      if (removeProvider()) log('  ✓ Removed GSD from composite statusLine registry');
+    }
+  } catch { /* best effort */ }
 
   log('Removing files...');
 
@@ -49,10 +60,12 @@ export function main() {
   const hookLibDir = join(CLAUDE_DIR, 'hooks', 'lib');
   if (existsSync(hookLibDir)) {
     // Only remove GSD-owned files, not other plugins' libs
-    const gsdLibFile = join(hookLibDir, 'gsd-finder.cjs');
-    if (existsSync(gsdLibFile)) {
-      rmSync(gsdLibFile);
-      log('  ✓ Removed hooks/lib/gsd-finder.cjs');
+    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs']) {
+      const fullPath = join(hookLibDir, libFile);
+      if (existsSync(fullPath)) {
+        rmSync(fullPath);
+        log(`  ✓ Removed hooks/lib/${libFile}`);
+      }
     }
   }
 

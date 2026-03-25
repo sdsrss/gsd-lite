@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const _require = createRequire(import.meta.url);
 const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
+const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -39,16 +40,35 @@ function isInstalledAsPlugin(claudeDir) {
 
 function registerStatusLine(settings, statuslineScriptPath) {
   const command = `node ${JSON.stringify(statuslineScriptPath)}`;
-  // Don't overwrite non-GSD statusLine
-  if (settings.statusLine && typeof settings.statusLine === 'object'
-      && !settings.statusLine.command?.includes('gsd-statusline')) {
-    log('  ! Preserved existing statusLine');
-    return false;
-  }
-  settings.statusLine = { type: 'command', command };
+
   // Clean up legacy format (was incorrectly placed in hooks)
   if (settings.hooks?.StatusLine) delete settings.hooks.StatusLine;
-  return true;
+
+  const current = settings.statusLine?.command || '';
+
+  // Already GSD → update command path
+  if (current.includes('gsd-statusline')) {
+    settings.statusLine = { type: 'command', command };
+    return true;
+  }
+
+  // No statusLine → set GSD directly
+  if (!current) {
+    settings.statusLine = { type: 'command', command };
+    return true;
+  }
+
+  // Composite statusLine (e.g., code-graph) → register as provider
+  if (isCompositeStatusLine(current)) {
+    if (registerCompositeProvider(statuslineScriptPath)) {
+      log('  ✓ Registered GSD in composite statusLine registry');
+      return true;
+    }
+  }
+
+  // Other statusLine → don't overwrite
+  log('  ! Preserved existing statusLine');
+  return false;
 }
 
 function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
@@ -214,15 +234,16 @@ export function main() {
       log('  ✓ MCP server registered in settings.json');
     }
 
-    // Register statusLine (top-level setting) and hooks
-    // When installed as a plugin, hooks are managed by hooks.json via the plugin system.
+    // StatusLine is a top-level setting that the plugin system (hooks.json)
+    // cannot manage. Always register, regardless of install method.
+    const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
+    let statusLineRegistered = registerStatusLine(settings, statuslinePath);
+
+    // Hooks are managed by hooks.json via the plugin system for plugin installs.
     // Only register in settings.json for manual installs to avoid double execution.
-    let statusLineRegistered = false;
     let hooksRegistered = false;
     if (!isPluginInstall) {
       if (!settings.hooks) settings.hooks = {};
-      const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
-      statusLineRegistered = registerStatusLine(settings, statuslinePath);
       for (const config of HOOK_REGISTRY) {
         if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
       }
