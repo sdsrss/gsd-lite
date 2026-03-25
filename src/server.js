@@ -119,7 +119,7 @@ const TOOLS = [
       properties: {
         updates: {
           type: 'object',
-          description: 'Key-value pairs of canonical fields: workflow_mode, current_phase, current_task, current_review, git_head, plan_version, schema_version, total_phases, project, decisions, context, evidence, research',
+          description: 'Key-value pairs of canonical fields: workflow_mode (planning|executing_task|reviewing_task|reviewing_phase|awaiting_clear|awaiting_user|paused_by_user|reconcile_workspace|replan_required|research_refresh_needed|completed|failed), current_phase, current_task, current_review, git_head, plan_version, schema_version, total_phases, project, decisions, context, evidence, research',
         },
       },
       required: ['updates'],

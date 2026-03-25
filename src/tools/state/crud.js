@@ -1,9 +1,9 @@
 // State CRUD operations
 
 import { dirname, join, relative } from 'node:path';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGitHead, isPlainObject, clearGsdDirCache } from '../../utils.js';
+import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGsdDir, getGitHead, isPlainObject, clearGsdDirCache } from '../../utils.js';
 import {
   CANONICAL_FIELDS,
   TASK_LEVELS,
@@ -28,7 +28,16 @@ import { propagateInvalidation } from './logic.js';
  * Returns an object mapping relative-to-gsdDir paths to hex hashes.
  * Missing/unreadable files are silently skipped.
  */
-async function computePlanHashes(filePaths, gsdDir) {
+export async function computePlanHashes(basePath) {
+  const gsdDir = await getGsdDir(basePath);
+  if (!gsdDir) return {};
+  const filePaths = [join(gsdDir, 'plan.md')];
+  try {
+    const phaseFiles = await readdir(join(gsdDir, 'phases'));
+    for (const f of phaseFiles) {
+      if (f.endsWith('.md')) filePaths.push(join(gsdDir, 'phases', f));
+    }
+  } catch { /* no phases dir */ }
   const hashes = {};
   for (const filePath of filePaths) {
     try {
@@ -115,8 +124,9 @@ export async function init({ project, phases, research, force = false, basePath 
     // Date.toISOString() truncates to milliseconds. Without ceil, the stored timestamp
     // can be slightly less than the file's actual mtime, causing false plan-drift detection.
     state.context.last_session = new Date(Math.ceil(Math.max(...mtimes))).toISOString();
-    // Store content hashes for plan drift detection (hash-based, not mtime-based)
-    state.context.plan_hashes = await computePlanHashes(trackedFiles, gsdDir);
+    // plan_hashes left null — computed lazily on first orchestrator-resume
+    // after the agent writes actual plan.md / phases/*.md content (avoids
+    // false drift detection from hashing placeholder files).
     await writeJson(statePath, state);
 
     return {
@@ -322,6 +332,16 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
         if (Array.isArray(phase.todo)) {
           phase.done = phase.todo.filter(t => t.lifecycle === 'accepted').length;
         }
+      }
+    }
+
+    // Auto-refresh plan hashes when leaving replan_required — establishes a new
+    // baseline so the next resume doesn't re-trigger drift for already-acknowledged changes.
+    if (state.workflow_mode === 'replan_required'
+        && updates.workflow_mode && updates.workflow_mode !== 'replan_required') {
+      const freshHashes = await computePlanHashes(basePath);
+      if (Object.keys(freshHashes).length > 0) {
+        merged.context = { ...(merged.context || {}), plan_hashes: freshHashes };
       }
     }
 
