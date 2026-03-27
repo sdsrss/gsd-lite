@@ -23,7 +23,7 @@ const RESULT_CONTRACTS = {
     summary: 'string — non-empty description of work done',
     checkpoint_commit: 'string — required when outcome="checkpointed"',
     files_changed: 'string[] — list of modified file paths',
-    decisions: '{ id, title, rationale }[] — architectural decisions made',
+    decisions: '{ id, summary|title, rationale }[] — architectural decisions (summary is canonical; title accepted as alias)',
     blockers: '{ description, type }[] — what blocked progress (when outcome="blocked")',
     contract_changed: 'boolean — true if external API/behavior contract changed',
     confidence: '"high" | "medium" | "low" (optional) — executor self-assessed confidence; affects review level',

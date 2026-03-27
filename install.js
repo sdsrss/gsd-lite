@@ -21,7 +21,7 @@ const HOOK_FILES = ['gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-context-
 
 // Hook registration config: hookType → { file identifier, matcher, timeout? }
 const HOOK_REGISTRY = [
-  { hookType: 'SessionStart', identifier: 'gsd-session-init', matcher: 'startup', timeout: 5 },
+  { hookType: 'SessionStart', identifier: 'gsd-session-init', matcher: 'startup|clear|compact', timeout: 5 },
   { hookType: 'PostToolUse', identifier: 'gsd-context-monitor', matcher: '*' },
   { hookType: 'Stop', identifier: 'gsd-session-stop', matcher: '*', timeout: 3 },
 ];
@@ -239,33 +239,13 @@ export function main() {
     const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
     let statusLineRegistered = registerStatusLine(settings, statuslinePath);
 
-    // Hooks are managed by hooks.json via the plugin system for plugin installs.
-    // Only register in settings.json for manual installs to avoid double execution.
+    // Always register hooks in settings.json regardless of install method.
+    // The plugin system's hooks.json auto-loading is unreliable — settings.json
+    // is the only reliable hook registration path (consistent with claude-mem-lite).
     let hooksRegistered = false;
-    if (!isPluginInstall) {
-      if (!settings.hooks) settings.hooks = {};
-      for (const config of HOOK_REGISTRY) {
-        if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
-      }
-    } else {
-      // Clean up stale manual hook entries left from previous install.js runs
-      if (settings.hooks) {
-        let cleaned = false;
-        for (const [hookType, identifier] of [
-          ['PostToolUse', 'gsd-context-monitor'],
-          ['SessionStart', 'gsd-session-init'],
-          ['Stop', 'gsd-session-stop'],
-        ]) {
-          if (Array.isArray(settings.hooks[hookType])) {
-            const before = settings.hooks[hookType].length;
-            settings.hooks[hookType] = settings.hooks[hookType].filter(e =>
-              !e.hooks?.some(h => h.command?.includes(identifier)));
-            if (settings.hooks[hookType].length < before) cleaned = true;
-            if (settings.hooks[hookType].length === 0) delete settings.hooks[hookType];
-          }
-        }
-        if (cleaned) log('  ✓ Removed stale manual hook entries (plugin hooks.json handles registration)');
-      }
+    if (!settings.hooks) settings.hooks = {};
+    for (const config of HOOK_REGISTRY) {
+      if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
     }
 
     const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;

@@ -1,41 +1,4 @@
 {
-  "description": "GSD-Lite hooks: statusline + context monitor + session lifecycle",
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-session-init.cjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-context-monitor.cjs\"",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-session-stop.cjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
+  "description": "GSD-Lite hooks — authoritative registration is in settings.json via install.js. This file cleared to prevent double execution if the plugin system also loads it.",
+  "hooks": {}
 }
