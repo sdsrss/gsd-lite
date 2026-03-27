@@ -58,6 +58,28 @@ if (changed) {
   console.log(`Versions already at ${version}`);
 }
 
+// ── CLAUDE.md test count sync (local file, gitignored) ───
+// Keep test count accurate in CLAUDE.md for context.
+try {
+  const claudeMdPath = join(root, 'CLAUDE.md');
+  if (existsSync(claudeMdPath)) {
+    const { execSync: exec } = await import('node:child_process');
+    const testOutput = exec('npm test --silent 2>&1', { cwd: root, timeout: 120000 }).toString();
+    const countMatch = testOutput.match(/# tests (\d+)/);
+    if (countMatch) {
+      const actualCount = countMatch[1];
+      let claudeContent = readFileSync(claudeMdPath, 'utf8');
+      const oldMatch = claudeContent.match(/(\d+) 个测试/);
+      if (oldMatch && oldMatch[1] !== actualCount) {
+        claudeContent = claudeContent.replace(new RegExp(oldMatch[1] + ' 个测试', 'g'), actualCount + ' 个测试');
+        claudeContent = claudeContent.replace(new RegExp('运行全部 ' + oldMatch[1], 'g'), '运行全部 ' + actualCount);
+        writeFileSync(claudeMdPath, claudeContent);
+        console.log(`CLAUDE.md test count synced: ${oldMatch[1]} → ${actualCount}`);
+      }
+    }
+  }
+} catch { /* CLAUDE.md sync is best-effort */ }
+
 // ── Plugin cache sync (dev workflow) ─────────────────────
 // When developing locally, the MCP server runs from the plugin cache
 // at ~/.claude/plugins/cache/gsd/gsd/<version>/.
