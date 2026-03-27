@@ -998,6 +998,51 @@ describe('orchestrator skeleton', () => {
     assert.equal(state.decisions.length, 2);
   });
 
+  it('accepts decisions with title field (contract compatibility)', async () => {
+    await init({
+      project: 'orchestrator-decisions-title',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'checkpointed',
+        summary: 'done',
+        checkpoint_commit: 'abc',
+        files_changed: ['src/a.js'],
+        decisions: [
+          { id: 'title-only', title: 'Use Redis for caching', rationale: 'Low latency' },
+          { id: 'summary-wins', summary: 'Use S3', title: 'Use S3 storage' },
+        ],
+        blockers: [],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    assert.equal(result.success, true);
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.decisions.length, 2);
+    // title-only decision should have summary set from title
+    const titleDecision = state.decisions.find(d => d.id === 'title-only');
+    assert.ok(titleDecision, 'decision with title field should be accepted');
+    assert.equal(titleDecision.summary, 'Use Redis for caching');
+    // When both summary and title exist, summary takes precedence
+    const bothDecision = state.decisions.find(d => d.id === 'summary-wins');
+    assert.ok(bothDecision);
+    assert.equal(bothDecision.summary, 'Use S3');
+  });
+
   it('triggers L2 review for checkpointed task with contract_changed + sensitive keyword', async () => {
     await init({
       project: 'orchestrator-l2-review',

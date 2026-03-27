@@ -336,12 +336,14 @@ function buildDecisionEntries(decisions, phaseId, taskId, existingCount = 0) {
           task: taskId,
         };
       }
-      if (decision && typeof decision === 'object' && typeof decision.summary === 'string') {
+      if (decision && typeof decision === 'object' && (typeof decision.summary === 'string' || typeof decision.title === 'string')) {
+        const summary = decision.summary || decision.title;
         return {
           id: decision.id || `decision:${phaseId}:${taskId}:${existingCount + index + 1}`,
           phase: decision.phase ?? phaseId,
           task: decision.task ?? taskId,
           ...decision,
+          summary,
         };
       }
       return null;
