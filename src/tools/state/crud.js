@@ -23,6 +23,13 @@ import {
 } from './constants.js';
 import { propagateInvalidation } from './logic.js';
 
+function friendlyReadError(rawError) {
+  if (rawError?.includes('ENOENT')) {
+    return 'No GSD project found (state.json missing). Run /gsd:start or /gsd:prd to begin.';
+  }
+  return rawError;
+}
+
 /**
  * Compute SHA-256 content hashes for an array of file paths.
  * Returns an object mapping relative-to-gsdDir paths to hex hashes.
@@ -154,7 +161,7 @@ export async function read({ fields, basePath = process.cwd(), validate = false 
 
   const result = await readJson(statePath);
   if (!result.ok) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
   }
   const state = migrateState(result.data);
 
@@ -207,7 +214,7 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
     }
     const state = migrateState(result.data);
 
@@ -425,7 +432,7 @@ export async function phaseComplete({
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
     }
     const state = migrateState(result.data);
 
@@ -600,7 +607,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
     }
     const state = migrateState(result.data);
 
@@ -681,7 +688,7 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
     }
     const state = migrateState(result.data);
 
@@ -721,7 +728,7 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
   return withStateLock(async () => {
     const result = await readJson(statePath);
     if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: result.error };
+      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
     }
     const state = migrateState(result.data);
 

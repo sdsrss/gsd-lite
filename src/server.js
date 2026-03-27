@@ -285,12 +285,33 @@ async function dispatchToolCall(name, args) {
     case 'state-read':
       result = await read(args || {});
       break;
-    case 'state-update':
-      result = await update(args);
+    case 'state-update': {
+      const updateResult = await update(args);
+      // Strip full state from response to save tokens — keep only _version for optimistic concurrency
+      if (updateResult.success && updateResult.state) {
+        result = { success: true, _version: updateResult.state._version };
+      } else {
+        result = updateResult;
+      }
       break;
-    case 'phase-complete':
-      result = await phaseComplete(args);
+    }
+    case 'phase-complete': {
+      const pcResult = await phaseComplete(args);
+      // Enrich sparse success response with progress info
+      if (pcResult.success && !pcResult.action) {
+        const st = await read({ fields: ['current_phase', 'total_phases', 'workflow_mode'] });
+        result = {
+          ...pcResult,
+          phase_completed: args.phase_id,
+          current_phase: st.current_phase,
+          total_phases: st.total_phases,
+          workflow_mode: st.workflow_mode,
+        };
+      } else {
+        result = pcResult;
+      }
       break;
+    }
     case 'state-patch':
       result = await patchPlan(args);
       break;
@@ -316,9 +337,20 @@ async function dispatchToolCall(name, args) {
   return result;
 }
 
+// Strip result_contract from orchestrator responses — it's static reference data
+// already available in MCP tool descriptions. Saves ~200 tokens per call.
+function stripResultContract(result) {
+  if (result && typeof result === 'object' && 'result_contract' in result) {
+    const { result_contract, ...rest } = result;
+    return rest;
+  }
+  return result;
+}
+
 export async function handleToolCall(name, args) {
   try {
-    return await dispatchToolCall(name, args);
+    const result = await dispatchToolCall(name, args);
+    return stripResultContract(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { error: true, message: `Tool execution failed: ${message}` };
