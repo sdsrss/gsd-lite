@@ -376,8 +376,8 @@ function getBlockedReasonFromResult(result) {
   };
 }
 
-async function persist(basePath, updates, { _append_decisions, _propagation_tasks } = {}) {
-  const result = await update({ updates, basePath, _append_decisions, _propagation_tasks });
+async function persist(basePath, updates, { _append_decisions, _propagation_tasks, expectedVersion } = {}) {
+  const result = await update({ updates, basePath, expectedVersion, _append_decisions, _propagation_tasks });
   if (result.error) {
     return result;
   }
@@ -385,8 +385,8 @@ async function persist(basePath, updates, { _append_decisions, _propagation_task
 }
 
 // persist variant that returns merged state from update(), avoiding re-reads
-async function persistAndRead(basePath, updates, { _append_decisions, _propagation_tasks } = {}) {
-  const result = await update({ updates, basePath, _append_decisions, _propagation_tasks });
+async function persistAndRead(basePath, updates, { _append_decisions, _propagation_tasks, expectedVersion } = {}) {
+  const result = await update({ updates, basePath, expectedVersion, _append_decisions, _propagation_tasks });
   if (result.error) {
     return { error: true, ...result };
   }

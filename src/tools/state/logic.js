@@ -1,6 +1,7 @@
 // Automation/business logic functions
 
 import { dirname, join } from 'node:path';
+import { writeFileSync, unlinkSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { ensureDir, readJson, writeJson, getStatePath } from '../../utils.js';
 import {
@@ -445,6 +446,12 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     const researchDir = join(gsdDir, 'research');
     await ensureDir(researchDir);
 
+    // Crash-consistency sentinel: marks the window between artifact renames and
+    // state.json write. On recovery (future iteration), presence of this file
+    // indicates a potentially inconsistent research state.
+    const sentinelPath = join(gsdDir, '.research-commit-pending');
+    writeFileSync(sentinelPath, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
+
     // Atomic multi-file write: write all artifacts first, then rename in batch
     const normalizedArtifacts = normalizeResearchArtifacts(artifacts);
     const tmpSuffix = `.${process.pid}-${Date.now()}.tmp`;
@@ -465,6 +472,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       for (const { tmp } of tmpPaths) {
         try { await unlink(tmp); } catch {}
       }
+      try { unlinkSync(sentinelPath); } catch {}
       throw err;
     }
 
@@ -506,6 +514,10 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
 
     state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
+
+    // Remove sentinel after successful state write — crash consistency window closed
+    try { unlinkSync(sentinelPath); } catch {}
+
     return {
       success: true,
       workflow_mode: state.workflow_mode,

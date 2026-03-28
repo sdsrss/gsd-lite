@@ -375,7 +375,7 @@ export async function main() {
 process.on('SIGINT', () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));
 process.on('unhandledRejection', (err) => {
-  if (process.env.GSD_DEBUG) console.error('[gsd] unhandledRejection', err);
+  process.stderr.write(`[gsd] unhandledRejection: ${err?.stack || err}\n`);
 });
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

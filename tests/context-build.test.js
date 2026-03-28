@@ -32,4 +32,95 @@ describe('buildExecutorContext', () => {
     assert.equal(result.error, true);
     assert.match(result.message, /Phase 1 not found/);
   });
+
+  it('includes debugging workflow when retry_count > 0', () => {
+    const state = {
+      phases: [{
+        id: 1,
+        todo: [
+          { id: '1.1', lifecycle: 'pending', requires: [], research_basis: [], retry_count: 2, level: 'L1' },
+        ],
+      }],
+    };
+    const ctx = buildExecutorContext(state, '1.1', 1);
+    assert.ok(!ctx.error, 'should not return error');
+    assert.ok(ctx.workflows.includes('workflows/debugging.md'), 'should include debugging workflow');
+  });
+
+  it('handles research_basis referencing non-existent decision_index entry gracefully', () => {
+    const state = {
+      phases: [{
+        id: 1,
+        todo: [
+          { id: '1.1', lifecycle: 'pending', requires: [], research_basis: ['decision:nonexistent'], level: 'L1' },
+        ],
+      }],
+      research: { decision_index: {} },
+    };
+    const ctx = buildExecutorContext(state, '1.1', 1);
+    assert.ok(!ctx.error, 'should not throw or return error');
+    assert.equal(ctx.research_decisions.length, 1);
+    assert.equal(ctx.research_decisions[0].summary, 'not found');
+  });
+
+  it('references correct phase file for task in phase 2', () => {
+    const state = {
+      phases: [
+        { id: 1, todo: [] },
+        {
+          id: 2,
+          todo: [
+            { id: '2.1', lifecycle: 'pending', requires: [], research_basis: [], level: 'L2' },
+          ],
+        },
+      ],
+    };
+    const ctx = buildExecutorContext(state, '2.1', 2);
+    assert.ok(!ctx.error, 'should not return error');
+    assert.equal(ctx.task_spec, 'phases/phase-2.md');
+  });
+
+  it('reflects review_required: false in constraints', () => {
+    const state = {
+      phases: [{
+        id: 1,
+        todo: [
+          { id: '1.1', lifecycle: 'pending', requires: [], research_basis: [], level: 'L0', review_required: false },
+        ],
+      }],
+    };
+    const ctx = buildExecutorContext(state, '1.1', 1);
+    assert.ok(!ctx.error, 'should not return error');
+    assert.equal(ctx.constraints.review_required, false);
+  });
+
+  it('does not throw when state.research is null', () => {
+    const state = {
+      phases: [{
+        id: 1,
+        todo: [
+          { id: '1.1', lifecycle: 'pending', requires: [], research_basis: ['decision:x'], level: 'L1' },
+        ],
+      }],
+      research: null,
+    };
+    const ctx = buildExecutorContext(state, '1.1', 1);
+    assert.ok(!ctx.error, 'should not return error');
+    assert.equal(ctx.research_decisions.length, 1);
+    assert.equal(ctx.research_decisions[0].summary, 'not found');
+  });
+
+  it('returns empty predecessor_outputs when requires is empty', () => {
+    const state = {
+      phases: [{
+        id: 1,
+        todo: [
+          { id: '1.1', lifecycle: 'pending', requires: [], research_basis: [], level: 'L1' },
+        ],
+      }],
+    };
+    const ctx = buildExecutorContext(state, '1.1', 1);
+    assert.ok(!ctx.error, 'should not return error');
+    assert.deepEqual(ctx.predecessor_outputs, []);
+  });
 });
