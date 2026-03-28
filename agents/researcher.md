@@ -68,7 +68,30 @@ tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 ## 遇到不确定性时
 子代理不能直接与用户交互。遇到不确定性时:
 1. 来源冲突 → 报告双方立场及置信度，让编排器决定。在 result 中标注 "[DECISION] 选择了X因为Y"
-2. 所有来源不可用 (Context7 + WebSearch + 官方文档均失败) → 返回 "[BLOCKED] 需要: 研究来源不可用，请提供替代信息或缩小范围"
-3. 研究范围过广无法收敛 → 返回 "[BLOCKED] 需要: 研究范围过广，请指定重点领域"
+2. 所有来源不可用 (Context7 + WebSearch + 官方文档均失败) → 仍然返回有效的 result contract JSON (编排器需要通过 `validateResearcherResult` 校验)，在 decision 摘要中标注阻塞原因:
+   ```json
+   {
+     "result": {
+       "decision_ids": ["decision:blocked-no-sources"],
+       "volatility": "high",
+       "expires_at": "<24h后的ISO时间>",
+       "sources": []
+     },
+     "decision_index": {
+       "decision:blocked-no-sources": {
+         "summary": "[BLOCKED] 研究来源不可用，请提供替代信息或缩小范围",
+         "source": "none",
+         "expires_at": "<24h后的ISO时间>"
+       }
+     },
+     "artifacts": {
+       "STACK.md": "# 研究受阻\n来源不可用，无法完成研究。",
+       "ARCHITECTURE.md": "# 研究受阻\n来源不可用。",
+       "PITFALLS.md": "# 研究受阻\n来源不可用。",
+       "SUMMARY.md": "# 研究受阻\n所有来源 (Context7/WebSearch/官方文档) 均不可用。需要用户提供替代信息或缩小范围。"
+     }
+   }
+   ```
+3. 研究范围过广无法收敛 → 同上模式，decision 摘要改为 "[BLOCKED] 研究范围过广，请指定重点领域"
 4. 发现结论与已有 decisions 矛盾 → 在 result 中标注冲突，让编排器决定是否更新 decision
 </uncertainty_handling>

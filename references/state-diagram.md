@@ -7,7 +7,7 @@
 | 当前状态 | 允许的目标状态 |
 |----------|---------------|
 | `pending` | `running`, `blocked` |
-| `running` | `checkpointed`, `blocked`, `failed` |
+| `running` | `checkpointed`, `blocked`, `failed`, `accepted` |
 | `checkpointed` | `accepted`, `needs_revalidation` |
 | `accepted` | `needs_revalidation` |
 | `blocked` | `pending` |
@@ -24,6 +24,7 @@ stateDiagram-v2
     pending --> blocked : executor 报告阻塞
 
     running --> checkpointed : executor 完成 checkpoint
+    running --> accepted : L0/review_required=false 自动接受 (跳过 checkpointed)
     running --> blocked : executor 运行时阻塞
     running --> failed : executor 执行失败
 
@@ -172,8 +173,10 @@ stateDiagram-v2
     executing_task --> failed : debugger 报告架构问题
 
     reviewing_task --> executing_task : 审查完成 (通过或返工)
-    reviewing_phase --> executing_task : 审查返工 (有 critical)
-    reviewing_phase --> completed : 最终 phase 审查通过
+    reviewing_phase --> executing_task : 审查完成 (通过或返工，reviewer 始终返回 executing_task)
+
+    note right of executing_task : 最终 phase 审查通过后，\nresume 返回 complete_phase action，\nLLM 调用 phase-complete 设置 completed
+    executing_task --> completed : phase-complete (最终 phase)
 
     awaiting_clear --> executing_task : /clear + /resume 后恢复
     awaiting_user --> executing_task : 用户解除阻塞 / 自动匹配 decision
@@ -198,7 +201,8 @@ stateDiagram-v2
 ### 关键转换说明
 
 **执行主路径**:
-`planning -> executing_task -> reviewing_phase -> executing_task (next phase) -> ... -> completed`
+`planning -> executing_task -> reviewing_phase -> executing_task -> complete_phase -> executing_task (next phase) -> ... -> executing_task -> phase-complete -> completed`
+注: `reviewing_phase` 审查通过后始终先回到 `executing_task`，再由 resume 返回 `complete_phase` action，LLM 调用 `phase-complete` MCP tool 推进。最终 phase 的 `phase-complete` 调用会直接设置 `workflow_mode = 'completed'`。
 
 **L2 审查分支**:
 `executing_task -> reviewing_task -> executing_task`

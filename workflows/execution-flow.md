@@ -131,7 +131,7 @@
 1. 调用 `orchestrator-resume` 获取 action
 2. 按 action 执行对应操作 (见下方 action 处理表)
 3. 操作完成后回到步骤 1
-4. 终止: action ∈ {idle, awaiting_user, completed, failed, await_manual_intervention}
+4. 终止: action ∈ {idle, awaiting_user, noop, phase_failed, task_failed, await_manual_intervention, await_recovery_decision, review_retry_exhausted}
 
 不要在循环中间停下来等用户确认 — 让编排器驱动。
 
@@ -151,6 +151,14 @@
 | `replan_required` | 计划文件被修改。**自动处理:** 确认计划无误后，调用 `state-update({updates: {workflow_mode: "executing_task"}})` → 继续循环 |
 | `reconcile_workspace` | Git HEAD 不一致。检查变更，调用 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: "executing_task"}})` → 继续循环 |
 | `rollback_to_dirty_phase` | 早期 phase 有失效 task。**自动处理:** 继续循环 (resume 已回滚 current_phase) |
+| `trigger_review` | 所有 task 已 checkpointed，触发 phase review → 继续循环 (resume 会自动 dispatch_reviewer) |
+| `phase_failed` | debugger 报告架构问题，phase 标记 failed。向用户展示失败信息 |
+| `task_failed` | debugger 报告 task 不可修复 (非架构问题)，task 标记 failed。继续循环 (如有其他可运行 task) 或向用户报告 |
+| `review_retry_exhausted` | phase 审查返工次数超限。向用户展示问题，等待用户干预 |
+| `research_stored` | researcher 结果已存储。继续循环 |
+| `awaiting_user` | task 被阻塞或方向漂移，需要用户输入。展示 blockers 列表，等待用户解除 |
+| `await_manual_intervention` | 上下文不足 / 项目暂停 / 计划阶段。根据场景执行: awaiting_clear 时执行 /clear + /resume; paused 时确认恢复; planning 时完成计划并 state-init |
+| `noop` | 工作流已完成 (completed 状态)，无需操作。展示完成信息和 PR 建议 |
 | `idle` | 当前 phase 无可运行 task。检查 task 状态和依赖关系，必要时向用户报告 |
 | `await_recovery_decision` | 工作流处于 failed 状态。向用户展示失败信息和恢复选项 (retry/skip/replan) |
 

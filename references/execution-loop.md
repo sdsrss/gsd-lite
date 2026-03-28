@@ -33,8 +33,10 @@ executor 上下文传递协议 (orchestrator → executor):
 ├── research_decisions:  从 research_basis 引用的 decision 摘要
 ├── predecessor_outputs: 前置依赖 task 的 files_changed + checkpoint_commit
 ├── project_conventions: CLAUDE.md 路径 (executor 自行读取)
-├── workflows:           需加载的工作流文件路径 (如 tdd-cycle.md)
-└── constraints:         retry_count / level / review_required
+├── workflows:           需加载的工作流文件路径 (如 tdd-cycle.md, deviation-rules.md; retry 时追加 debugging.md; 有 research_basis 时追加 research.md)
+├── constraints:         retry_count / level / review_required
+├── debugger_guidance:   debugger 分析结果 (root_cause / fix_direction / fix_attempts / evidence)，仅在 debug_context 存在时提供，否则 null
+└── rework_feedback:     reviewer 返工反馈 (issue 描述数组)，仅在 last_review_feedback 存在时提供，否则 null
 ```
 
 派发 `executor` 子代理执行单个 task。
