@@ -486,8 +486,11 @@ export async function phaseComplete({
       };
     }
 
+    const allTasksAutoAccepted = phase.lifecycle === 'active'
+      && phase.todo?.length > 0 && phase.todo.every(t => t.lifecycle === 'accepted');
     const reviewPassed = phase.phase_review?.status === 'accepted'
-      || phase.phase_handoff.required_reviews_passed === true;
+      || phase.phase_handoff.required_reviews_passed === true
+      || allTasksAutoAccepted;
     if (!reviewPassed) {
       return {
         error: true,
@@ -579,7 +582,16 @@ export async function phaseComplete({
     }
     state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
-    return { success: true };
+    const isCompleted = state.workflow_mode === 'completed';
+    const nextPhaseInfo = !isCompleted && state.phases.find(p => p.id === state.current_phase);
+    return {
+      success: true,
+      phase_id,
+      phase_name: phase.name,
+      next_phase: nextPhaseInfo ? { id: nextPhaseInfo.id, name: nextPhaseInfo.name, tasks: nextPhaseInfo.todo?.length || 0 } : null,
+      workflow_mode: state.workflow_mode,
+      ...(isCompleted ? { message: 'All phases completed — project finished' } : {}),
+    };
   });
 }
 
@@ -894,7 +906,7 @@ function _applyPatchOp(state, op) {
     }
 
     case 'update_task': {
-      const { task_id, ...fields } = op;
+      const { task_id, task: taskObj, ...fields } = op;
       if (typeof task_id !== 'string') return { error: true, message: 'task_id must be a string' };
 
       const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));
@@ -902,10 +914,12 @@ function _applyPatchOp(state, op) {
 
       const task = phase.todo.find(t => t.id === task_id);
       const allowedFields = ['name', 'level', 'review_required', 'verification_required', 'research_basis'];
+      // Support both flat fields and nested task object (consistent with add_task API)
+      const source = (taskObj && typeof taskObj === 'object') ? { ...taskObj, ...fields } : fields;
       const updates = {};
       for (const key of allowedFields) {
-        if (key in fields) {
-          updates[key] = fields[key];
+        if (key in source) {
+          updates[key] = source[key];
         }
       }
 

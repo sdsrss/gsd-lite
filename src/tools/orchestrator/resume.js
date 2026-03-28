@@ -216,7 +216,8 @@ async function resumeExecutingTask(state, basePath) {
   // signal complete_phase instead of going idle
   const allAccepted = phase.todo.length > 0 && phase.todo.every(t => t.lifecycle === 'accepted');
   const reviewPassed = phase.phase_review?.status === 'accepted'
-    || phase.phase_handoff?.required_reviews_passed === true;
+    || phase.phase_handoff?.required_reviews_passed === true
+    || allAccepted;
   if (allAccepted && reviewPassed) {
     // Auto-advance phase lifecycle to 'reviewing' if currently 'active'
     // (mirrors trigger_review path at line 480-482)
@@ -531,7 +532,7 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
   }
 
   // Attach display-ready summary to all successful responses
-  if (result && result.success && !result.summary) {
+  if (result?.success && !result.summary) {
     const summary = _buildResumeSummary(state, result);
     // Use the response's workflow_mode if it differs from state (e.g., preflight override)
     if (result.workflow_mode && result.workflow_mode !== state.workflow_mode) {

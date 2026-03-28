@@ -94,6 +94,7 @@ setTimeout(() => process.exit(0), 4000).unref();
       if (gsdEntry) {
         const mcpContent = JSON.stringify({
           mcpServers: {
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional — Claude plugin system substitutes this at runtime
             gsd: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/launcher.js'] },
           },
         }, null, 2) + '\n';
