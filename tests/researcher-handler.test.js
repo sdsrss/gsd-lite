@@ -1,9 +1,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, read, update } from '../src/tools/state/index.js';
+import { init, read } from '../src/tools/state/index.js';
 import { handleResearcherResult } from '../src/tools/orchestrator/index.js';
 
 function makeValidResearcherResult(overrides = {}) {
