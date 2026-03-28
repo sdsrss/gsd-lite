@@ -330,6 +330,27 @@ function validateExtractedPackage(extractDir) {
   }
 }
 
+// ── Tarball URL Validation ─────────────────────────────────
+const ALLOWED_TARBALL_HOSTS = [
+  'github.com',
+  'api.github.com',
+  'codeload.github.com',
+  'objects.githubusercontent.com',
+];
+
+function validateTarballUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    return ALLOWED_TARBALL_HOSTS.some(
+      allowed => parsed.hostname === allowed || parsed.hostname.endsWith('.' + allowed),
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ── Download & Install ─────────────────────────────────────
 async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
@@ -340,6 +361,9 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
 
     // Download tarball via fetch (no shell interpolation)
     if (verbose) console.log('  Downloading tarball...');
+    if (!validateTarballUrl(tarballUrl)) {
+      throw new Error(`Tarball URL failed host validation: ${(() => { try { return new URL(tarballUrl).hostname; } catch { return tarballUrl; } })()}`);
+    }
     const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'gsd-lite-auto-update/1.0' };
     if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -347,7 +371,17 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
     const dlTimeout = setTimeout(() => controller.abort(), 30000);
     let tarData;
     try {
-      const res = await fetch(tarballUrl, { signal: controller.signal, headers, redirect: 'follow' });
+      let res = await fetch(tarballUrl, { signal: controller.signal, headers, redirect: 'manual' });
+      // Handle redirect manually to prevent Authorization header leakage
+      if (res.status === 301 || res.status === 302) {
+        const location = res.headers.get('location');
+        if (!location || !validateTarballUrl(location)) {
+          throw new Error(`Redirect URL failed host validation: ${location || '(empty)'}`);
+        }
+        // Follow redirect WITHOUT Authorization header (prevent token leakage to CDN)
+        const redirectHeaders = { Accept: 'application/vnd.github+json', 'User-Agent': 'gsd-lite-auto-update/1.0' };
+        res = await fetch(location, { signal: controller.signal, headers: redirectHeaders, redirect: 'follow' });
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       tarData = Buffer.from(await res.arrayBuffer());
     } finally {
@@ -452,7 +486,7 @@ function pruneOldCacheVersions(cacheBase, keepCount = 3, verbose = false) {
   try {
     if (!fs.existsSync(cacheBase)) return;
     const entries = fs.readdirSync(cacheBase, { withFileTypes: true })
-      .filter(e => e.isDirectory())
+      .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+$/.test(e.name))
       .map(e => e.name);
     if (entries.length <= keepCount) return;
 
@@ -581,6 +615,7 @@ module.exports = {
   shouldCheck,
   shouldSkipUpdateCheck,
   validateExtractedPackage,
+  validateTarballUrl,
 };
 
 // ── CLI Entry Point (for background auto-install) ─────────

@@ -307,3 +307,88 @@ describe('validateExtractedPackage', () => {
     }
   });
 });
+
+describe('validateTarballUrl', () => {
+  it('accepts valid github.com tarball URL', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('https://github.com/sdsrss/gsd-lite/archive/refs/tags/v0.6.0.tar.gz'), true);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('accepts valid codeload.github.com URL', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('https://codeload.github.com/sdsrss/gsd-lite/tar.gz/v0.6.0'), true);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('accepts valid objects.githubusercontent.com URL', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('https://objects.githubusercontent.com/github-production-release-asset/12345'), true);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('accepts valid api.github.com URL', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('https://api.github.com/repos/sdsrss/gsd-lite/tarball/v0.6.0'), true);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('rejects non-https protocol', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('http://github.com/sdsrss/gsd-lite/archive/v0.6.0.tar.gz'), false);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('rejects unknown hostname', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('https://evil.com/malicious.tar.gz'), false);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('rejects hostname that contains github.com as substring', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('https://notgithub.com/path'), false);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('rejects invalid URL', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl('not-a-url'), false);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('rejects null/undefined/empty', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      assert.equal(ctx.mod.validateTarballUrl(null), false);
+      assert.equal(ctx.mod.validateTarballUrl(undefined), false);
+      assert.equal(ctx.mod.validateTarballUrl(''), false);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+});

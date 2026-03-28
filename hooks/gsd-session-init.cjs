@@ -53,11 +53,20 @@ setTimeout(() => process.exit(0), 4000).unref();
     const stableStatuslinePath = path.join(claudeDir, 'hooks', 'gsd-statusline.cjs');
     if (fs.existsSync(stableStatuslinePath)) {
       let settings = {};
+      let settingsParseError = false;
       try {
         settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      } catch { /* Can't read settings — skip registration */ }
+      } catch (e) {
+        if (e.code === 'ENOENT') {
+          settings = {}; // File doesn't exist — create fresh
+        } else {
+          // Parse error or other — skip write to avoid overwriting corrupted file
+          if (process.env.GSD_DEBUG) console.error('[gsd-session-init] settings.json read error:', e.message);
+          settingsParseError = true;
+        }
+      }
 
-      if (settings) {
+      if (!settingsParseError && settings) {
         const current = settings.statusLine?.command || '';
 
         if (current.includes('gsd-statusline')) {
@@ -176,11 +185,14 @@ setTimeout(() => process.exit(0), 4000).unref();
         const BEGIN_MARKER = '<!-- GSD-STATUS-BEGIN -->';
         const END_MARKER = '<!-- GSD-STATUS-END -->';
 
+        // Sanitize user-controlled strings to prevent HTML/markdown injection
+        const safeName = (s) => String(s || '').replace(/<!--|-->/g, '').slice(0, 200);
+
         const statusBlock = [
           BEGIN_MARKER,
-          `### GSD Project: ${progress.project}`,
-          `- Phase: ${progress.currentPhase || '?'}/${progress.totalPhases} (${progress.phaseName})`,
-          `- Task: ${progress.currentTask || 'none'}${progress.taskName ? ` (${progress.taskName})` : ''}`,
+          `### GSD Project: ${safeName(progress.project)}`,
+          `- Phase: ${progress.currentPhase || '?'}/${progress.totalPhases} (${safeName(progress.phaseName)})`,
+          `- Task: ${progress.currentTask || 'none'}${progress.taskName ? ` (${safeName(progress.taskName)})` : ''}`,
           `- Mode: ${progress.workflowMode}`,
           `- Progress: ${progress.acceptedTasks}/${progress.totalTasks} tasks done`,
           `- Last checkpoint: ${shortHead}`,

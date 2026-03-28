@@ -433,6 +433,47 @@ describe('cache pruning', () => {
     }
   });
 
+  it('ignores non-semver directory names during pruning', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-prune-nonsemver-');
+    try {
+      // Simulate plugin installation
+      const pluginsDir = join(claudeDir, 'plugins');
+      await mkdir(pluginsDir, { recursive: true });
+      await writeFile(join(pluginsDir, 'installed_plugins.json'), JSON.stringify({
+        plugins: { 'gsd@gsd': { version: '0.5.14' } },
+      }));
+
+      // Create cache with mix of valid semver and non-semver entries
+      const cacheBase = join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd');
+      const versions = ['0.5.10', '0.5.11', '0.5.12', '0.5.13', '0.5.14'];
+      for (const ver of versions) {
+        await mkdir(join(cacheBase, ver), { recursive: true });
+        await writeFile(join(cacheBase, ver, 'marker.txt'), ver);
+      }
+      // Create non-semver directory (path traversal attempt)
+      await mkdir(join(cacheBase, '..%2F..%2Fetc'), { recursive: true });
+      await mkdir(join(cacheBase, 'not-a-version'), { recursive: true });
+
+      runScript('install.js', home);
+
+      // Non-semver dirs should be untouched
+      const remaining = readdirSync(cacheBase).sort();
+      assert.ok(remaining.includes('..%2F..%2Fetc'),
+        'Non-semver directory should not be touched by pruning');
+      assert.ok(remaining.includes('not-a-version'),
+        'Non-semver directory should not be touched by pruning');
+      // Latest 3 semver should remain
+      assert.ok(remaining.includes('0.5.12'));
+      assert.ok(remaining.includes('0.5.13'));
+      assert.ok(remaining.includes('0.5.14'));
+      // Old semver should be pruned
+      assert.ok(!remaining.includes('0.5.10'), '0.5.10 should be pruned');
+      assert.ok(!remaining.includes('0.5.11'), '0.5.11 should be pruned');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('does not prune when not in plugin mode', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-prune-noplugin-');
     try {
