@@ -320,3 +320,168 @@ describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () =>
     assert.ok(settings.mcpServers?.gsd, 'mcpServers.gsd should exist in npx mode');
   });
 });
+
+describe('Layer A: plugin install E2E', () => {
+  let home, claudeDir;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-plugin-'));
+    await setupPluginMode(claudeDir);
+    runInstall(home);
+  });
+
+  after(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('does NOT register mcpServers.gsd in settings.json', async () => {
+    const settings = await readSettings(claudeDir);
+    assert.equal(settings.mcpServers?.gsd, undefined,
+      'Plugin mode should not register MCP in settings.json');
+  });
+
+  it('still registers statusLine in settings.json', async () => {
+    const settings = await readSettings(claudeDir);
+    assert.ok(settings.statusLine, 'statusLine should still be registered in plugin mode');
+    assert.ok(settings.statusLine.command.includes('gsd-statusline'));
+  });
+
+  it('still registers all 3 hook types in settings.json', async () => {
+    const settings = await readSettings(claudeDir);
+    assertSettingsHooks(settings);
+  });
+
+  it('installs all files to correct locations', async () => {
+    await assertInstallTree(claudeDir);
+  });
+
+  it('prunes old cache versions keeping latest 3', async () => {
+    // Set up 5 cache versions
+    const cacheBase = join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd');
+    for (const ver of ['0.5.1', '0.5.2', '0.5.3', '0.5.4', '0.5.5']) {
+      await mkdir(join(cacheBase, ver), { recursive: true });
+      await writeFile(join(cacheBase, ver, 'marker.txt'), ver);
+    }
+    // Re-run install to trigger pruning
+    runInstall(home);
+    const remaining = (await readdir(cacheBase)).filter(d => /^\d+\.\d+\.\d+$/.test(d)).sort();
+    assert.deepEqual(remaining, ['0.5.3', '0.5.4', '0.5.5'],
+      'Should keep latest 3 semver versions');
+  });
+});
+
+describe('Layer A: uninstall E2E (manual mode)', () => {
+  let home, claudeDir;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-uninstall-manual-'));
+    runInstall(home);
+    runUninstall(home);
+  });
+
+  after(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('removes all GSD files and settings entries', async () => {
+    await assertCleanUninstall(claudeDir);
+  });
+
+  it('preserves non-GSD hooks during uninstall', async () => {
+    // Set up fresh with a non-GSD hook present
+    await rm(home, { recursive: true, force: true });
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-uninstall-preserve-'));
+    // Pre-seed non-GSD hook
+    await mkdir(join(claudeDir), { recursive: true });
+    await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+      hooks: {
+        PostToolUse: [
+          { matcher: '*', hooks: [{ type: 'command', command: 'node /custom/hook.js' }] },
+        ],
+      },
+    }, null, 2));
+    runInstall(home);
+    runUninstall(home);
+
+    const settings = await readSettings(claudeDir);
+    const customHook = settings.hooks?.PostToolUse?.find(e =>
+      e.hooks?.some(h => h.command === 'node /custom/hook.js'));
+    assert.ok(customHook, 'Non-GSD hook should be preserved after uninstall');
+  });
+});
+
+describe('Layer A: uninstall E2E (plugin mode)', () => {
+  let home, claudeDir;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-uninstall-plugin-'));
+    await setupPluginMode(claudeDir);
+    // Create plugin dirs that uninstall should clean
+    await mkdir(join(claudeDir, 'plugins', 'marketplaces', 'gsd'), { recursive: true });
+    await mkdir(join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd', '0.6.0'), { recursive: true });
+    runInstall(home);
+    runUninstall(home);
+  });
+
+  after(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('removes all GSD files and settings entries', async () => {
+    await assertCleanUninstall(claudeDir);
+  });
+
+  it('removes plugin directories (marketplaces + cache)', async () => {
+    assert.ok(!existsSync(join(claudeDir, 'plugins', 'marketplaces', 'gsd')),
+      'plugins/marketplaces/gsd/ should be removed');
+    assert.ok(!existsSync(join(claudeDir, 'plugins', 'cache', 'gsd')),
+      'plugins/cache/gsd/ should be removed');
+  });
+
+  it('removes gsd entry from installed_plugins.json', async () => {
+    const pluginsFile = join(claudeDir, 'plugins', 'installed_plugins.json');
+    if (existsSync(pluginsFile)) {
+      const data = JSON.parse(await readFile(pluginsFile, 'utf-8'));
+      assert.equal(data.plugins?.['gsd@gsd'], undefined,
+        'gsd@gsd should be removed from installed_plugins.json');
+    }
+  });
+});
+
+describe('Layer A: install idempotency', () => {
+  let home, claudeDir;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-idempotent-'));
+    runInstall(home);
+    runInstall(home); // second install
+  });
+
+  after(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('second install does not duplicate hook entries', async () => {
+    const settings = await readSettings(claudeDir);
+
+    for (const [hookType, id] of [
+      ['SessionStart', 'gsd-session-init'],
+      ['PostToolUse', 'gsd-context-monitor'],
+      ['Stop', 'gsd-session-stop'],
+    ]) {
+      const arr = settings.hooks?.[hookType] || [];
+      const gsdEntries = arr.filter(e => e.hooks?.some(h => h.command?.includes(id)));
+      assert.equal(gsdEntries.length, 1,
+        `${hookType} should have exactly 1 ${id} entry after double install, got ${gsdEntries.length}`);
+    }
+  });
+
+  it('second install keeps all files intact', async () => {
+    await assertInstallTree(claudeDir);
+  });
+
+  it('MCP server still works after double install', async () => {
+    const serverPath = join(claudeDir, 'gsd', 'src', 'server.js');
+    await assertMcpServerStarts(serverPath);
+  });
+});
