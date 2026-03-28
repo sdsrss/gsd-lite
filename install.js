@@ -183,6 +183,11 @@ export function main() {
   // 6. Stable runtime for MCP server
   copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
   copyFile(join(__dirname, 'package.json'), join(RUNTIME_DIR, 'package.json'), 'runtime/package.json → ~/.claude/gsd/package.json');
+  // Copy lock file so `npm ci` works when node_modules are not present (npx scenario)
+  const lockFile = join(__dirname, 'package-lock.json');
+  if (existsSync(lockFile)) {
+    copyFile(lockFile, join(RUNTIME_DIR, 'package-lock.json'), 'runtime/package-lock.json → ~/.claude/gsd/package-lock.json');
+  }
 
   // 7. Runtime dependencies — copy local node_modules or install fresh (npx hoists deps)
   const localNM = join(__dirname, 'node_modules');

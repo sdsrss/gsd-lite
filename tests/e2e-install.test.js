@@ -205,3 +205,118 @@ async function assertMcpServerStarts(serverPath) {
     child.stdin.write(initRequest + '\n');
   });
 }
+
+// ============================================================
+// Layer A: Simulated install (fast CI)
+// ============================================================
+
+describe('Layer A: manual/npm install E2E', () => {
+  let home, claudeDir;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-manual-'));
+    runInstall(home);
+  });
+
+  after(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('installs all 9 units to correct locations', async () => {
+    await assertInstallTree(claudeDir);
+  });
+
+  it('registers MCP server in settings.json', async () => {
+    const settings = await readSettings(claudeDir);
+    assert.ok(settings.mcpServers?.gsd, 'mcpServers.gsd should exist');
+    assert.equal(settings.mcpServers.gsd.command, 'node');
+    assert.ok(settings.mcpServers.gsd.args[0].endsWith('server.js'),
+      'MCP args should point to server.js');
+  });
+
+  it('registers statusLine in settings.json', async () => {
+    const settings = await readSettings(claudeDir);
+    assert.ok(settings.statusLine, 'statusLine should exist');
+    assert.equal(settings.statusLine.type, 'command');
+    assert.ok(settings.statusLine.command.includes('gsd-statusline'),
+      'statusLine should reference gsd-statusline');
+  });
+
+  it('registers all 3 hook types in settings.json', async () => {
+    const settings = await readSettings(claudeDir);
+    assertSettingsHooks(settings);
+  });
+
+  it('installed hook libs are loadable via require()', () => {
+    assertHooksLoadable(claudeDir);
+  });
+
+  it('installed MCP server can start and respond to initialize', async () => {
+    const serverPath = join(claudeDir, 'gsd', 'src', 'server.js');
+    await assertMcpServerStarts(serverPath);
+  });
+});
+
+describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () => {
+  let home, claudeDir, npxSimDir;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-npx-'));
+
+    // Create a copy of the project without node_modules to simulate npx
+    npxSimDir = await mkdtemp(join(tmpdir(), 'gsd-npx-sim-'));
+    const filesToCopy = [
+      'install.js', 'uninstall.js', 'package.json', 'package-lock.json',
+    ];
+    const dirsToCopy = [
+      'commands', 'agents', 'workflows', 'references', 'hooks', 'src',
+    ];
+    for (const f of filesToCopy) {
+      const content = await readFile(join(PROJECT_ROOT, f));
+      await writeFile(join(npxSimDir, f), content);
+    }
+    for (const d of dirsToCopy) {
+      await mkdir(join(npxSimDir, d), { recursive: true });
+      const entries = await readdir(join(PROJECT_ROOT, d), { withFileTypes: true });
+      for (const entry of entries) {
+        const src = join(PROJECT_ROOT, d, entry.name);
+        const dest = join(npxSimDir, d, entry.name);
+        if (entry.isDirectory()) {
+          execSync(`cp -r ${JSON.stringify(src)} ${JSON.stringify(dest)}`);
+        } else {
+          const content = await readFile(src);
+          await writeFile(dest, content);
+        }
+      }
+    }
+
+    // Run install.js from the npx-sim dir (no node_modules present)
+    execFileSync('node', [join(npxSimDir, 'install.js')], {
+      cwd: npxSimDir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf-8',
+      timeout: 55000,
+    });
+  });
+
+  after(async () => {
+    await rm(home, { recursive: true, force: true });
+    await rm(npxSimDir, { recursive: true, force: true });
+  });
+
+  it('installs runtime dependencies via npm ci when node_modules absent', async () => {
+    const sdkPath = join(claudeDir, 'gsd', 'node_modules', '@modelcontextprotocol', 'sdk');
+    const sdkStat = await stat(sdkPath);
+    assert.ok(sdkStat.isDirectory(),
+      'npm ci should have installed @modelcontextprotocol/sdk');
+  });
+
+  it('installs all files same as manual mode', async () => {
+    await assertInstallTree(claudeDir);
+  });
+
+  it('registers MCP server (not plugin mode)', async () => {
+    const settings = await readSettings(claudeDir);
+    assert.ok(settings.mcpServers?.gsd, 'mcpServers.gsd should exist in npx mode');
+  });
+});
