@@ -606,8 +606,8 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'data must be a non-null object' };
   }
-  if (typeof data.scope !== 'string') {
-    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'data.scope must be a string' };
+  if (typeof data.scope !== 'string' || data.scope.length === 0) {
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'data.scope must be a non-empty string' };
   }
 
   const statePath = await getStatePath(basePath);
@@ -906,7 +906,8 @@ function _applyPatchOp(state, op) {
     }
 
     case 'update_task': {
-      const { task_id, task: taskObj, ...fields } = op;
+      // Destructure envelope keys explicitly so they don't leak into fields
+      const { task_id, task: taskObj, op: _op, phase_id: _pid, ...fields } = op;
       if (typeof task_id !== 'string') return { error: true, message: 'task_id must be a string' };
 
       const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));

@@ -174,6 +174,7 @@ stateDiagram-v2
 
     reviewing_task --> executing_task : 审查完成 (通过或返工)
     reviewing_phase --> executing_task : 审查完成 (通过或返工，reviewer 始终返回 executing_task)
+    reviewing_phase --> completed : 最终 phase 审查通过 (schema 允许)
 
     note right of executing_task : 最终 phase 审查通过后，\nresume 返回 complete_phase action，\nLLM 调用 phase-complete 设置 completed
     executing_task --> completed : phase-complete (最终 phase)
@@ -185,14 +186,18 @@ stateDiagram-v2
     executing_task --> preflight_overrides : resume 时 preflight 检测
     preflight_overrides --> reconcile_workspace : git HEAD 不匹配
     preflight_overrides --> replan_required : 计划文件被修改
-    preflight_overrides --> research_refresh_needed : 研究缓存过期
     preflight_overrides --> awaiting_user : 方向漂移检测
+    preflight_overrides --> executing_task : dirty-phase 回滚 (rollback_to_dirty_phase)
+    preflight_overrides --> research_refresh_needed : 研究缓存过期
 
     research_refresh_needed --> executing_task : 研究刷新完成
     research_refresh_needed --> reviewing_task : 刷新后恢复审查状态
     research_refresh_needed --> reviewing_phase : 刷新后恢复审查状态
 
     paused_by_user --> executing_task : 用户恢复
+    paused_by_user --> research_refresh_needed : resume 时研究过期
+    paused_by_user --> reviewing_task : resume 恢复审查状态
+    paused_by_user --> reviewing_phase : resume 恢复审查状态
 
     completed --> [*]
     failed --> [*]
@@ -215,7 +220,8 @@ stateDiagram-v2
 1. git HEAD 不匹配 -> `reconcile_workspace`
 2. 计划文件被外部修改 -> `replan_required`
 3. 方向漂移 -> `awaiting_user`
-4. 研究缓存过期 -> `research_refresh_needed`
+4. `current_phase` 之前的 phase 有 `needs_revalidation` task -> `rollback_to_dirty_phase`
+5. 研究缓存过期 -> `research_refresh_needed`
 
 **Research 刷新后恢复**:
 `storeResearch()` 中: 如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()` 根据 `current_review` 状态推断恢复到 `reviewing_phase` / `reviewing_task` / `executing_task`。

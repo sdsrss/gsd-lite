@@ -216,6 +216,7 @@ describe('validateExtractedPackage', () => {
     const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
     try {
       await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '0.4.0' }));
+      await writeFile(join(dir, 'install.js'), '// installer stub');
       const ctx = await loadAutoUpdate('manual');
       try {
         const result = ctx.mod.validateExtractedPackage(dir);
@@ -295,10 +296,27 @@ describe('validateExtractedPackage', () => {
     const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
     try {
       await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '1.0.0-beta.1' }));
+      await writeFile(join(dir, 'install.js'), '// installer stub');
       const ctx = await loadAutoUpdate('manual');
       try {
         const result = ctx.mod.validateExtractedPackage(dir);
         assert.equal(result, true);
+      } finally {
+        await ctx.cleanup();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects when install.js is missing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-validate-'));
+    try {
+      await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '0.4.0' }));
+      const ctx = await loadAutoUpdate('manual');
+      try {
+        const result = ctx.mod.validateExtractedPackage(dir);
+        assert.equal(result, false);
       } finally {
         await ctx.cleanup();
       }

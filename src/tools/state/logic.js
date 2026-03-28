@@ -509,6 +509,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
 
     const validation = validateState(state);
     if (!validation.valid) {
+      try { unlinkSync(sentinelPath); } catch {}
       return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
     }
 

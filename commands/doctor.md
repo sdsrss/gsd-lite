@@ -44,7 +44,7 @@ Also verify the hook files exist on disk:
 
 ## STEP 4: Lock File Check
 
-Check if `.gsd/.state-lock` exists:
+Check if `.gsd/state.lock` exists:
 - If not exists: record PASS "No stale lock"
 - If exists: check file age
   - Older than 5 minutes: record WARN "Stale lock file detected (age: {age}). May indicate a crashed process. Consider removing it."

@@ -32,7 +32,7 @@ const RESULT_CONTRACTS = {
   reviewer: {
     scope: '"task" | "phase"',
     scope_id: 'string | number — task id (e.g. "1.2") or phase number',
-    review_level: '"L2" | "L1-batch" | "L1"',
+    review_level: '"L3" | "L2" | "L1-batch" | "L1"',
     spec_passed: 'boolean',
     quality_passed: 'boolean',
     critical_issues: '{ reason|description, task_id?, invalidates_downstream? }[] — blocking issues',
@@ -361,7 +361,7 @@ function buildErrorFingerprint(result) {
     parts.push([...result.files_changed].sort().join(','));
   }
   const combined = parts.filter(Boolean).join('|');
-  return combined.length > 0 ? combined.slice(0, 120) : result.summary.slice(0, 80);
+  return combined.length > 0 ? combined.slice(0, 120) : (result.summary || '').slice(0, 80);
 }
 
 function getBlockedReasonFromResult(result) {

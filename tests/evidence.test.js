@@ -44,6 +44,12 @@ describe('evidence store', () => {
 
   it('adds multiple evidence entries', async () => {
     const { addEvidence, read } = await import('../src/tools/state/index.js');
+    // Ensure first entry exists (don't depend on previous test)
+    await addEvidence({
+      id: 'ev:test:task-1',
+      data: { command: 'npm test', scope: 'task:1.1', exit_code: 0, timestamp: new Date().toISOString(), summary: 'tests passed' },
+      basePath: tempDir,
+    });
     await addEvidence({
       id: 'ev:lint:phase-1',
       data: {

@@ -324,6 +324,10 @@ function validateExtractedPackage(extractDir) {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     if (pkg.name !== 'gsd-lite') return false;
     if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) return false;
+    // Verify install.js exists and is a regular file (lstat rejects symlinks)
+    const installPath = path.join(extractDir, 'install.js');
+    const lstat = fs.lstatSync(installPath);
+    if (!lstat.isFile()) return false;
     return true;
   } catch {
     return false;
@@ -379,8 +383,17 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
           throw new Error(`Redirect URL failed host validation: ${location || '(empty)'}`);
         }
         // Follow redirect WITHOUT Authorization header (prevent token leakage to CDN)
+        // Use redirect: 'manual' to validate any further redirects in the chain
         const redirectHeaders = { Accept: 'application/vnd.github+json', 'User-Agent': 'gsd-lite-auto-update/1.0' };
-        res = await fetch(location, { signal: controller.signal, headers: redirectHeaders, redirect: 'follow' });
+        res = await fetch(location, { signal: controller.signal, headers: redirectHeaders, redirect: 'manual' });
+        // Handle one more potential redirect from CDN (e.g., 303/307/308)
+        if (res.status >= 300 && res.status < 400) {
+          const loc2 = res.headers.get('location');
+          if (!loc2 || !validateTarballUrl(loc2)) {
+            throw new Error(`Secondary redirect URL failed host validation: ${loc2 || '(empty)'}`);
+          }
+          res = await fetch(loc2, { signal: controller.signal, headers: redirectHeaders, redirect: 'error' });
+        }
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       tarData = Buffer.from(await res.arrayBuffer());

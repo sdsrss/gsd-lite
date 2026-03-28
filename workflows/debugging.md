@@ -131,7 +131,7 @@ debugger 由编排器在以下情况派发:
 
 **目标:** 提出根因修复方案 (不是症状)，交由 executor 实施。
 
-> 调试器不直接写代码 — 返回 fix_direction + 测试用例描述，由 executor 实施。
+> 调试器不直接写代码 (无 Write 工具) — 返回 fix_direction + 测试用例描述，由 executor 实施。
 
 ### 步骤 1: 描述回归测试用例
 

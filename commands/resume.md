@@ -51,15 +51,15 @@ description: Resume project execution from saved state with workspace validation
    - 如果当前或任何未完成 phase 的 `phase_handoff.direction_ok === false`
    - → 覆写 `workflow_mode = awaiting_user`
 
-4. **研究过期校验:**
+4. **Dirty-phase 回滚检测:**
+   - 检查 `current_phase` 之前的 phase (`p.id < current_phase`) 中是否有 `needs_revalidation` 状态的 task
+   - 如有 → 回滚 `current_phase` 到最早的 dirty phase
+   - → 覆写 `workflow_mode = executing_task`
+
+5. **研究过期校验:**
    - 如果 `research.expires_at` 已过期 (早于当前时间)
    - 或 research.decision_index 中有条目的 expires_at 已过期
    - → 覆写 `workflow_mode = research_refresh_needed`
-
-5. **Dirty-phase 回滚检测:**
-   - 检查已完成 phase 中是否有 `needs_revalidation` 状态的 task
-   - 如有 → 回滚 `current_phase` 到最早的 dirty phase
-   - → 覆写 `workflow_mode = executing_task`
 
 6. **全部通过:**
    - 保持原 `workflow_mode` 不变

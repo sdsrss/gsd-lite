@@ -15,6 +15,8 @@ import { handleExecutorResult, handleDebuggerResult, handleReviewerResult, resum
 let basePath;
 
 async function createTmpGit() {
+  // Clean up any leftover from a previous suite that failed to clean up
+  if (basePath) { try { await rm(basePath, { recursive: true, force: true }); } catch {} }
   basePath = await mkdtemp(join(tmpdir(), 'gsd-edge-'));
   execSync('git init && git commit --allow-empty -m "init"', {
     cwd: basePath,

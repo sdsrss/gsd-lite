@@ -148,6 +148,8 @@ remaining <= 25%:
   4. 立即停止
 ```
 
+> **Note:** 上述 35%/25% 阈值为编排器主动发起上下文保存的建议阈值。Resume 时的恢复阻断阈值为 `CONTEXT_RESUME_THRESHOLD = 40`（服务端强制校验），低于 40% 时 resume 会拒绝恢复并要求 /clear。
+
 ---
 
 ## 依赖门槛语义 (Gate-aware dependencies)

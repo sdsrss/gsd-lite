@@ -124,7 +124,7 @@ Decision ID 供 plan/task 的 `research_basis` 字段引用，建立研究→计
 
 ---
 
-## 结果契约 (与 researcher 一致)
+## 结果契约 (与 researcher 一致，完整 3 参数调用契约见 `agents/researcher.md`)
 
 ```json
 {

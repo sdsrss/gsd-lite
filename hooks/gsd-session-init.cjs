@@ -17,7 +17,7 @@ const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.cla
 const settingsPath = path.join(claudeDir, 'settings.json');
 
 // Safety: exit after 4s regardless (hook timeout is 5s)
-setTimeout(() => process.exit(0), 4000);
+setTimeout(() => process.exit(0), 4000).unref();
 
 (async () => {
   // ── Phase 1: Clean up stale bridge/debounce files (throttled to once/day) ──

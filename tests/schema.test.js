@@ -1030,10 +1030,16 @@ describe('validateReviewerResult edge cases', () => {
   });
 
   it('rejects invalid review_level', () => {
-    const r = { ...base, review_level: 'L3' };
+    const r = { ...base, review_level: 'L99' };
     const result = validateReviewerResult(r);
     assert.equal(result.valid, false);
     assert.ok(result.errors.some(e => e.includes('invalid review_level')));
+  });
+
+  it('accepts L3 review_level', () => {
+    const r = { ...base, review_level: 'L3' };
+    const result = validateReviewerResult(r);
+    assert.equal(result.valid, true);
   });
 
   it('rejects non-boolean quality_passed', () => {

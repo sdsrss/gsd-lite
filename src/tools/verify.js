@@ -29,12 +29,12 @@ function summarizeOutput(output, lines) {
 
 async function runCommand(command, args, cwd) {
   try {
-    const { stdout } = await execFile(command, args, {
+    const { stdout, stderr } = await execFile(command, args, {
       cwd,
       encoding: 'utf-8',
       timeout: 120000,
     });
-    return { exit_code: 0, summary: summarizeOutput(stdout, 3) };
+    return { exit_code: 0, summary: summarizeOutput(stdout || stderr, 3) };
   } catch (err) {
     return {
       exit_code: err.status ?? (typeof err.code === 'number' ? err.code : 1),
