@@ -2,7 +2,7 @@
 
 > Get Shit Done — AI orchestration for Claude Code
 
-GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It combines structured project management with built-in quality discipline: TDD enforcement, anti-rationalization guards, multi-level code review, and automatic failure recovery — all driven by a state machine that keeps multi-phase projects on track.
+GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It combines structured project management with built-in quality discipline: TDD enforcement, anti-rationalization guards, multi-level code review, and automatic failure recovery — all driven by a 12-state workflow machine that keeps multi-phase projects on track.
 
 **Discuss thoroughly, execute automatically.** Have as many rounds of requirement discussion as needed. Once the plan is approved, GSD-Lite auto-executes: coding, self-review, independent review, verification, and phase advancement — with minimal human intervention.
 
@@ -10,7 +10,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 
 ### Structured Execution Engine
 - **Phase-based project management** — Break work into phases with ordered tasks, dependency tracking, and handoff gates
-- **State machine orchestration** — 12 workflow modes with precise state transitions, persistent to `state.json`
+- **12-state workflow machine** — `planning → executing_task → reviewing_task → reviewing_phase → completed` with precise transitions, persistent to `state.json`
 - **Automatic task scheduling** — Gate-aware dependency resolution determines what runs next
 - **Session resilience** — Stop anytime, resume exactly where you left off — crash protection via Stop hook auto-saves state markers
 
@@ -32,12 +32,18 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 - **Parallel task scheduling** — Independent tasks within the same phase are identified for concurrent dispatch
 - **Auto PR suggestion** — Phase/project completion prompts PR creation with evidence summary
 
-### Context Protection
+### Context Protection & Monitoring
 - **Subagent isolation** — Each task runs in its own agent context, preventing cross-contamination
-- **StatusLine monitoring** — Real-time context health tracking via Claude Code StatusLine
+- **Real-time context health monitoring** — StatusLine tracks context usage and project phase; composite StatusLine support coexists with other plugins
 - **Session lifecycle hooks** — Stop hook writes crash marker; SessionStart injects project status into CLAUDE.md; resume detects non-graceful exits
 - **Evidence-based verification** — Every claim backed by command output, not assertions
 - **Research with TTL** — Research artifacts include volatility ratings and expiration dates
+
+### Auto-Update & Version Management
+- **Automatic update checks** — Checks GitHub Releases every 24 hours with rate-limit backoff
+- **Version drift detection** — Server startup compares running version against disk and plugin registry, warns on mismatch
+- **Smart cache management** — Keeps latest 3 cached versions, auto-prunes old entries
+- **Idempotent installer** — Reinstall anytime without uninstalling; legacy files auto-cleaned
 
 ## Architecture
 
@@ -54,8 +60,8 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 |---------|---------|
 | `/gsd:start` | Interactive start — discuss requirements, research, plan, then auto-execute |
 | `/gsd:prd <input>` | Start from a requirements doc or description text |
-| `/gsd:resume` | Resume execution from saved state |
-| `/gsd:status` | View project progress dashboard |
+| `/gsd:resume` | Resume execution from saved state with workspace validation |
+| `/gsd:status` | View project progress dashboard (derived from canonical state fields) |
 | `/gsd:stop` | Save state and pause execution |
 | `/gsd:doctor` | Diagnostic checks on GSD-Lite installation and project health |
 
@@ -67,6 +73,17 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 | **reviewer** | Two-stage review (spec check → quality check) | Independent verification + Hard Gates |
 | **researcher** | Ecosystem research (Context7 → official docs → web) | Confidence scoring + TTL |
 | **debugger** | 4-phase systematic root cause analysis | Root Cause Iron Law |
+
+### 6 Workflows
+
+| Workflow | Purpose |
+|----------|---------|
+| `tdd-cycle` | RED-GREEN-REFACTOR TDD cycle enforcement |
+| `review-cycle` | Two-level review gates and accept/rework decisions |
+| `debugging` | 4-phase root cause analysis process |
+| `research` | Research with confidence scoring and TTL expiration |
+| `deviation-rules` | Anti-rationalization guards and red-flag checklists |
+| `execution-flow` | Complete task execution cycle from dispatch to checkpoint |
 
 ### MCP Server (11 Tools)
 
@@ -84,6 +101,19 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 | `orchestrator-handle-researcher-result` | Store research artifacts and decisions |
 | `orchestrator-handle-debugger-result` | Process root cause analysis, re-dispatch executor |
 
+### 8 References
+
+| Reference | Content |
+|-----------|---------|
+| `execution-loop` | 9-step execution loop specification (single source of truth) |
+| `review-classification` | Review level classification decision tree (L0/L1/L2) |
+| `evidence-spec` | Evidence validation and citation rules |
+| `state-diagram` | 12-state lifecycle workflow machine diagram |
+| `testing-patterns` | Test structure and patterns |
+| `anti-rationalization-full` | Full red-flag checklist for agents |
+| `git-worktrees` | Git worktree isolation strategy |
+| `questioning` | Requirements clarification patterns |
+
 ## Installation
 
 ### Method 1: Claude Code Plugin (Recommended)
@@ -96,7 +126,7 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 /plugin install gsd
 ```
 
-Automatically registers all commands, agents, workflows, MCP server, and hooks. Run these commands inside a Claude Code session.
+Automatically registers all commands, agents, workflows, MCP server, hooks, and auto-update. Run these commands inside a Claude Code session.
 
 ### Method 2: npx
 
@@ -113,12 +143,14 @@ cd gsd-lite && npm install && node cli.js install
 
 Methods 2 & 3 write components to `~/.claude/` and register the MCP server in `settings.json`.
 
+The installer copies commands, agents, workflows, references, and hooks to `~/.claude/`, and sets up the MCP server runtime in `~/.claude/gsd/`.
+
 Uninstall: `node cli.js uninstall` or `npx gsd-lite uninstall`
 
 ## Upgrade
 
 ```bash
-# Plugin
+# Plugin (auto-update checks GitHub Releases every 24h)
 /plugin update gsd
 
 # npx
@@ -130,6 +162,7 @@ git pull && npm install && node cli.js install
 
 - Installer is idempotent — no need to uninstall first
 - Upgrades from older versions auto-clean legacy files
+- Smart cache management keeps latest 3 versions, prunes old entries
 - Restart Claude Code after updating to load new MCP server / hooks
 
 ## Quick Start
@@ -204,8 +237,10 @@ executor retries → with debugger guidance injected
 All state lives in `.gsd/state.json` — a single source of truth with:
 - Canonical fields (whitelist-controlled, schema-validated)
 - Lifecycle state machine (pending → running → checkpointed → accepted)
+- Optimistic concurrency control (`_version` field with `VERSION_CONFLICT` detection)
 - Evidence references (command outputs, test results)
 - Research artifacts and decision index
+- Incremental validation (simple field updates use fast path; phases use full validation)
 
 ## Comparison with GSD
 
@@ -213,20 +248,22 @@ All state lives in `.gsd/state.json` — a single source of truth with:
 |-----------|-----|----------|
 | Commands | 32 | **6** |
 | Agents | 12 | **4** |
-| Source files | 100+ | **~48** |
+| Source files | 100+ | **~15** |
 | Installer | 2465 lines | **~290 lines** |
 | User interactions | 6+ confirmations | **Typically 2** |
 | TDD / Anti-rationalization | No | **Yes** |
 | State machine recovery | Partial | **Full (12 modes)** |
 | Evidence-based verification | No | **Yes** |
+| Auto-update | No | **Yes** |
+| Context health monitoring | No | **Yes** |
 
 ## Project Structure
 
 ```
 gsd-lite/
-├── src/                    # MCP Server + tools
-│   ├── server.js           # MCP Server entry (11 tools)
-│   ├── schema.js           # State schema + lifecycle validation
+├── src/                    # MCP Server + tools (15 source files)
+│   ├── server.js           # MCP Server entry (11 tools + version drift detection)
+│   ├── schema.js           # State schema + lifecycle validation + incremental validation
 │   ├── utils.js            # Shared utilities (atomic writes, git, file lock)
 │   └── tools/
 │       ├── state/          # State management (modular)
@@ -236,7 +273,7 @@ gsd-lite/
 │       │   └── index.js      # Re-exports
 │       ├── orchestrator/   # Orchestration logic (modular)
 │       │   ├── helpers.js    # Shared constants, preflight, dispatch
-│       │   ├── resume.js     # Workflow resume state machine
+│       │   ├── resume.js     # Workflow resume state machine (12 modes)
 │       │   ├── executor.js   # Executor result handler
 │       │   ├── reviewer.js   # Reviewer result handler
 │       │   ├── debugger.js   # Debugger result handler
@@ -246,19 +283,24 @@ gsd-lite/
 ├── commands/               # 6 slash commands (start, prd, resume, status, stop, doctor)
 ├── agents/                 # 4 subagent prompts (executor, reviewer, researcher, debugger)
 ├── workflows/              # 6 core workflows (TDD, review, debug, research, deviation, execution-flow)
-├── references/             # 8 reference docs
-├── hooks/                  # Session lifecycle (StatusLine + PostToolUse + SessionStart + Stop + AutoUpdate)
-│   └── lib/               # Shared hook utilities (gsd-finder)
-├── tests/                  # 866 tests (unit + simulation + E2E)
+├── references/             # 8 reference docs (execution-loop, state-diagram, evidence-spec, etc.)
+├── hooks/                  # Session lifecycle hooks
+│   ├── gsd-auto-update.cjs   # Auto-update from GitHub Releases (24h check interval)
+│   ├── gsd-context-monitor.cjs # Real-time context health monitoring
+│   ├── gsd-session-init.cjs   # Session initialization + CLAUDE.md status injection
+│   ├── gsd-session-stop.cjs   # Graceful shutdown with crash markers
+│   ├── gsd-statusline.cjs     # StatusLine display (composite-aware)
+│   └── lib/                   # Shared hook utilities (gsd-finder, composite statusline, semver)
+├── tests/                  # 909 tests (unit + simulation + E2E integration)
 ├── cli.js                  # Install/uninstall CLI entry
-├── install.js              # Installation script
+├── install.js              # Installation script (plugin-aware, idempotent)
 └── uninstall.js            # Uninstall script
 ```
 
 ## Testing
 
 ```bash
-npm test                    # Run all 866 tests
+npm test                    # Run all 909 tests
 npm run test:coverage       # Tests + coverage report (94%+ lines, 83%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file
@@ -269,6 +311,11 @@ node --test tests/file.js   # Run a single test file
 - [Design Document v3.5](docs/gsd-lite-design.md) — Full architecture and protocol spec
 - [Engineering Tasks](docs/gsd-lite-engineering-tasks.md) — 38 implementation tasks (5 phases, all complete)
 - [Calibration Notes](docs/calibration-notes.md) — Context threshold and TTL calibration
+
+## Requirements
+
+- Node.js >= 20.0.0
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 
 ## License
 
