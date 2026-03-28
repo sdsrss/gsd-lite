@@ -195,8 +195,11 @@ export function main() {
     copyDir(localNM, join(RUNTIME_DIR, 'node_modules'), 'runtime/node_modules (copied)');
   } else if (!DRY_RUN) {
     log('  ⧗ Installing runtime dependencies...');
+    const lockFile = join(RUNTIME_DIR, 'package-lock.json');
+    const hasLockFile = existsSync(lockFile);
+    const installCmd = hasLockFile ? 'npm ci --omit=dev' : 'npm install --omit=dev --no-fund --no-audit';
     try {
-      execSync('npm ci --omit=dev', { cwd: RUNTIME_DIR, stdio: 'pipe' });
+      execSync(installCmd, { cwd: RUNTIME_DIR, stdio: 'pipe' });
       log('  ✓ runtime dependencies installed');
     } catch (err) {
       log(`  ✗ Failed to install runtime dependencies: ${err.message}`);

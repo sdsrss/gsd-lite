@@ -485,3 +485,163 @@ describe('Layer A: install idempotency', () => {
     await assertMcpServerStarts(serverPath);
   });
 });
+
+// ============================================================
+// Layer B: Real package install (full verification)
+// ============================================================
+
+describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
+  let home, claudeDir, npmPrefix, tarball;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-real-npm-'));
+    npmPrefix = await mkdtemp(join(tmpdir(), 'gsd-npm-prefix-'));
+
+    // npm pack to create tarball
+    const packOutput = execSync('npm pack --json', {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf-8',
+      timeout: 30000,
+    });
+    const packInfo = JSON.parse(packOutput);
+    const tarballName = packInfo[0].filename;
+    tarball = join(PROJECT_ROOT, tarballName);
+
+    // npm install -g from tarball into isolated prefix
+    execSync(
+      `npm install -g ${JSON.stringify(tarball)} --prefix ${JSON.stringify(npmPrefix)}`,
+      { encoding: 'utf-8', timeout: 60000 }
+    );
+  });
+
+  after(async () => {
+    try { await rm(tarball, { force: true }); } catch {}
+    try {
+      execSync(`npm uninstall -g gsd-lite --prefix ${JSON.stringify(npmPrefix)}`,
+        { encoding: 'utf-8', timeout: 30000 });
+    } catch {}
+    await rm(home, { recursive: true, force: true });
+    await rm(npmPrefix, { recursive: true, force: true });
+  });
+
+  it('npm pack includes all required files', () => {
+    const packOutput = execSync('npm pack --json --dry-run', {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf-8',
+      timeout: 10000,
+    });
+    const packInfo = JSON.parse(packOutput);
+    const files = packInfo[0].files.map(f => f.path);
+
+    const required = [
+      'install.js', 'uninstall.js', 'cli.js', 'launcher.js',
+      'package.json', '.mcp.json',
+      'src/server.js',
+      'hooks/gsd-statusline.cjs', 'hooks/gsd-session-init.cjs',
+      'hooks/lib/gsd-finder.cjs',
+    ];
+    for (const f of required) {
+      assert.ok(files.some(p => p === f || p.endsWith(f)),
+        `Package should include ${f}`);
+    }
+  });
+
+  it('gsd CLI is executable via --help', () => {
+    const gsdBin = join(npmPrefix, 'bin', 'gsd');
+    const output = execFileSync('node', [gsdBin, 'help'], {
+      encoding: 'utf-8',
+      timeout: 10000,
+    });
+    assert.ok(output.includes('GSD-Lite'), 'gsd help should mention GSD-Lite');
+    assert.ok(output.includes('install'), 'gsd help should list install command');
+    assert.ok(output.includes('uninstall'), 'gsd help should list uninstall command');
+  });
+
+  it('gsd install works from npm-installed package', () => {
+    const gsdBin = join(npmPrefix, 'bin', 'gsd');
+    execFileSync('node', [gsdBin, 'install'], {
+      env: { ...process.env, HOME: home },
+      encoding: 'utf-8',
+      timeout: 30000,
+    });
+    assert.ok(existsSync(join(claudeDir, 'settings.json')),
+      'settings.json should exist after gsd install');
+  });
+
+  it('installed tree is complete after gsd install', async () => {
+    await assertInstallTree(claudeDir);
+  });
+
+  it('MCP server starts and responds from installed package', async () => {
+    const serverPath = join(claudeDir, 'gsd', 'src', 'server.js');
+    await assertMcpServerStarts(serverPath);
+  });
+
+  it('gsd uninstall cleans everything', async () => {
+    const gsdBin = join(npmPrefix, 'bin', 'gsd');
+    execFileSync('node', [gsdBin, 'uninstall'], {
+      env: { ...process.env, HOME: home },
+      encoding: 'utf-8',
+      timeout: 30000,
+    });
+    await assertCleanUninstall(claudeDir);
+  });
+});
+
+describe('Layer B: npx from tarball E2E', { timeout: 120000 }, () => {
+  let home, claudeDir, tarball, npxCache;
+
+  before(async () => {
+    ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-real-npx-'));
+    npxCache = await mkdtemp(join(tmpdir(), 'gsd-npx-cache-'));
+
+    // npm pack to create tarball
+    const packOutput = execSync('npm pack --json', {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf-8',
+      timeout: 30000,
+    });
+    const packInfo = JSON.parse(packOutput);
+    tarball = join(PROJECT_ROOT, packInfo[0].filename);
+
+    // Run via npx from tarball (file:// prefix required for local tarballs)
+    execSync(
+      `npx --yes ${JSON.stringify(`file://${tarball}`)} install`,
+      {
+        env: {
+          ...process.env,
+          HOME: home,
+          npm_config_cache: npxCache,
+        },
+        encoding: 'utf-8',
+        timeout: 90000,
+      }
+    );
+  });
+
+  after(async () => {
+    try { await rm(tarball, { force: true }); } catch {}
+    await rm(home, { recursive: true, force: true });
+    await rm(npxCache, { recursive: true, force: true });
+  });
+
+  it('installs all files correctly via npx', async () => {
+    await assertInstallTree(claudeDir);
+  });
+
+  it('registers MCP server in settings.json (not plugin mode)', async () => {
+    const settings = await readSettings(claudeDir);
+    assert.ok(settings.mcpServers?.gsd, 'mcpServers.gsd should exist via npx install');
+  });
+
+  it('registers statusLine and hooks', async () => {
+    const settings = await readSettings(claudeDir);
+    assert.ok(settings.statusLine, 'statusLine should be registered');
+    assertSettingsHooks(settings);
+  });
+
+  it('MCP server starts from npx-installed files', async () => {
+    const serverPath = join(claudeDir, 'gsd', 'src', 'server.js');
+    await assertMcpServerStarts(serverPath);
+  });
+});
