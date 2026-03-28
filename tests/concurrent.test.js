@@ -47,7 +47,10 @@ describe('concurrent state operations (P2-11)', () => {
 
     // State should be consistent — last write wins
     const state = await read({ basePath: tempDir });
-    assert.ok(Number.isFinite(state.context.remaining_percentage));
+    assert.ok(
+      state.context.remaining_percentage >= 91 && state.context.remaining_percentage <= 100,
+      `remaining_percentage should be 91-100, got ${state.context.remaining_percentage}`
+    );
   });
 
   it('handles concurrent lifecycle transitions without corruption', async () => {

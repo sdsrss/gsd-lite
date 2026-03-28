@@ -34,7 +34,7 @@ export function setLockPath(lockPath) {
  * Must be called before withStateLock in all mutation paths.
  */
 export function ensureLockPathFromStatePath(statePath) {
-  if (!_fileLockPath && statePath) {
+  if (statePath) {
     _fileLockPath = join(dirname(statePath), 'state.lock');
   }
 }
@@ -44,6 +44,7 @@ export function withStateLock(fn) {
     if (_fileLockPath) {
       return withFileLock(_fileLockPath, fn);
     }
+    process.stderr.write('[gsd] WARNING: withStateLock called without lock path — cross-process safety not guaranteed\n');
     return fn();
   });
   _mutationQueue = p.catch(() => {});

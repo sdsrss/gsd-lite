@@ -27,6 +27,8 @@ description: Save current state and pause project execution
 
 将 `workflow_mode` 设置为 `paused_by_user`
 
+使用 `state-update` MCP 工具更新状态，确保通过 schema 校验和乐观锁。
+
 使用原子写入: 先写 `.gsd/state.json.tmp`，成功后 rename 为 `.gsd/state.json`
 
 ## STEP 3: 确认输出

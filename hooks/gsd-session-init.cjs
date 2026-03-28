@@ -17,7 +17,7 @@ const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.cla
 const settingsPath = path.join(claudeDir, 'settings.json');
 
 // Safety: exit after 4s regardless (hook timeout is 5s)
-setTimeout(() => process.exit(0), 4000).unref();
+setTimeout(() => process.exit(0), 4000);
 
 (async () => {
   // ── Phase 1: Clean up stale bridge/debounce files (throttled to once/day) ──
@@ -129,12 +129,13 @@ setTimeout(() => process.exit(0), 4000).unref();
     const notifPath = path.join(claudeDir, 'gsd', 'runtime', 'update-notification.json');
     if (fs.existsSync(notifPath)) {
       const notif = JSON.parse(fs.readFileSync(notifPath, 'utf8'));
+      const safeSemver = (s) => /^\d+\.\d+\.\d+/.test(String(s || '')) ? String(s) : '?.?.?';
       if (notif.kind === 'updated') {
-        console.log(`✅ GSD-Lite auto-updated: v${notif.from} → v${notif.to}`);
+        console.log(`✅ GSD-Lite auto-updated: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}`);
       } else if (notif.kind === 'available' && notif.action === 'plugin_update') {
-        console.log(`📦 GSD-Lite update available: v${notif.from} → v${notif.to}. Run /plugin update gsd`);
+        console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run /plugin update gsd`);
       } else if (notif.kind === 'available') {
-        console.log(`📦 GSD-Lite update available: v${notif.from} → v${notif.to}. Run gsd update`);
+        console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run gsd update`);
       }
       fs.unlinkSync(notifPath);
     }
@@ -172,11 +173,14 @@ setTimeout(() => process.exit(0), 4000).unref();
           }
         } catch { /* skip */ }
 
+        // Sanitize user-controlled strings to prevent HTML/markdown injection
+        const safeName = (s) => String(s || '').replace(/<!--|-->/g, '').slice(0, 200);
+
         // Stdout: only output session-end warning (crash recovery), skip routine progress
         // Routine progress is handled by CLAUDE.md injection below — avoids noise
         const shortHead = progress.gitHead ? progress.gitHead.substring(0, 7) : 'n/a';
         if (sessionEndInfo) {
-          console.log(`⚠️ GSD: Previous session ended unexpectedly at ${sessionEndInfo.ended_at} (was: ${sessionEndInfo.workflow_mode_was}). Run /gsd:resume to recover.`);
+          console.log(`⚠️ GSD: Previous session ended unexpectedly at ${sessionEndInfo.ended_at} (was: ${safeName(sessionEndInfo.workflow_mode_was)}). Run /gsd:resume to recover.`);
         }
 
         // Write status block to CLAUDE.md
@@ -185,18 +189,15 @@ setTimeout(() => process.exit(0), 4000).unref();
         const BEGIN_MARKER = '<!-- GSD-STATUS-BEGIN -->';
         const END_MARKER = '<!-- GSD-STATUS-END -->';
 
-        // Sanitize user-controlled strings to prevent HTML/markdown injection
-        const safeName = (s) => String(s || '').replace(/<!--|-->/g, '').slice(0, 200);
-
         const statusBlock = [
           BEGIN_MARKER,
           `### GSD Project: ${safeName(progress.project)}`,
           `- Phase: ${progress.currentPhase || '?'}/${progress.totalPhases} (${safeName(progress.phaseName)})`,
           `- Task: ${progress.currentTask || 'none'}${progress.taskName ? ` (${safeName(progress.taskName)})` : ''}`,
-          `- Mode: ${progress.workflowMode}`,
+          `- Mode: ${safeName(progress.workflowMode)}`,
           `- Progress: ${progress.acceptedTasks}/${progress.totalTasks} tasks done`,
-          `- Last checkpoint: ${shortHead}`,
-          sessionEndInfo ? `- ⚠️ Previous session ended unexpectedly (${sessionEndInfo.ended_at})` : null,
+          `- Last checkpoint: ${safeName(shortHead)}`,
+          sessionEndInfo ? `- ⚠️ Previous session ended unexpectedly (${safeName(sessionEndInfo.ended_at)})` : null,
           END_MARKER,
         ].filter(Boolean).join('\n');
 

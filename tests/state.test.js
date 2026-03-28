@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update, phaseComplete, matchDecisionForBlocker } from '../src/tools/state/index.js';
 import { readJson } from '../src/utils.js';
+import { ERROR_CODES } from '../src/tools/state/constants.js';
 
 describe('state tools', () => {
   let tempDir;
@@ -389,6 +390,39 @@ describe('matchDecisionForBlocker edge cases', () => {
     // After filtering: decision tokens = ["handle","operations"], reason tokens = ["performance"]
     // No overlap → null
     assert.equal(result, null);
+  });
+});
+
+describe('init project name sanitization', () => {
+  let tempDir;
+
+  before(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-sanitize-'));
+  });
+
+  after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('returns error when project name becomes empty after HTML-comment stripping', async () => {
+    const result = await init({
+      project: '<!-- -->',
+      phases: [{ name: 'Phase 1', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.equal(result.code, ERROR_CODES.INVALID_INPUT);
+  });
+
+  it('truncates project name over 200 chars to 200 chars', async () => {
+    const longName = 'A'.repeat(250);
+    const result = await init({
+      project: longName,
+      phases: [{ name: 'Phase 1', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.project.length, 200);
   });
 });
 

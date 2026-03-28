@@ -314,6 +314,14 @@ describe('validateStateUpdate', () => {
       assert.equal(result.valid, false);
       assert.ok(result.errors.some(e => e.includes('Unknown canonical field: unknown_field')));
     });
+
+    it('rejects another unknown field key with descriptive error', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { foo_bar_baz: 123 });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Unknown canonical field')));
+      assert.ok(result.errors.some(e => e.includes('foo_bar_baz')));
+    });
   });
 
   describe('multiple updates at once', () => {

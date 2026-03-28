@@ -56,6 +56,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
   "blockers": [],
   "contract_changed": true,
   "confidence": "high",
+  "error_fingerprint": "optional string — short fingerprint for 3-strike deduplication (file+line or msg[:50])",
   "evidence": [
     {"id": "ev:test:users-update", "scope": "task:2.3"},
     {"id": "ev:typecheck:phase-2", "scope": "task:2.3"}
