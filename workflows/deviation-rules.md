@@ -77,7 +77,7 @@
 
 ### STOP: 3 次失败停止
 
-**条件:** 同一错误指纹 (file+line 或 msg[:50]) 出现 3 次。
+**条件:** 同一 task 连续失败 3 次 (retry_count >= 3)。error_fingerprint 仅用于调试上下文，不参与触发判断。
 
 处理:
 1. 返回 `outcome: "failed"`

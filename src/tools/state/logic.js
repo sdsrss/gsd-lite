@@ -1,7 +1,6 @@
 // Automation/business logic functions
 
 import { dirname, join } from 'node:path';
-import { writeFileSync, unlinkSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { ensureDir, readJson, writeJson, getStatePath } from '../../utils.js';
 import {
@@ -450,7 +449,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // state.json write. On recovery (future iteration), presence of this file
     // indicates a potentially inconsistent research state.
     const sentinelPath = join(gsdDir, '.research-commit-pending');
-    writeFileSync(sentinelPath, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
+    await writeFile(sentinelPath, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
 
     // Atomic multi-file write: write all artifacts first, then rename in batch
     const normalizedArtifacts = normalizeResearchArtifacts(artifacts);
@@ -472,7 +471,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       for (const { tmp } of tmpPaths) {
         try { await unlink(tmp); } catch {}
       }
-      try { unlinkSync(sentinelPath); } catch {}
+      try { await unlink(sentinelPath); } catch {}
       throw err;
     }
 
@@ -509,7 +508,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
 
     const validation = validateState(state);
     if (!validation.valid) {
-      try { unlinkSync(sentinelPath); } catch {}
+      try { await unlink(sentinelPath); } catch {}
       return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
     }
 
@@ -517,7 +516,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     await writeJson(statePath, state);
 
     // Remove sentinel after successful state write — crash consistency window closed
-    try { unlinkSync(sentinelPath); } catch {}
+    try { await unlink(sentinelPath); } catch {}
 
     return {
       success: true,
@@ -527,5 +526,5 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       warnings: refreshResult.warnings,
       research: state.research,
     };
-  });
+  }, statePath);
 }

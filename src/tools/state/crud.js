@@ -147,7 +147,7 @@ export async function init({ project, phases, research, force = false, basePath 
       })),
       research: !!research,
     };
-  });
+  }, statePath);
 }
 
 /**
@@ -378,7 +378,7 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
 
     await writeJson(statePath, merged);
     return { success: true, state: merged };
-  });
+  }, statePath);
 }
 
 /**
@@ -592,7 +592,7 @@ export async function phaseComplete({
       workflow_mode: state.workflow_mode,
       ...(isCompleted ? { message: 'All phases completed — project finished' } : {}),
     };
-  });
+  }, statePath);
 }
 
 /**
@@ -639,7 +639,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
     state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
     return { success: true };
-  });
+  }, statePath);
 }
 
 /**
@@ -712,7 +712,7 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
     }
 
     return { success: true, archived };
-  });
+  }, statePath);
 }
 
 /**
@@ -792,7 +792,7 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
     state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
     return { success: true, applied, plan_version: state.plan_version };
-  });
+  }, statePath);
 }
 
 function _applyPatchOp(state, op) {

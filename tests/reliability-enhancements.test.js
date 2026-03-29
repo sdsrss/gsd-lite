@@ -122,8 +122,8 @@ describe('H4: research write atomicity sentinel', () => {
     const logicSrc = await readFile(join(process.cwd(), 'src', 'tools', 'state', 'logic.js'), 'utf-8');
     // Sentinel should be written before artifact renames
     assert.ok(logicSrc.includes('.research-commit-pending'), 'logic.js should reference sentinel file');
-    assert.ok(logicSrc.includes('writeFileSync'), 'logic.js should use writeFileSync for sentinel');
-    assert.ok(logicSrc.includes('unlinkSync'), 'logic.js should use unlinkSync to clean up sentinel');
+    assert.ok(logicSrc.includes('await writeFile(sentinelPath'), 'logic.js should use writeFile for sentinel');
+    assert.ok(logicSrc.includes('await unlink(sentinelPath'), 'logic.js should use unlink to clean up sentinel');
   });
 });
 

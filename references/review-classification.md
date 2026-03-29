@@ -34,6 +34,7 @@ task.level 当前值?
 └── L0 或 L1
     ├── executor decisions 含 [LEVEL-UP]? -> 升级为 L2
     ├── contract_changed: true + task.name 匹配敏感关键词? -> 升级为 L2
+    ├── L1 + confidence: 'low'? -> 升级为 L2
     ├── L1 + confidence: 'high' + !contract_changed + 有 evidence 且无测试失败? -> 降为 L0
     └── 否 -> 保持当前级别
 ```

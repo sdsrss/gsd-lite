@@ -52,7 +52,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
   "summary": "Implemented PUT /api/users/:id endpoint",
   "checkpoint_commit": "a1b2c3d",
   "files_changed": ["src/api/users.ts", "tests/users.test.ts"],
-  "decisions": ["[DECISION] use optimistic locking by version column"],
+  "decisions": [{"id": "d1", "summary": "use optimistic locking by version column", "rationale": "prevents concurrent update conflicts"}],
   "blockers": [],
   "contract_changed": true,
   "confidence": "high",

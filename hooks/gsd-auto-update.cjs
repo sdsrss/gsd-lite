@@ -323,7 +323,7 @@ function validateExtractedPackage(extractDir) {
     const pkgPath = path.join(extractDir, 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     if (pkg.name !== 'gsd-lite') return false;
-    if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) return false;
+    if (!pkg.version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(pkg.version)) return false;
     // Verify install.js exists and is a regular file (lstat rejects symlinks)
     const installPath = path.join(extractDir, 'install.js');
     const lstat = fs.lstatSync(installPath);
@@ -404,8 +404,26 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
     // Write tarball to file, then extract with spawnSync (no shell)
     const tarPath = path.join(tmpDir, 'release.tar.gz');
     fs.writeFileSync(tarPath, tarData);
-    const tar = spawnSync('tar', ['xzf', tarPath, '-C', tmpDir, '--strip-components=1'], { timeout: 30000 });
-    if (tar.status !== 0) throw new Error(`tar extract failed: ${(tar.stderr || '').toString().slice(0, 200)}`);
+    const stripFlag = process.platform === 'win32' ? [] : ['--strip-components=1'];
+    const tar = spawnSync('tar', ['xzf', tarPath, '-C', tmpDir, ...stripFlag], { timeout: 30000 });
+    if (tar.status !== 0) {
+      const errMsg = (tar.stderr || '').toString().slice(0, 200);
+      if (process.platform === 'win32') {
+        console.error('[gsd] Auto-update: tar extraction failed on Windows — manual update may be required');
+      }
+      throw new Error(`tar extract failed: ${errMsg}`);
+    }
+    // On Windows without --strip-components, the content is nested in a subdirectory
+    if (process.platform === 'win32') {
+      const entries = fs.readdirSync(tmpDir).filter(e => e !== 'release.tar.gz');
+      if (entries.length === 1 && fs.statSync(path.join(tmpDir, entries[0])).isDirectory()) {
+        const nested = path.join(tmpDir, entries[0]);
+        for (const f of fs.readdirSync(nested)) {
+          fs.renameSync(path.join(nested, f), path.join(tmpDir, f));
+        }
+        fs.rmdirSync(nested);
+      }
+    }
 
     // Validate extracted package before installing
     if (!validateExtractedPackage(tmpDir)) {
@@ -499,7 +517,7 @@ function pruneOldCacheVersions(cacheBase, keepCount = 3, verbose = false) {
   try {
     if (!fs.existsSync(cacheBase)) return;
     const entries = fs.readdirSync(cacheBase, { withFileTypes: true })
-      .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+$/.test(e.name))
+      .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(e.name))
       .map(e => e.name);
     if (entries.length <= keepCount) return;
 
@@ -546,7 +564,7 @@ function syncPluginCache(extractedDir, verbose = false) {
     const newPkgPath = path.join(extractedDir, 'package.json');
     if (!fs.existsSync(newPkgPath)) return;
     const newVersion = JSON.parse(fs.readFileSync(newPkgPath, 'utf8')).version;
-    if (!newVersion) return;
+    if (!newVersion || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(newVersion)) return;
 
     // Determine new cache path
     const cacheBase = path.join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd');

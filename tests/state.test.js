@@ -165,7 +165,8 @@ describe('state tools', () => {
     });
 
     it('allows workflow_mode change from executing_task to paused_by_user (regression)', async () => {
-      // tempDir already has executing_task from prior tests
+      // Ensure executing_task mode independently of prior tests
+      await update({ updates: { workflow_mode: 'executing_task' }, basePath: tempDir });
       const result = await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: tempDir });
       assert.equal(result.success, true);
       const state = await read({ basePath: tempDir });

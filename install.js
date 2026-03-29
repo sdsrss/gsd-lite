@@ -145,7 +145,7 @@ export function main() {
     const preserveRuntime = existsSync(runtimeSubdir);
     let runtimeBackup;
     if (preserveRuntime) {
-      runtimeBackup = join(RUNTIME_DIR, '..', '.gsd-runtime-backup');
+      runtimeBackup = join(RUNTIME_DIR, '..', `.gsd-runtime-backup-${process.pid}`);
       try { cpSync(runtimeSubdir, runtimeBackup, { recursive: true }); } catch { runtimeBackup = null; }
     }
     rmSync(RUNTIME_DIR, { recursive: true, force: true });
@@ -272,7 +272,7 @@ export function main() {
     if (existsSync(cacheBase)) {
       try {
         const entries = readdirSync(cacheBase, { withFileTypes: true })
-          .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+$/.test(e.name)).map(e => e.name);
+          .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(e.name)).map(e => e.name);
         if (entries.length > 3) {
           const sorted = entries.slice().sort(semverSortComparator);
           // Detect versions with active processes to avoid disrupting running sessions

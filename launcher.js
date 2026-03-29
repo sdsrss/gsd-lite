@@ -14,6 +14,7 @@ if (!existsSync(join(__dirname, 'node_modules', '@modelcontextprotocol'))) {
     execSync('npm install --omit=dev --ignore-scripts', {
       cwd: __dirname,
       stdio: 'pipe',
+      timeout: 60000,
     });
   } catch (err) {
     console.error('Failed to install dependencies:', err.stderr?.toString() || err.message);

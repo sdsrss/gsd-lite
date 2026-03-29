@@ -23,6 +23,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
   // Note: read() is outside the state lock. This is safe because the MCP server
   // processes tool calls sequentially (single-session, promise-queue serialized).
   // persist() below re-acquires the lock and applies changes atomically.
+  // TODO: if MCP SDK supports concurrent tool calls, move this read inside withStateLock.
   const state = await read({ basePath });
   if (state.error) return state;
   const { phase, task } = getPhaseAndTask(state, result.task_id);

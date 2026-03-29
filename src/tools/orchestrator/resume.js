@@ -1,5 +1,7 @@
 import { read, selectRunnableTask } from '../state/index.js';
-import { getGitHead } from '../../utils.js';
+import { getGitHead, getGsdDir } from '../../utils.js';
+import { join } from 'node:path';
+import { unlink } from 'node:fs/promises';
 import {
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
@@ -268,6 +270,12 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
   if (state.error) {
     return state;
   }
+
+  // Clear session-end marker if present (crash recovery)
+  try {
+    const gsdDir = await getGsdDir(basePath);
+    if (gsdDir) await unlink(join(gsdDir, '.session-end')).catch(() => {});
+  } catch {}
 
   // Force-unblock specified tasks before normal resume flow
   if (Array.isArray(unblock_tasks) && unblock_tasks.length > 0 && _depth === 0) {

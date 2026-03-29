@@ -109,6 +109,6 @@ describe('propagateInvalidation', () => {
     };
     propagateInvalidation(phase, '1.1', true);
     assert.equal(phase.todo[1].lifecycle, 'needs_revalidation'); // stays same
-    assert.deepEqual(phase.todo[1].evidence_refs, []);
+    assert.deepEqual(phase.todo[1].evidence_refs, []); // evidence_refs must be cleared on re-invalidation
   });
 });

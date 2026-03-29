@@ -22,32 +22,43 @@ export const ERROR_CODES = {
 
 // C-1: Serialize all state mutations to prevent TOCTOU races
 // C-2: Layer cross-process advisory file lock on top of in-process queue
-let _mutationQueue = Promise.resolve();
-let _fileLockPath = null;
+// Per-basePath keyed maps — safe for multi-project concurrent use
+const _mutationQueues = new Map();
+const _fileLockPaths = new Map();
 
 export function setLockPath(lockPath) {
-  _fileLockPath = lockPath;
+  // Legacy API for tests — sets/clears the default (null-key) lock path
+  if (lockPath === null) {
+    _fileLockPaths.delete(null);
+    _mutationQueues.delete(null);
+  } else {
+    _fileLockPaths.set(null, lockPath);
+  }
 }
 
 /**
- * Ensure _fileLockPath is set from a known state path.
+ * Ensure lock path is set for a given state path.
  * Must be called before withStateLock in all mutation paths.
  */
 export function ensureLockPathFromStatePath(statePath) {
   if (statePath) {
-    _fileLockPath = join(dirname(statePath), 'state.lock');
+    const lockPath = join(dirname(statePath), 'state.lock');
+    _fileLockPaths.set(statePath, lockPath);
   }
 }
 
-export function withStateLock(fn) {
-  const p = _mutationQueue.then(() => {
-    if (_fileLockPath) {
-      return withFileLock(_fileLockPath, fn);
+export function withStateLock(fn, statePath) {
+  const lockPath = _fileLockPaths.get(statePath) ?? _fileLockPaths.get(null);
+  const queueKey = statePath ?? null;
+  const prev = _mutationQueues.get(queueKey) ?? Promise.resolve();
+  const p = prev.then(() => {
+    if (lockPath) {
+      return withFileLock(lockPath, fn);
     }
     process.stderr.write('[gsd] WARNING: withStateLock called without lock path — cross-process safety not guaranteed\n');
     return fn();
   });
-  _mutationQueue = p.catch(() => {});
+  _mutationQueues.set(queueKey, p.catch(() => {}));
   return p;
 }
 
