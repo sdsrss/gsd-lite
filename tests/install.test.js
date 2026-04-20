@@ -224,6 +224,83 @@ describe('install and uninstall scripts', () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  it('prefers code-graph statusline-chain.js CLI when available', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-chain-cli-');
+    try {
+      // Composite statusLine is active
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node "/path/to/statusline-composite.js"',
+        },
+      }, null, 2));
+
+      // Install a stub statusline-chain.js in code-graph's plugin cache.
+      // The stub records its argv to a file, exits 0.
+      const chainDir = join(claudeDir, 'plugins', 'cache', 'code-graph-mcp',
+        'code-graph-mcp', '0.13.0', 'scripts');
+      await mkdir(chainDir, { recursive: true });
+      const chainLog = join(home, 'chain-invocations.jsonl');
+      const chainScript = join(chainDir, 'statusline-chain.js');
+      await writeFile(chainScript,
+        `require('node:fs').appendFileSync(${JSON.stringify(chainLog)}, ` +
+        `JSON.stringify(process.argv.slice(2)) + '\\n');\n`);
+
+      runScript('install.js', home);
+
+      // Chain CLI should have been invoked with register args, not direct registry write.
+      const invocations = (await readFile(chainLog, 'utf-8'))
+        .trim().split('\n').map(l => JSON.parse(l));
+      const register = invocations.find(a => a[0] === 'register');
+      assert.ok(register, 'install should invoke chain CLI register');
+      assert.equal(register[1], 'gsd');
+      assert.ok(register[2].includes('gsd-statusline.cjs'),
+        'register should pass gsd-statusline command');
+      assert.equal(register[3], '--stdin');
+
+      // Uninstall should invoke unregister via CLI.
+      runScript('uninstall.js', home);
+      const after = (await readFile(chainLog, 'utf-8'))
+        .trim().split('\n').map(l => JSON.parse(l));
+      const unregister = after.find(a => a[0] === 'unregister' && a[1] === 'gsd');
+      assert.ok(unregister, 'uninstall should invoke chain CLI unregister');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to direct registry write when chain CLI is unavailable', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-chain-fallback-');
+    try {
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node "/path/to/statusline-composite.js"',
+        },
+      }, null, 2));
+
+      const registryDir = join(home, '.cache', 'code-graph');
+      await mkdir(registryDir, { recursive: true });
+      await writeFile(join(registryDir, 'statusline-registry.json'), JSON.stringify([
+        { id: 'code-graph', command: 'node "/path/to/cg-statusline.js"', needsStdin: false },
+      ]));
+
+      // Create cache dir but WITHOUT statusline-chain.js — chain-CLI path should
+      // return null and fall through to the registry-write path.
+      await mkdir(join(claudeDir, 'plugins', 'cache', 'code-graph-mcp',
+        'code-graph-mcp', '0.12.0', 'scripts'), { recursive: true });
+
+      runScript('install.js', home);
+
+      const registry = JSON.parse(await readFile(
+        join(registryDir, 'statusline-registry.json'), 'utf-8'));
+      assert.ok(registry.find(p => p.id === 'gsd'),
+        'fallback path should register GSD in cache registry');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('plugin-mode install', () => {

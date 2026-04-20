@@ -28,18 +28,25 @@ Call the `health` MCP tool:
 
 Check if GSD hooks are registered in Claude settings:
 - Read `~/.claude/settings.json` (or `~/.claude/settings.local.json`)
-- StatusLine check (check BOTH paths):
-  1. Direct: `statusLine` entry containing `gsd-statusline`
-  2. Composite: read `~/.cache/code-graph/statusline-registry.json` — if any entry's `command` contains `gsd-statusline`, it is registered through the composite statusline system
-  - Either path present: StatusLine = registered
-- Check for `PostToolUse` hook entry containing `gsd-context-monitor`
-- Both present: record PASS
-- Partial: record WARN with which hook is missing
-- Neither: record FAIL "No GSD hooks registered"
+- StatusLine check (registered if ANY path matches):
+  1. Direct: `statusLine.command` contains `gsd-statusline`
+  2. Composite cache registry: `~/.cache/code-graph/statusline-registry.json` — any entry whose `command` contains `gsd-statusline`
+  3. Composite backup mirror: `~/.claude/statusline-providers.json` — same match rule (durable mirror written by code-graph's chain CLI)
+  - Any path present: StatusLine = registered
+- Check the three hook arrays in `settings.hooks`:
+  - `PostToolUse` entry referencing `gsd-context-monitor`
+  - `SessionStart` entry referencing `gsd-session-init`
+  - `Stop` entry referencing `gsd-session-stop`
+- All four (statusLine + three hooks) present: record PASS
+- Partial: record WARN naming each missing hook
+- None: record FAIL "No GSD hooks registered"
 
-Also verify the hook files exist on disk:
+Also verify the hook files exist on disk (install.js copies all five):
 - `~/.claude/hooks/gsd-statusline.cjs`
 - `~/.claude/hooks/gsd-context-monitor.cjs`
+- `~/.claude/hooks/gsd-session-init.cjs`
+- `~/.claude/hooks/gsd-session-stop.cjs`
+- `~/.claude/hooks/gsd-auto-update.cjs`
 - Files missing but settings present: record WARN "Hook registered but file missing"
 
 ## STEP 4: Lock File Check

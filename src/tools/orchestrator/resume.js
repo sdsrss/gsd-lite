@@ -493,8 +493,8 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
           success: true,
           action: 'await_manual_intervention',
           workflow_mode: state.workflow_mode,
-          guidance: 'Complete planning and call state-init to initialize the project',
-          message: 'Project is in planning mode; complete the plan and initialize with state-init',
+          guidance: 'Plan is being revised. Run /gsd:start or /gsd:prd to continue planning, or state-update workflow_mode back to executing_task when ready.',
+          message: 'Project is in planning mode (plan revision). Finish the plan then set workflow_mode back to executing_task.',
         };
         break;
       case 'reconcile_workspace': {
