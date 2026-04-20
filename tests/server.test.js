@@ -379,7 +379,7 @@ describe('MCP tool error handling', () => {
     const fakePath = '/tmp/nonexistent-gsd-xyz-' + Date.now();
     const result = await handleToolCall('state-read', { basePath: fakePath });
     assert.equal(result.error, true);
-    assert.match(result.message, /No .gsd directory/);
+    assert.match(result.message, /\.gsd directory missing|No GSD project found/);
   });
 
   it('update rejects non-canonical fields', async () => {

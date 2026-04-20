@@ -156,7 +156,7 @@ export async function init({ project, phases, research, force = false, basePath 
 export async function read({ fields, basePath = process.cwd(), validate = false } = {}) {
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
 
   const result = await readJson(statePath);
@@ -207,7 +207,7 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
 
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
   ensureLockPathFromStatePath(statePath);
 
@@ -425,7 +425,7 @@ export async function phaseComplete({
   }
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
   ensureLockPathFromStatePath(statePath);
 
@@ -612,7 +612,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
 
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
   ensureLockPathFromStatePath(statePath);
 
@@ -693,7 +693,7 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
   }
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
   ensureLockPathFromStatePath(statePath);
 
@@ -733,7 +733,7 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
 
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
   ensureLockPathFromStatePath(statePath);
 

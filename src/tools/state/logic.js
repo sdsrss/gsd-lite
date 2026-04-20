@@ -430,7 +430,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
 
   const statePath = await getStatePath(basePath);
   if (!statePath) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No .gsd directory found' };
+    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
   ensureLockPathFromStatePath(statePath);
 
