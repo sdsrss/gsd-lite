@@ -303,6 +303,90 @@ describe('install and uninstall scripts', () => {
   });
 });
 
+describe('plugin-mode install: user-scope copy suppression', () => {
+  it('does NOT write user-scope copies of commands/agents/workflows/references when installed as plugin', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-plugin-noscope-');
+    try {
+      const pluginsDir = join(claudeDir, 'plugins');
+      await mkdir(pluginsDir, { recursive: true });
+      await writeFile(join(pluginsDir, 'installed_plugins.json'), JSON.stringify({
+        plugins: { 'gsd@gsd': { version: '0.7.3' } },
+      }));
+
+      runScript('install.js', home);
+
+      // These 4 dirs are served by the plugin system from
+      // ~/.claude/plugins/cache/gsd/gsd/<ver>/ — writing user-scope copies
+      // duplicates slash-command registration and silently drifts.
+      for (const sub of ['commands/gsd', 'agents/gsd', 'workflows/gsd', 'references/gsd']) {
+        assert.ok(
+          !existsSync(join(claudeDir, sub)),
+          `plugin mode should not write ${sub}/ (plugin system already serves it from cache)`,
+        );
+      }
+      // Runtime (MCP server) still copied — that's a separate concern.
+      assert.ok(existsSync(join(claudeDir, 'gsd', 'src', 'server.js')),
+        'runtime src should still be copied in plugin mode');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('removes legacy user-scope copies left by earlier install.js versions', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-plugin-cleanup-legacy-');
+    try {
+      const pluginsDir = join(claudeDir, 'plugins');
+      await mkdir(pluginsDir, { recursive: true });
+      await writeFile(join(pluginsDir, 'installed_plugins.json'), JSON.stringify({
+        plugins: { 'gsd@gsd': { version: '0.7.3' } },
+      }));
+
+      // Simulate pre-existing stale user-scope copies from a previous install.js
+      for (const [sub, marker] of [
+        ['commands/gsd', 'stale-doctor.md'],
+        ['agents/gsd', 'stale-agent.md'],
+        ['workflows/gsd', 'stale-flow.md'],
+        ['references/gsd', 'stale-ref.md'],
+      ]) {
+        const dir = join(claudeDir, sub);
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, marker), 'legacy content v0.6.x');
+      }
+
+      runScript('install.js', home);
+
+      for (const sub of ['commands/gsd', 'agents/gsd', 'workflows/gsd', 'references/gsd']) {
+        assert.ok(
+          !existsSync(join(claudeDir, sub)),
+          `plugin mode should clean up legacy ${sub}/ from prior non-plugin installs`,
+        );
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('still writes user-scope copies in non-plugin (npx/manual) mode', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-manual-scope-');
+    try {
+      // No installed_plugins.json → non-plugin mode
+      runScript('install.js', home);
+
+      // User-scope copies are the only command-delivery path in npx/manual mode
+      assert.ok(existsSync(join(claudeDir, 'commands', 'gsd', 'start.md')),
+        'non-plugin mode must still write commands/gsd/');
+      assert.ok(existsSync(join(claudeDir, 'agents', 'gsd')),
+        'non-plugin mode must still write agents/gsd/');
+      assert.ok(existsSync(join(claudeDir, 'workflows', 'gsd')),
+        'non-plugin mode must still write workflows/gsd/');
+      assert.ok(existsSync(join(claudeDir, 'references', 'gsd')),
+        'non-plugin mode must still write references/gsd/');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('plugin-mode install', () => {
   it('registers statusLine and hooks in settings.json even when installed as plugin', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-plugin-install-');

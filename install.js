@@ -158,17 +158,45 @@ export function main() {
     }
   }
 
-  // 1. Commands
-  copyDir(join(__dirname, 'commands'), join(CLAUDE_DIR, 'commands', 'gsd'), 'commands → ~/.claude/commands/gsd/');
+  // Decide install mode once — plugin-system-managed vs npx/manual.
+  // In plugin mode, Claude Code loads commands/agents/workflows/references directly
+  // from ~/.claude/plugins/cache/gsd/gsd/<version>/, so writing user-scope copies at
+  // ~/.claude/{commands,agents,workflows,references}/gsd/ produces duplicate slash-command
+  // entries and silent drift against the plugin cache.
+  const isPluginInstall = isInstalledAsPlugin(CLAUDE_DIR);
 
-  // 2. Agents (namespaced under gsd/ to avoid collisions) [I-5]
-  copyDir(join(__dirname, 'agents'), join(CLAUDE_DIR, 'agents', 'gsd'), 'agents → ~/.claude/agents/gsd/');
-
-  // 3. Workflows
-  copyDir(join(__dirname, 'workflows'), join(CLAUDE_DIR, 'workflows', 'gsd'), 'workflows → ~/.claude/workflows/gsd/');
-
-  // 4. References
-  copyDir(join(__dirname, 'references'), join(CLAUDE_DIR, 'references', 'gsd'), 'references → ~/.claude/references/gsd/');
+  // 1-4. Commands / agents / workflows / references
+  // Only deliver these user-scope copies in non-plugin installs (npx / manual / npm -g),
+  // where no plugin cache exists to serve them.
+  const userScopeCopies = [
+    ['commands', 'commands → ~/.claude/commands/gsd/'],
+    ['agents', 'agents → ~/.claude/agents/gsd/'],
+    ['workflows', 'workflows → ~/.claude/workflows/gsd/'],
+    ['references', 'references → ~/.claude/references/gsd/'],
+  ];
+  if (isPluginInstall) {
+    // Clean up stale copies left by earlier install.js versions (< 0.7.4) that wrote
+    // user-scope copies unconditionally. Keeping them around caused 2× skill-list
+    // entries and could shadow plugin-cache versions.
+    if (!DRY_RUN) {
+      for (const [sub] of userScopeCopies) {
+        const dest = join(CLAUDE_DIR, sub, 'gsd');
+        if (existsSync(dest)) {
+          rmSync(dest, { recursive: true, force: true });
+          log(`  ✓ Removed legacy user-scope ${sub}/gsd/ (served by plugin cache)`);
+        }
+      }
+    } else {
+      for (const [sub] of userScopeCopies) {
+        const dest = join(CLAUDE_DIR, sub, 'gsd');
+        if (existsSync(dest)) log(`  [dry-run] Would remove legacy ${dest}`);
+      }
+    }
+  } else {
+    for (const [sub, label] of userScopeCopies) {
+      copyDir(join(__dirname, sub), join(CLAUDE_DIR, sub, 'gsd'), label);
+    }
+  }
 
   // 5. Hooks (copy scripts only, skip hooks.json to avoid overwriting other plugins)
   for (const hookFile of HOOK_FILES) {
@@ -213,7 +241,6 @@ export function main() {
   //    When installed as a plugin, the plugin system handles MCP via .mcp.json,
   //    so we skip manual MCP registration to avoid name collisions.
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
-  const isPluginInstall = isInstalledAsPlugin(CLAUDE_DIR);
   if (!DRY_RUN) {
     let settings = {};
     try {

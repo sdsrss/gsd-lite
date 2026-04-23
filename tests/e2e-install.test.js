@@ -48,24 +48,30 @@ async function readSettings(claudeDir) {
 
 // --- Shared assertions ---
 
-async function assertInstallTree(claudeDir) {
-  // Commands
-  const cmds = await readdir(join(claudeDir, 'commands', 'gsd'));
-  assert.deepEqual(cmds.sort(), ['doctor.md', 'prd.md', 'resume.md', 'start.md', 'status.md', 'stop.md'],
-    'All 6 commands should be installed');
+async function assertInstallTree(claudeDir, { userScope = true } = {}) {
+  // In plugin mode, commands/agents/workflows/references are served from the
+  // plugin cache — install.js must NOT write user-scope copies, or slash-commands
+  // get registered twice and silently drift.
+  if (userScope) {
+    const cmds = await readdir(join(claudeDir, 'commands', 'gsd'));
+    assert.deepEqual(cmds.sort(), ['doctor.md', 'prd.md', 'resume.md', 'start.md', 'status.md', 'stop.md'],
+      'All 6 commands should be installed');
 
-  // Agents
-  const agents = await readdir(join(claudeDir, 'agents', 'gsd'));
-  assert.deepEqual(agents.sort(), ['debugger.md', 'executor.md', 'researcher.md', 'reviewer.md'],
-    'All 4 agents should be installed');
+    const agents = await readdir(join(claudeDir, 'agents', 'gsd'));
+    assert.deepEqual(agents.sort(), ['debugger.md', 'executor.md', 'researcher.md', 'reviewer.md'],
+      'All 4 agents should be installed');
 
-  // Workflows
-  const wf = await readdir(join(claudeDir, 'workflows', 'gsd'));
-  assert.equal(wf.length, 6, 'All 6 workflows should be installed');
+    const wf = await readdir(join(claudeDir, 'workflows', 'gsd'));
+    assert.equal(wf.length, 6, 'All 6 workflows should be installed');
 
-  // References
-  const refs = await readdir(join(claudeDir, 'references', 'gsd'));
-  assert.equal(refs.length, 8, 'All 8 references should be installed');
+    const refs = await readdir(join(claudeDir, 'references', 'gsd'));
+    assert.equal(refs.length, 8, 'All 8 references should be installed');
+  } else {
+    for (const sub of ['commands/gsd', 'agents/gsd', 'workflows/gsd', 'references/gsd']) {
+      assert.ok(!existsSync(join(claudeDir, sub)),
+        `plugin mode should not create user-scope ${sub}/`);
+    }
+  }
 
   // Hooks
   const hookNames = [
@@ -352,7 +358,7 @@ describe('Layer A: plugin install E2E', () => {
   });
 
   it('installs all files to correct locations', async () => {
-    await assertInstallTree(claudeDir);
+    await assertInstallTree(claudeDir, { userScope: false });
   });
 
   it('prunes old cache versions keeping latest 3', async () => {
