@@ -291,7 +291,7 @@ gsd-lite/
 │   ├── gsd-session-stop.cjs   # Graceful shutdown with crash markers
 │   ├── gsd-statusline.cjs     # StatusLine display (composite-aware)
 │   └── lib/                   # Shared hook utilities (gsd-finder, composite statusline, semver)
-├── tests/                  # 966 tests (unit + simulation + E2E integration)
+├── tests/                  # 972 tests (unit + simulation + E2E integration)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script (plugin-aware, idempotent)
 └── uninstall.js            # Uninstall script
@@ -300,7 +300,7 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 966 tests
+npm test                    # Run all 972 tests
 npm run test:coverage       # Tests + coverage report (94%+ lines, 83%+ branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file

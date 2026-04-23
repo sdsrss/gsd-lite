@@ -132,6 +132,26 @@ describe('phase handoff gate', () => {
     assert.equal(state.phases[0].phase_handoff.direction_ok, true);
   });
 
+  it('rejects completion with a verification-required hint when verification is entirely absent', async () => {
+    await prepareReviewingAcceptedPhase(tempDir);
+    const reviewAccepted = await update({
+      updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] },
+      basePath: tempDir,
+    });
+    assert.equal(reviewAccepted.success, true);
+
+    const result = await phaseComplete({
+      phase_id: 1,
+      basePath: tempDir,
+      direction_ok: true,
+    });
+
+    assert.equal(result.error, true);
+    assert.equal(result.code, 'HANDOFF_GATE');
+    assert.match(result.message, /verification required/i);
+    assert.doesNotMatch(result.message, /verification checks failed/i);
+  });
+
   it('fails handoff with run_verify: true when verification not provided', async () => {
     await prepareReviewingAcceptedPhase(tempDir);
     const reviewAccepted = await update({

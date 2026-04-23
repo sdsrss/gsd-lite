@@ -163,21 +163,16 @@
 | `await_recovery_decision` | 工作流处于 failed 状态。向用户展示失败信息和恢复选项 (retry/skip/replan) |
 
 **`phase-complete` 参数:**
+
+编排器必须先用 Bash 外部执行 lint/typecheck/test (state 层不自动跑外部工具)，然后把结果作为 `verification` 传入:
 ```
 phase-complete({
   phase_id: <当前 phase 编号>,
-  run_verify: true,          // 自动运行 lint/typecheck/test
+  verification: { lint: {exit_code: 0}, typecheck: {exit_code: 0}, test: {exit_code: 0} },
   direction_ok: true         // 方向校验通过 (如有偏差设为 false)
 })
 ```
-如果没有 lint/typecheck/test 工具，可改用 `verification` 参数传入预计算结果:
-```
-phase-complete({
-  phase_id: <phase>,
-  verification: { lint: {exit_code: 0}, typecheck: {exit_code: 0}, test: {exit_code: 0} },
-  direction_ok: true
-})
-```
+`run_verify: true` 只是声明"已外部跑过"，不提供 `verification` 时会返回 INVALID_INPUT，用于防止调用方忘记传结果。如果项目缺少某项脚本 (例如无 typecheck)，跑对应工具时返回 0 视为通过即可 (约定: "命令不存在" = 不适用 = 通过)。
 </execution_loop>
 
 ## STEP 12 — 最终报告

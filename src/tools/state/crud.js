@@ -511,6 +511,13 @@ export async function phaseComplete({
       ? verificationPassed(verificationResult)
       : phase.phase_handoff.tests_passed === true;
     if (!testsPassed) {
+      if (!verificationResult) {
+        return {
+          error: true,
+          code: ERROR_CODES.HANDOFF_GATE,
+          message: 'Handoff gate not met: verification required. Run lint/typecheck/test externally, then call phase-complete with verification: { lint: { exit_code }, typecheck: { exit_code }, test: { exit_code } }',
+        };
+      }
       return {
         error: true,
         code: ERROR_CODES.HANDOFF_GATE,

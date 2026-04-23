@@ -144,7 +144,7 @@ const TOOLS = [
         },
         run_verify: {
           type: 'boolean',
-          description: 'When true, run lint/typecheck/test during handoff evaluation',
+          description: 'Assert that verification was run externally; if true without a verification object, returns INVALID_INPUT. The state layer does not execute external tools.',
         },
         direction_ok: {
           type: 'boolean',
