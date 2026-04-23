@@ -1,4 +1,4 @@
-import { read, reclassifyReviewLevel } from '../state/index.js';
+import { read, reclassifyReviewLevel, selectRunnableTask } from '../state/index.js';
 import { validateExecutorResult } from '../../schema.js';
 import {
   MAX_DEBUG_RETRY,
@@ -101,8 +101,20 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
 
   if (result.outcome === 'blocked') {
     const { blocked_reason, unblock_condition } = getBlockedReasonFromResult(result);
+    // Probe whether other tasks remain runnable after this one is blocked.
+    // Design (docs/gsd-lite-design.md §1399): awaiting_user fires only when
+    // 0 runnable tasks remain — blocked-with-others-runnable continues execution.
+    const probePhase = {
+      ...phase,
+      todo: phase.todo.map((t) => (t.id === task.id
+        ? { ...t, lifecycle: 'blocked', blocked_reason, unblock_condition }
+        : t)),
+    };
+    const probe = selectRunnableTask(probePhase, state);
+    const hasOtherRunnable = !!probe?.task;
+
     const persistError = await persist(basePath, {
-      workflow_mode: 'awaiting_user',
+      workflow_mode: hasOtherRunnable ? 'executing_task' : 'awaiting_user',
       current_task: null,
       current_review: null,
       phases: [{
@@ -120,8 +132,8 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
 
     return {
       success: true,
-      action: 'awaiting_user',
-      workflow_mode: 'awaiting_user',
+      action: hasOtherRunnable ? 'continue_execution' : 'awaiting_user',
+      workflow_mode: hasOtherRunnable ? 'executing_task' : 'awaiting_user',
       task_id: task.id,
       blockers: getBlockedTasks({ todo: [{ id: task.id, lifecycle: 'blocked', blocked_reason, unblock_condition }] }),
     };

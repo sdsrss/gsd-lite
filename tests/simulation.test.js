@@ -405,7 +405,7 @@ describe('Simulation 3: Blocked task → auto-unblock via research', () => {
     assert.equal(result.task_id, '1.1');
   });
 
-  it('3.3 Executor reports blocked', async () => {
+  it('3.3 Executor reports blocked (1.2 still runnable → continue)', async () => {
     const result = await handleExecutorResult({
       result: {
         task_id: '1.1',
@@ -421,18 +421,20 @@ describe('Simulation 3: Blocked task → auto-unblock via research', () => {
       basePath,
     });
     assert.ok(result.success);
-    assert.equal(result.action, 'awaiting_user');
+    // 1.2 has no deps and is pending — blocked 1.1 must not halt the phase.
+    assert.equal(result.action, 'continue_execution');
+    assert.equal(result.workflow_mode, 'executing_task');
 
     const state = await read({ basePath });
     assert.equal(state.phases[0].todo[0].lifecycle, 'blocked');
     assert.ok(state.phases[0].todo[0].blocked_reason);
   });
 
-  it('3.4 Resume shows blocked state', async () => {
+  it('3.4 Resume dispatches runnable 1.2 while 1.1 stays blocked', async () => {
     const result = await resumeWorkflow({ basePath });
     assert.ok(result.success);
-    // Should pick task 1.2 since 1.1 is blocked, or show awaiting_user
-    // Task 1.2 has no dependencies, so it should be runnable
+    assert.equal(result.action, 'dispatch_executor');
+    assert.equal(result.task_id, '1.2');
   });
 
   it('3.5 Add research decision that matches blocker keywords', async () => {

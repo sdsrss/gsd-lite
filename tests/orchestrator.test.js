@@ -781,6 +781,52 @@ describe('orchestrator skeleton', () => {
     assert.equal(state.phases[0].todo[0].evidence_refs.length, 3);
   });
 
+  it('blocks task but keeps executing when other independent tasks remain runnable', async () => {
+    await init({
+      project: 'orchestrator-blocked-with-runnable',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'Needs vendor spec' },
+        { index: 2, name: 'Independent work' },
+      ] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'blocked',
+        summary: 'Waiting for vendor API spec',
+        files_changed: [],
+        decisions: [],
+        blockers: [{ reason: 'Vendor API not public' }],
+        contract_changed: false,
+        evidence: [],
+      },
+    });
+
+    // 1.2 has no deps + no blocker — phase must not halt.
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'continue_execution');
+    assert.equal(result.workflow_mode, 'executing_task');
+
+    // Next resume should pick up 1.2.
+    const next = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(next.action, 'dispatch_executor');
+    assert.equal(next.task_id, '1.2');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'blocked');
+    assert.equal(state.phases[0].todo[0].blocked_reason, 'Vendor API not public');
+  });
+
   it('handles executor blocked outcome with string blocker', async () => {
     await init({
       project: 'orchestrator-blocked-string',
