@@ -301,6 +301,118 @@ describe('install and uninstall scripts', () => {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  it('scrubs ghost _previous entries pointing at gsd-statusline (dedup both registries)', async () => {
+    // Reproduces the 0.7.4 statusline-duplicated-entry bug: code-graph's
+    // composite-takeover moves a pre-existing GSD top-level statusLine into
+    // `_previous`, then GSD's registerProvider adds `gsd` without touching
+    // `_previous`, producing double-rendering on every install.
+    const { home, claudeDir } = await makeClaudeHome('gsd-ghost-scrub-');
+    try {
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node "/path/to/statusline-composite.js"',
+        },
+      }, null, 2));
+
+      const registryDir = join(home, '.cache', 'code-graph');
+      await mkdir(registryDir, { recursive: true });
+      const gsdCmd = `node "${join(claudeDir, 'hooks', 'gsd-statusline.cjs')}"`;
+      // Pre-seed BOTH registries with ghost _previous AND a stale canonical
+      // `gsd` entry (user's real-world state before the fix).
+      const seeded = [
+        { id: '_previous', command: gsdCmd, needsStdin: true },
+        { id: 'code-graph', command: 'node "/p/cg.js"', needsStdin: false },
+        { id: 'gsd', command: gsdCmd, needsStdin: true },
+      ];
+      await writeFile(join(registryDir, 'statusline-registry.json'),
+        JSON.stringify(seeded));
+      await writeFile(join(claudeDir, 'statusline-providers.json'),
+        JSON.stringify(seeded));
+
+      runScript('install.js', home);
+
+      for (const p of [
+        join(registryDir, 'statusline-registry.json'),
+        join(claudeDir, 'statusline-providers.json'),
+      ]) {
+        const reg = JSON.parse(await readFile(p, 'utf-8'));
+        const gsdEntries = reg.filter(e => (e.command || '').includes('gsd-statusline'));
+        assert.equal(gsdEntries.length, 1,
+          `${p} should have exactly 1 GSD entry, got ${gsdEntries.length}`);
+        assert.equal(gsdEntries[0].id, 'gsd',
+          `canonical GSD entry in ${p} must have id=gsd`);
+        assert.equal(reg.find(e => e.id === '_previous'), undefined,
+          `_previous ghost must be scrubbed from ${p}`);
+        // Order: gsd before code-graph
+        const gsdIdx = reg.findIndex(e => e.id === 'gsd');
+        const cgIdx = reg.findIndex(e => e.id === 'code-graph');
+        assert.ok(gsdIdx >= 0 && cgIdx >= 0 && gsdIdx < cgIdx,
+          `gsd must precede code-graph in ${p}`);
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes providers mirror even when chain CLI owns the primary registry', async () => {
+    // Exercises the path where chain CLI registers in the primary cache
+    // registry but the ~/.claude/statusline-providers.json mirror has a
+    // stale ghost. Post-scrub must normalize the mirror regardless.
+    const { home, claudeDir } = await makeClaudeHome('gsd-mirror-scrub-');
+    try {
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        statusLine: {
+          type: 'command',
+          command: 'node "/path/to/statusline-composite.js"',
+        },
+      }, null, 2));
+
+      const gsdCmd = `node "${join(claudeDir, 'hooks', 'gsd-statusline.cjs')}"`;
+
+      // Install a stub chain CLI that ONLY writes to the primary registry —
+      // it registers `gsd` without touching the mirror. This simulates
+      // code-graph's real CLI behaviour pre-fix.
+      const chainDir = join(claudeDir, 'plugins', 'cache', 'code-graph-mcp',
+        'code-graph-mcp', '0.16.4', 'scripts');
+      await mkdir(chainDir, { recursive: true });
+      const registryDir = join(home, '.cache', 'code-graph');
+      await mkdir(registryDir, { recursive: true });
+      const primaryPath = join(registryDir, 'statusline-registry.json');
+      await writeFile(join(chainDir, 'statusline-chain.js'),
+        `const fs = require('node:fs');
+         const p = ${JSON.stringify(primaryPath)};
+         let reg; try { reg = JSON.parse(fs.readFileSync(p,'utf8')); } catch { reg = []; }
+         const idx = reg.findIndex(e => e.id === process.argv[3]);
+         const entry = { id: process.argv[3], command: process.argv[4], needsStdin: process.argv[5] === '--stdin' };
+         if (idx >= 0) reg[idx] = entry; else reg.unshift(entry);
+         fs.writeFileSync(p, JSON.stringify(reg));`);
+
+      // Seed primary with just code-graph (chain CLI will add gsd via register).
+      await writeFile(primaryPath,
+        JSON.stringify([{ id: 'code-graph', command: 'node "/p/cg.js"', needsStdin: false }]));
+      // Seed mirror with a ghost _previous pointing at GSD (no canonical gsd yet).
+      await writeFile(join(claudeDir, 'statusline-providers.json'),
+        JSON.stringify([
+          { id: '_previous', command: gsdCmd, needsStdin: true },
+          { id: 'code-graph', command: 'node "/p/cg.js"', needsStdin: false },
+        ]));
+
+      runScript('install.js', home);
+
+      const mirror = JSON.parse(await readFile(
+        join(claudeDir, 'statusline-providers.json'), 'utf-8'));
+      assert.equal(mirror.find(e => e.id === '_previous'), undefined,
+        '_previous ghost must be scrubbed from mirror even when chain CLI owns primary');
+      const gsdInMirror = mirror.filter(e => (e.command || '').includes('gsd-statusline'));
+      assert.equal(gsdInMirror.length, 1,
+        'mirror should end with exactly 1 GSD entry');
+      assert.equal(gsdInMirror[0].id, 'gsd');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('plugin-mode install: user-scope copy suppression', () => {

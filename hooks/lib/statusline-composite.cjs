@@ -63,33 +63,17 @@ function runChainCLI(args) {
 }
 
 /**
- * Register GSD as a provider in the composite statusline registry.
- * Prefers code-graph's statusline-chain.js CLI when available; falls back to
- * writing the cache registry directly for older code-graph versions.
- * Idempotent: updates existing entry or inserts before code-graph.
- * @param {string} statuslineScriptPath - Absolute path to gsd-statusline.cjs
- * @returns {boolean} true if registered/updated
+ * Rewrite a single registry file to its desired state: exactly one canonical
+ * `{id: 'gsd', ...}` entry with the given command, dropping every other entry
+ * whose command references gsd-statusline (e.g. ghost `_previous` entries
+ * left by code-graph's composite-takeover). Canonical entry is placed before
+ * `code-graph` for display priority.
+ *
+ * Returns true if the registry is now in the desired state (including
+ * idempotent no-op), false if the file can't be parsed as an array.
  */
-function registerProvider(statuslineScriptPath) {
-  const command = `node ${JSON.stringify(statuslineScriptPath)}`;
-  if (runChainCLI(['register', 'gsd', command, '--stdin'])) return true;
-
-  let registryPath = findCompositeRegistry();
-
-  // If composite statusLine is configured but registry file is missing,
-  // create it if the parent directory exists (e.g., code-graph installed
-  // but registry was deleted or not yet created).
-  if (!registryPath) {
-    for (const candidate of REGISTRY_PATHS) {
-      const dir = path.dirname(candidate);
-      if (fs.existsSync(dir)) {
-        registryPath = candidate;
-        break;
-      }
-    }
-    if (!registryPath) return false;
-  }
-
+function normalizeRegistryFile(registryPath, canonicalCommand) {
+  const canonical = { id: 'gsd', command: canonicalCommand, needsStdin: true };
   try {
     let registry;
     try {
@@ -99,29 +83,60 @@ function registerProvider(statuslineScriptPath) {
     }
     if (!Array.isArray(registry)) return false;
 
-    const provider = { id: 'gsd', command, needsStdin: true };
+    // Drop every entry pointing at gsd-statusline, regardless of id. This
+    // catches the canonical `gsd` slot AND ghosts like `_previous` that
+    // code-graph's id-scoped chain CLI `register` can't see.
+    const nonGsd = registry.filter(
+      e => !(e.command || '').includes('gsd-statusline'),
+    );
 
-    // Find existing GSD entry (by id or command)
-    const idx = registry.findIndex(p =>
-      p.id === 'gsd' || p.command?.includes('gsd-statusline'));
+    const cgIdx = nonGsd.findIndex(e => e.id === 'code-graph');
+    if (cgIdx >= 0) nonGsd.splice(cgIdx, 0, canonical);
+    else nonGsd.unshift(canonical);
 
-    if (idx >= 0) {
-      registry[idx] = provider;
-    } else {
-      // Insert before code-graph for display priority
-      const cgIdx = registry.findIndex(p => p.id === 'code-graph');
-      if (cgIdx >= 0) registry.splice(cgIdx, 0, provider);
-      else registry.unshift(provider);
-    }
+    // Skip write if already in desired state (idempotent re-install).
+    const before = JSON.stringify(registry);
+    const after = JSON.stringify(nonGsd);
+    if (before === after) return true;
 
-    // Atomic write
     const tmp = registryPath + `.${process.pid}-${Date.now()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(registry, null, 2) + '\n');
+    fs.writeFileSync(tmp, JSON.stringify(nonGsd, null, 2) + '\n');
     fs.renameSync(tmp, registryPath);
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Register GSD as a provider in the composite statusline registry.
+ *
+ * Calls code-graph's statusline-chain.js CLI when available, THEN post-scrubs
+ * every known registry path. The CLI's `register gsd <cmd>` is id-scoped and
+ * silently leaves ghost entries (e.g. `_previous` whose command is our
+ * gsd-statusline but whose id isn't `gsd`) in place — that caused
+ * double-rendering after upgrades where code-graph had previously promoted a
+ * top-level GSD statusLine to `_previous`. Post-normalization guarantees
+ * exactly one canonical `gsd` entry per registry regardless of which path
+ * succeeded.
+ *
+ * @param {string} statuslineScriptPath - Absolute path to gsd-statusline.cjs
+ * @returns {boolean} true if registered or normalized in at least one registry
+ */
+function registerProvider(statuslineScriptPath) {
+  const command = `node ${JSON.stringify(statuslineScriptPath)}`;
+  const cliOk = runChainCLI(['register', 'gsd', command, '--stdin']);
+
+  let anyNormalized = false;
+  for (const candidate of REGISTRY_PATHS) {
+    // Only touch paths whose parent dir exists — don't create arbitrary
+    // ~/.cache/ subtrees on machines without code-graph.
+    const dir = path.dirname(candidate);
+    if (!fs.existsSync(dir)) continue;
+    if (normalizeRegistryFile(candidate, command)) anyNormalized = true;
+  }
+
+  return cliOk || anyNormalized;
 }
 
 /**
