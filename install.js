@@ -211,6 +211,11 @@ export function main() {
   // 6. Stable runtime for MCP server
   copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
   copyFile(join(__dirname, 'package.json'), join(RUNTIME_DIR, 'package.json'), 'runtime/package.json → ~/.claude/gsd/package.json');
+  // Copy uninstall.js so the SessionStart hook's Phase 0 orphan-cleanup can
+  // spawn it when /plugin uninstall has removed the plugin without running our
+  // uninstaller. Without this, hooks/runtime/settings.json entries written by
+  // install.js outlive the plugin and keep firing.
+  copyFile(join(__dirname, 'uninstall.js'), join(RUNTIME_DIR, 'uninstall.js'), 'runtime/uninstall.js → ~/.claude/gsd/uninstall.js');
   // Copy lock file so `npm ci` works when node_modules are not present (npx scenario)
   const lockFile = join(__dirname, 'package-lock.json');
   if (existsSync(lockFile)) {
@@ -288,6 +293,27 @@ export function main() {
     renameSync(tmpSettings, settingsPath);
     if (statusLineRegistered || hooksRegistered) {
       log('  ✓ GSD-Lite hooks registered in settings.json');
+    }
+
+    // Record install mode so SessionStart's Phase 0 orphan-cleanup can
+    // distinguish "plugin uninstalled" from "npx install". Without this marker
+    // the hook falls back to the .orphaned_at cache heuristic, which is fine
+    // for pre-marker users but more guess-y.
+    try {
+      const installModeMarker = join(RUNTIME_DIR, '.install-mode');
+      writeFileSync(installModeMarker, (isPluginInstall ? 'plugin' : 'manual') + '\n');
+    } catch { /* best effort — marker missing falls back to heuristic */ }
+
+    // Clear stale .orphaned_at from the current plugin cache version, in case
+    // the user previously uninstalled (Claude Code stamps it) and is now
+    // reinstalling via /plugin. Leaving it would make orphan-cleanup mis-fire
+    // on the next session.
+    if (isPluginInstall) {
+      try {
+        const currentVersion = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8')).version;
+        const orphanMarker = join(CLAUDE_DIR, 'plugins', 'cache', 'gsd', 'gsd', currentVersion, '.orphaned_at');
+        if (existsSync(orphanMarker)) rmSync(orphanMarker, { force: true });
+      } catch { /* best effort */ }
     }
   } else {
     log('  [dry-run] Would register MCP server in settings.json');

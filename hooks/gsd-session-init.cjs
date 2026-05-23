@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // GSD-Lite SessionStart hook
+// 0. Orphan self-cleanup: if /plugin uninstall removed the plugin but left
+//    install.js-written state behind, run inline cleanup and exit.
 // 1. Cleans up stale temp files (throttled to once/day).
 // 2. Auto-registers statusLine in settings.json if not already configured.
 // 3. Self-heals .mcp.json if missing.
@@ -15,6 +17,143 @@ const os = require('node:os');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const settingsPath = path.join(claudeDir, 'settings.json');
+
+// ── Phase 0: Orphan self-cleanup ──
+// /plugin uninstall only touches installed_plugins.json + enabledPlugins; it
+// leaves hook scripts, settings.json registrations, the runtime dir, and the
+// composite statusline registry in place — so hooks keep firing and Phases
+// 2/5 below will self-heal the stale state on every session. Detect that case
+// here and remove our footprint before any other phase runs.
+function isOrphan() {
+  // .install-mode marker (written by install.js ≥ 0.7.7) is authoritative.
+  const installModeMarker = path.join(claudeDir, 'gsd', '.install-mode');
+  let mode = null;
+  try { mode = fs.readFileSync(installModeMarker, 'utf8').trim(); } catch { /* missing → fall through */ }
+  if (mode === 'manual') return false; // npx install never enters /plugin uninstall path
+  if (mode === 'plugin') {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8'));
+      return !data.plugins?.['gsd@gsd'];
+    } catch { return false; } // registry unreadable → don't assume orphan
+  }
+  // Pre-marker installs: fallback heuristic. Claude Code stamps
+  // .orphaned_at inside cache version dirs when the entry is removed from
+  // installed_plugins.json. Orphan iff every cached version has the marker.
+  const cacheBase = path.join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd');
+  if (!fs.existsSync(cacheBase)) return false;
+  try {
+    const dirs = fs.readdirSync(cacheBase, { withFileTypes: true })
+      .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+/.test(e.name));
+    if (dirs.length === 0) return false;
+    return dirs.every(d => fs.existsSync(path.join(cacheBase, d.name, '.orphaned_at')));
+  } catch { return false; }
+}
+
+function atomicWriteJson(filePath, value) {
+  const tmp = filePath + `.gsd-orphan-${process.pid}-${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
+  fs.renameSync(tmp, filePath);
+}
+
+function cleanupOrphan() {
+  // 1. Composite statusLine registry — call removeProvider BEFORE deleting
+  //    the lib file it lives in.
+  try {
+    const compositeLib = path.join(claudeDir, 'hooks', 'lib', 'statusline-composite.cjs');
+    if (fs.existsSync(compositeLib)) {
+      const { removeProvider } = require(compositeLib);
+      removeProvider();
+    }
+  } catch { /* best effort */ }
+
+  // 2. settings.json — mirror uninstall.js logic.
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    let changed = false;
+    for (const name of ['gsd', 'gsd-lite']) {
+      if (settings.mcpServers?.[name]) { delete settings.mcpServers[name]; changed = true; }
+      const pluginKey = `${name}@${name}`;
+      if (settings.enabledPlugins?.[pluginKey]) { delete settings.enabledPlugins[pluginKey]; changed = true; }
+      if (settings.extraKnownMarketplaces?.[name]) { delete settings.extraKnownMarketplaces[name]; changed = true; }
+    }
+    if (settings.extraKnownMarketplaces && Object.keys(settings.extraKnownMarketplaces).length === 0) {
+      delete settings.extraKnownMarketplaces;
+    }
+    if (settings.statusLine?.command?.includes('gsd-statusline')
+        || settings.statusLine?.command?.includes('context-monitor.js')) {
+      delete settings.statusLine;
+      changed = true;
+    }
+    if (settings.hooks) {
+      if (typeof settings.hooks.StatusLine === 'string'
+          && (settings.hooks.StatusLine.includes('gsd-statusline')
+              || settings.hooks.StatusLine.includes('context-monitor.js'))) {
+        delete settings.hooks.StatusLine;
+        changed = true;
+      }
+      for (const [hookType, identifier] of [
+        ['PostToolUse', 'gsd-context-monitor'],
+        ['PostToolUse', 'context-monitor.js'],
+        ['SessionStart', 'gsd-session-init'],
+        ['Stop', 'gsd-session-stop'],
+      ]) {
+        if (Array.isArray(settings.hooks[hookType])) {
+          const before = settings.hooks[hookType].length;
+          settings.hooks[hookType] = settings.hooks[hookType].filter(e =>
+            !e.hooks?.some(h => h.command?.includes(identifier)));
+          if (settings.hooks[hookType].length < before) changed = true;
+          if (settings.hooks[hookType].length === 0) delete settings.hooks[hookType];
+        } else if (typeof settings.hooks[hookType] === 'string'
+            && settings.hooks[hookType].includes(identifier)) {
+          delete settings.hooks[hookType];
+          changed = true;
+        }
+      }
+    }
+    if (changed) atomicWriteJson(settingsPath, settings);
+  } catch { /* best effort */ }
+
+  // 3. plugins/known_marketplaces.json
+  try {
+    const known = path.join(claudeDir, 'plugins', 'known_marketplaces.json');
+    const data = JSON.parse(fs.readFileSync(known, 'utf8'));
+    let dirty = false;
+    for (const n of ['gsd', 'gsd-lite']) {
+      if (n in data) { delete data[n]; dirty = true; }
+    }
+    if (dirty) atomicWriteJson(known, data);
+  } catch { /* best effort */ }
+
+  // 4. Hook script files
+  for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-auto-update.cjs', 'gsd-session-stop.cjs']) {
+    try { fs.rmSync(path.join(claudeDir, 'hooks', name), { force: true }); } catch { /* best effort */ }
+  }
+  // 5. Hook lib files (GSD-owned only — don't touch other plugins' libs)
+  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs']) {
+    try { fs.rmSync(path.join(claudeDir, 'hooks', 'lib', lib), { force: true }); } catch { /* best effort */ }
+  }
+  // 6. Runtime dir + plugin marketplace + cache dirs (current + legacy names)
+  for (const dir of [
+    path.join(claudeDir, 'gsd'),
+    path.join(claudeDir, 'gsd-lite'),
+    path.join(claudeDir, 'plugins', 'marketplaces', 'gsd'),
+    path.join(claudeDir, 'plugins', 'marketplaces', 'gsd-lite'),
+    path.join(claudeDir, 'plugins', 'cache', 'gsd'),
+    path.join(claudeDir, 'plugins', 'cache', 'gsd-lite'),
+  ]) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+  // 7. Self-removal — delete this script last. The running process keeps the
+  //    file handle until exit (POSIX); on Windows this may fail silently and
+  //    Phase 0's next-session check will retry.
+  try { fs.rmSync(path.join(claudeDir, 'hooks', 'gsd-session-init.cjs'), { force: true }); } catch { /* best effort */ }
+}
+
+if (isOrphan()) {
+  console.log('⚠ GSD-Lite plugin uninstalled — cleaning up orphaned hooks and runtime.');
+  try { cleanupOrphan(); } catch { /* best effort — never block session start */ }
+  process.exit(0);
+}
 
 // Safety: exit after 4s regardless (hook timeout is 5s)
 setTimeout(() => process.exit(0), 4000).unref();

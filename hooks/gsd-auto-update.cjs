@@ -29,6 +29,35 @@ const LOCK_STALE_MS = 10_000;
 const LOCK_RETRY_MS = 50;
 const LOCK_MAX_RETRIES = 100;
 
+// ── Orphan Detection ───────────────────────────────────────
+// Mirrors gsd-session-init.cjs Phase 0. When the plugin was removed via
+// /plugin uninstall but install.js-written state (hook files, runtime dir,
+// settings.json) survives, getInstallMode() falls through to 'manual' and a
+// new GitHub release would re-trigger install.js — resurrecting the plugin.
+// Guard here so checkForUpdate is a no-op until the orphan is cleaned up
+// (session-init Phase 0 handles the cleanup itself).
+function isOrphan() {
+  const installModeMarker = path.join(claudeDir, 'gsd', '.install-mode');
+  let mode = null;
+  try { mode = fs.readFileSync(installModeMarker, 'utf8').trim(); } catch { /* missing → fall through */ }
+  if (mode === 'manual') return false;
+  if (mode === 'plugin') {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8'));
+      return !data.plugins?.['gsd@gsd'];
+    } catch { return false; }
+  }
+  // Pre-marker fallback: orphan iff every cached version has .orphaned_at.
+  const cacheBase = path.join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd');
+  if (!fs.existsSync(cacheBase)) return false;
+  try {
+    const dirs = fs.readdirSync(cacheBase, { withFileTypes: true })
+      .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+/.test(e.name));
+    if (dirs.length === 0) return false;
+    return dirs.every(d => fs.existsSync(path.join(cacheBase, d.name, '.orphaned_at')));
+  } catch { return false; }
+}
+
 // ── Main Entry ─────────────────────────────────────────────
 async function checkForUpdate(options = {}) {
   const {
@@ -43,6 +72,10 @@ async function checkForUpdate(options = {}) {
   const installMode = getInstallMode();
 
   try {
+    if (isOrphan()) {
+      if (verbose) console.log('Skipping update check (plugin uninstalled — orphan state)');
+      return null;
+    }
     if (!force && shouldSkipUpdateCheck()) {
       if (verbose) console.log('Skipping update check (dev mode or auto-update in progress)');
       return null;
@@ -643,6 +676,7 @@ module.exports = {
   compareVersions,
   getInstallMode,
   isDevMode,
+  isOrphan,
   shouldCheck,
   shouldSkipUpdateCheck,
   validateExtractedPackage,
