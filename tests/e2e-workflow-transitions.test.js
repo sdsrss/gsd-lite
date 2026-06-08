@@ -8,6 +8,7 @@ import {
   acceptTask,
   read,
   update,
+  phaseComplete,
 } from './e2e-helpers.js';
 import {
   handleExecutorResult,
@@ -660,5 +661,60 @@ describe('TC11: 3 failures → dispatch_debugger', () => {
     assert.equal(state.current_review.retry_count, 3);
     const task = state.phases[0].todo.find(t => t.id === '1.1');
     assert.equal(task.retry_count, 3);
+  });
+});
+
+// ── Test Case: zero-task phase completes instead of looping forever ──
+
+describe('TC: zero-task (empty milestone) phase', () => {
+  let dir;
+  before(async () => { dir = await createTempDir(); });
+  after(async () => { await removeTempDir(dir); });
+
+  it('drives a project with an empty middle phase to completion (no infinite review loop)', async () => {
+    await initProject(dir, {
+      phases: [
+        { name: 'Phase 1', tasks: [{ index: 1, name: 'A', level: 'L1', review_required: false, verification_required: false }] },
+        { name: 'Phase 2 (empty milestone)', tasks: [] },
+        { name: 'Phase 3', tasks: [{ index: 1, name: 'C', level: 'L1', review_required: false, verification_required: false }] },
+      ],
+    });
+    await update({ updates: { workflow_mode: 'executing_task' }, basePath: dir });
+
+    // Bounded drive loop — must terminate well within the cap (regression: it used to loop forever)
+    let completed = false;
+    let sawEmptyPhaseComplete = false;
+    for (let i = 0; i < 40 && !completed; i++) {
+      const r = await resumeWorkflow({ basePath: dir });
+      assert.equal(r.error, undefined, `resume errored: ${r.message}`);
+      if (r.action === 'dispatch_executor') {
+        await handleExecutorResult({ result: {
+          task_id: r.task_id, outcome: 'checkpointed', summary: 'w', checkpoint_commit: 'c' + i,
+          files_changed: [], decisions: [], blockers: [], contract_changed: false,
+          confidence: 'high', evidence: [{ type: 'test', detail: 'ok', passed: true }],
+        }, basePath: dir });
+      } else if (r.action === 'dispatch_reviewer') {
+        const targets = (r.review_targets || (r.review_target ? [r.review_target] : [])).map(t => t.id);
+        await handleReviewerResult({ result: {
+          scope: r.review_scope, scope_id: r.current_review.scope_id, review_level: 'L1-batch',
+          spec_passed: true, quality_passed: true, critical_issues: [], important_issues: [],
+          minor_issues: [], accepted_tasks: targets, rework_tasks: [], evidence: [],
+        }, basePath: dir });
+      } else if (r.action === 'complete_phase') {
+        const st = await read({ basePath: dir, fields: ['current_phase'] });
+        if (st.current_phase === 2) sawEmptyPhaseComplete = true;
+        const pc = await phaseComplete({ phase_id: st.current_phase, basePath: dir,
+          verification: { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } } });
+        assert.equal(pc.error, undefined, `phase-complete errored: ${pc.message}`);
+      } else if (r.workflow_mode === 'completed') {
+        completed = true;
+      }
+    }
+
+    assert.equal(completed, true, 'workflow must reach completed');
+    assert.equal(sawEmptyPhaseComplete, true, 'empty phase 2 must reach complete_phase');
+    const final = await read({ basePath: dir });
+    assert.equal(final.workflow_mode, 'completed');
+    assert.deepEqual(final.phases.map(p => p.lifecycle), ['accepted', 'accepted', 'accepted']);
   });
 });

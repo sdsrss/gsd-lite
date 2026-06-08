@@ -98,6 +98,17 @@ describe('selectRunnableTask', () => {
     assert.equal(result.mode, 'trigger_review');
   });
 
+  it('does NOT re-trigger review for an empty phase whose review already passed (no infinite loop)', () => {
+    // Once the vacuous review of a zero-task phase passes, selection must fall through
+    // (task: undefined) so resume can complete the phase instead of looping forever.
+    const reviewed = { todo: [], phase_review: { status: 'accepted' } };
+    assert.equal(selectRunnableTask(reviewed, {}).mode, undefined);
+    assert.equal(selectRunnableTask(reviewed, {}).task, undefined);
+
+    const handoffPassed = { todo: [], phase_handoff: { required_reviews_passed: true } };
+    assert.equal(selectRunnableTask(handoffPassed, {}).mode, undefined);
+  });
+
   it('handles all tasks accepted — triggers phase review', () => {
     const phase = {
       todo: [

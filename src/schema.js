@@ -761,16 +761,28 @@ export function createInitialState({ project, phases }) {
   // the public API guard is in init() which rejects phases.length === 0.
   // Validate task names and uniqueness before creating state
   const seenIds = new Set();
+  // Track task IDs per phase so task-kind dependencies can be checked against the
+  // same phase only — selectRunnableTask resolves task deps within phase.todo, so a
+  // cross-phase task dep silently deadlocks at runtime. patchPlan.add_dependency
+  // rejects the same thing; keep init consistent.
+  const phaseTaskIds = phases.map(() => new Set());
   for (const [pi, p] of phases.entries()) {
     for (const [ti, t] of (p.tasks || []).entries()) {
       if (!t.name || typeof t.name !== 'string') {
         return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: name is required (got ${JSON.stringify(t.name)})` };
+      }
+      // Guard explicit index: must be a positive integer or it yields malformed task IDs
+      // (e.g. "1.0", "1.1.5", "1.x") that break downstream id parsing.
+      if (t.index !== undefined && t.index !== null
+          && (!Number.isInteger(t.index) || t.index < 1)) {
+        return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: index must be a positive integer (got ${JSON.stringify(t.index)})` };
       }
       const id = `${pi + 1}.${t.index ?? (ti + 1)}`;
       if (seenIds.has(id)) {
         return { error: true, message: `Duplicate task ID: ${id} in phase ${pi + 1}` };
       }
       seenIds.add(id);
+      phaseTaskIds[pi].add(id);
     }
   }
 
@@ -792,8 +804,12 @@ export function createInitialState({ project, phases }) {
         if (dep.gate && !validGates.includes(dep.gate)) {
           return { error: true, message: `Task ${taskId}: requires entry gate must be one of ${validGates.join(', ')} (got "${dep.gate}")` };
         }
-        if (dep.kind === 'task' && !seenIds.has(String(dep.id))) {
-          return { error: true, message: `Task ${taskId}: requires references non-existent task "${dep.id}" (valid IDs: ${[...seenIds].join(', ')})` };
+        if (dep.kind === 'task' && !phaseTaskIds[pi].has(String(dep.id))) {
+          if (seenIds.has(String(dep.id))) {
+            const targetPhase = String(dep.id).split('.')[0];
+            return { error: true, message: `Task ${taskId}: requires references task "${dep.id}" in a different phase (cross-phase task dependencies are not supported — use a phase dependency {kind: "phase", id: ${targetPhase}} for cross-phase ordering)` };
+          }
+          return { error: true, message: `Task ${taskId}: requires references non-existent task "${dep.id}" (same-phase IDs: ${[...phaseTaskIds[pi]].join(', ') || 'none'})` };
         }
         if (dep.kind === 'phase') {
           const phaseId = Number(dep.id);

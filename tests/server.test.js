@@ -23,6 +23,17 @@ describe('server tool handling', () => {
     assert.match(result.message, /Unknown tool/);
   });
 
+  it('returns clean validation errors when args are omitted (null/undefined)', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    // MCP clients may omit `arguments`; tools must not leak raw destructuring TypeErrors.
+    for (const args of [undefined, null]) {
+      const r = await handleToolCall('state-init', args);
+      assert.equal(r.error, true);
+      assert.match(r.message, /project must be a non-empty string/);
+      assert.doesNotMatch(r.message, /destructure/);
+    }
+  });
+
   it('can resume minimal orchestration through server tool', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'gsd-server-orchestrator-'));
     try {

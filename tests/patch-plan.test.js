@@ -95,6 +95,20 @@ describe('patchPlan — add_task', () => {
     assert.equal(result.error, true);
     assert.match(result.message, /already exists/);
   });
+
+  it('rejects non-positive-integer index (would create malformed IDs / NaN cascade)', async () => {
+    for (const index of [0, -1, 1.5, 'x', '2a']) {
+      const result = await patchPlan({
+        operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Bad', index } }],
+        basePath: tempDir,
+      });
+      assert.equal(result.error, true, `index ${JSON.stringify(index)} should be rejected`);
+      assert.match(result.message, /index must be a positive integer/);
+    }
+    // No malformed IDs were written
+    const state = await read({ basePath: tempDir });
+    assert.ok(state.phases[0].todo.every(t => /^1\.\d+$/.test(t.id)), 'all task IDs well-formed');
+  });
 });
 
 describe('patchPlan — remove_task', () => {
@@ -155,6 +169,19 @@ describe('patchPlan — reorder_tasks', () => {
     });
     assert.equal(result.error, true);
     assert.match(result.message, /exactly the same task IDs/);
+  });
+
+  it('rejects order with duplicate task IDs (clear message, not "circular dependency")', async () => {
+    const result = await patchPlan({
+      operations: [{ op: 'reorder_tasks', phase_id: 1, order: ['1.1', '1.1', '1.2'] }],
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /duplicate task IDs/);
+
+    // State must be untouched (order rejected before write)
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo.length, 3);
   });
 });
 

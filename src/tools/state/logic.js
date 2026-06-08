@@ -36,9 +36,14 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
   if (!phase || !Array.isArray(phase.todo)) {
     return { error: true, message: 'Phase todo must be an array' };
   }
-  // D-4: Zero-task phase — immediately trigger review so phase can advance
+  // D-4: Zero-task phase — trigger review once so the phase can advance, but only
+  // until that (vacuous) review passes. Returning trigger_review unconditionally
+  // makes the resume loop oscillate forever (review accepts → resume → review again)
+  // because an empty phase never reaches the normal all-accepted completion path.
   if (phase.todo.length === 0) {
-    return { mode: 'trigger_review' };
+    const reviewPassed = phase.phase_review?.status === 'accepted'
+      || phase.phase_handoff?.required_reviews_passed === true;
+    return reviewPassed ? { task: undefined, diagnostics: [] } : { mode: 'trigger_review' };
   }
 
   const runnableTasks = [];

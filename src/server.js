@@ -259,6 +259,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 async function dispatchToolCall(name, args) {
+  // Normalize missing args (MCP clients may omit `arguments`, sending null/undefined)
+  // so every tool receives an object and returns a clean validation error rather than
+  // leaking a raw destructuring TypeError.
+  args = args || {};
   let result;
   switch (name) {
     case 'health': {

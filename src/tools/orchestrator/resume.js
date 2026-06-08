@@ -220,7 +220,11 @@ async function resumeExecutingTask(state, basePath) {
   const reviewPassed = phase.phase_review?.status === 'accepted'
     || phase.phase_handoff?.required_reviews_passed === true
     || allAccepted;
-  if (allAccepted && reviewPassed) {
+  // Zero-task phase (empty milestone) is complete-able once its vacuous review passed —
+  // otherwise it can never satisfy the all-tasks-accepted condition and stalls.
+  const emptyPhaseDone = phase.todo.length === 0
+    && (phase.phase_review?.status === 'accepted' || phase.phase_handoff?.required_reviews_passed === true);
+  if ((allAccepted && reviewPassed) || emptyPhaseDone) {
     // Auto-advance phase lifecycle to 'reviewing' if currently 'active'
     // (mirrors trigger_review path at line 480-482)
     if (phase.lifecycle === 'active') {

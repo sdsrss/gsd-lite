@@ -60,7 +60,7 @@ export async function computePlanHashes(basePath) {
 /**
  * Initialize a new GSD project: creates .gsd/, state.json, plan.md, phases/
  */
-export async function init({ project, phases, research, force = false, basePath = process.cwd() }) {
+export async function init({ project, phases, research, force = false, basePath = process.cwd() } = {}) {
   if (!project || typeof project !== 'string') {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'project must be a non-empty string' };
   }
@@ -808,6 +808,12 @@ function _applyPatchOp(state, op) {
       const { phase_id, task } = op;
       if (typeof phase_id !== 'number') return { error: true, message: 'phase_id must be a number' };
       if (!task || typeof task.name !== 'string' || task.name.length === 0) return { error: true, message: 'task.name must be a non-empty string' };
+      // Guard task.index: a non-positive-integer index produces malformed IDs like
+      // "1.0"/"1.1.5"/"1.x"; "1.x" then poisons Math.max() and cascades to "1.NaN".
+      if (task.index !== undefined && task.index !== null
+          && (!Number.isInteger(task.index) || task.index < 1)) {
+        return { error: true, message: `task.index must be a positive integer (got ${JSON.stringify(task.index)})` };
+      }
 
       const phase = state.phases.find(p => p.id === phase_id);
       if (!phase) return { error: true, message: `Phase ${phase_id} not found` };
@@ -903,6 +909,11 @@ function _applyPatchOp(state, op) {
       const existing = new Set(taskMap.keys());
       const ordered = new Set(order);
 
+      // Reject duplicate IDs explicitly — otherwise a set-size match can slip a
+      // duplicate into todo and surface later as a misleading "circular dependency" error.
+      if (ordered.size !== order.length) {
+        return { error: true, message: `order contains duplicate task IDs for phase ${phase_id}` };
+      }
       // Must contain exactly the same task IDs
       if (ordered.size !== existing.size || ![...ordered].every(id => existing.has(id))) {
         return { error: true, message: `order must contain exactly the same task IDs as phase ${phase_id}` };

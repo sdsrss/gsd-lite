@@ -1472,6 +1472,31 @@ describe('createInitialState — requires validation', () => {
     assert.equal(result.project, 'test');
   });
 
+  it('rejects non-positive-integer task index (malformed IDs)', () => {
+    for (const index of [0, -1, 1.5, 'x']) {
+      const result = createInitialState({
+        project: 'test',
+        phases: [{ name: 'P1', tasks: [{ name: 'A', index }] }],
+      });
+      assert.equal(result.error, true, `index ${JSON.stringify(index)} should be rejected`);
+      assert.match(result.message, /index must be a positive integer/);
+    }
+  });
+
+  it('rejects cross-phase TASK dependency (would deadlock — selectRunnableTask resolves task deps per-phase)', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [
+        { name: 'P1', tasks: [{ name: 'A' }] },
+        { name: 'P2', tasks: [{ name: 'B', requires: [{ kind: 'task', id: '1.1' }] }] },
+      ],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /different phase/);
+    // Suggests the target's phase, not the dependent's
+    assert.match(result.message, /\{kind: "phase", id: 1\}/);
+  });
+
   it('rejects invalid gate value', () => {
     const result = createInitialState({
       project: 'test',
