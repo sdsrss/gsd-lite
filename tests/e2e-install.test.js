@@ -94,6 +94,11 @@ async function assertInstallTree(claudeDir, { userScope = true } = {}) {
   assert.ok(serverStat.isFile(), 'Runtime server.js should exist');
   const pkgStat = await stat(join(claudeDir, 'gsd', 'package.json'));
   assert.ok(pkgStat.isFile(), 'Runtime package.json should exist');
+  // issue #2: dev-only npm lifecycle scripts (POSIX `prepare` git-hook setup)
+  // must be stripped so a later `npm install` in the runtime dir does not fail
+  // under cmd.exe on Windows.
+  const runtimePkg = JSON.parse(await readFile(join(claudeDir, 'gsd', 'package.json'), 'utf-8'));
+  assert.equal(runtimePkg.scripts, undefined, 'Runtime package.json should have dev scripts stripped');
   const sdkStat = await stat(join(claudeDir, 'gsd', 'node_modules', '@modelcontextprotocol', 'sdk'));
   assert.ok(sdkStat.isDirectory(), 'Runtime @modelcontextprotocol/sdk should exist');
 }

@@ -210,7 +210,19 @@ export function main() {
 
   // 6. Stable runtime for MCP server
   copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
-  copyFile(join(__dirname, 'package.json'), join(RUNTIME_DIR, 'package.json'), 'runtime/package.json → ~/.claude/gsd/package.json');
+  // Write a sanitized package.json: strip dev-only npm lifecycle scripts
+  // (prepare/prepublishOnly/version use POSIX shell + dev tooling absent from
+  // the runtime). Leaving them in means a later manual `npm install` in
+  // ~/.claude/gsd fails under cmd.exe on Windows (issue #2).
+  if (DRY_RUN) {
+    log('  [dry-run] Would write runtime/package.json (dev scripts stripped)');
+  } else {
+    const runtimePkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
+    delete runtimePkg.scripts;
+    mkdirSync(RUNTIME_DIR, { recursive: true });
+    writeFileSync(join(RUNTIME_DIR, 'package.json'), JSON.stringify(runtimePkg, null, 2) + '\n');
+    log('  ✓ runtime/package.json → ~/.claude/gsd/package.json (scripts stripped)');
+  }
   // Copy uninstall.js so the SessionStart hook's Phase 0 orphan-cleanup can
   // spawn it when /plugin uninstall has removed the plugin without running our
   // uninstaller. Without this, hooks/runtime/settings.json entries written by
@@ -230,7 +242,12 @@ export function main() {
     log('  ⧗ Installing runtime dependencies...');
     const lockFile = join(RUNTIME_DIR, 'package-lock.json');
     const hasLockFile = existsSync(lockFile);
-    const installCmd = hasLockFile ? 'npm ci --omit=dev' : 'npm install --omit=dev --no-fund --no-audit';
+    // --ignore-scripts: the runtime install only needs node_modules. Skipping
+    // lifecycle scripts avoids running the dev-only POSIX `prepare` git-hook
+    // setup, which fails under cmd.exe on Windows (issue #2).
+    const installCmd = hasLockFile
+      ? 'npm ci --omit=dev --ignore-scripts'
+      : 'npm install --omit=dev --no-fund --no-audit --ignore-scripts';
     try {
       execSync(installCmd, { cwd: RUNTIME_DIR, stdio: 'pipe' });
       log('  ✓ runtime dependencies installed');
