@@ -323,16 +323,28 @@ async function fetchLatestRelease(token) {
     if (!res.ok) return null;
 
     const data = await res.json();
-    if (!data.tag_name || !data.tarball_url) return null;
-    // R-11: releases may publish the source tarball's SHA-256 in the release body
-    // (e.g. a line `sha256: <64 hex>`). When present the updater enforces it before
-    // running install.js; when absent it proceeds (legacy releases).
+    if (!data.tag_name) return null;
+    // R-11: prefer the CI-published deterministic npm-pack asset (gsd-lite-X.Y.Z.tgz).
+    // Its bytes — and therefore its SHA-256 — are fixed at publish time, so the
+    // `sha256:` in the release body is enforceable. GitHub's source tarball_url has
+    // NO stable-checksum guarantee, so we fall back to it only for legacy releases
+    // that shipped no asset (those verify nothing, as before).
+    const asset = Array.isArray(data.assets)
+      ? data.assets.find(a => a && typeof a.name === 'string'
+          && /^gsd-lite-\d+\.\d+\.\d+(-[\w.]+)?\.tgz$/.test(a.name)
+          && typeof a.browser_download_url === 'string')
+      : null;
+    const downloadUrl = asset ? asset.browser_download_url : data.tarball_url;
+    if (!downloadUrl) return null;
+    // The published SHA-256 (a line `sha256: <64 hex>` in the release body) is the
+    // hash of the asset; when present the updater enforces it before running
+    // install.js; when absent it proceeds (legacy releases).
     const checksumMatch = typeof data.body === 'string'
       ? data.body.match(/sha256[:=]\s*([a-f0-9]{64})/i)
       : null;
     return {
       version: data.tag_name.replace(/^v/, ''),
-      tarballUrl: data.tarball_url,
+      tarballUrl: downloadUrl,
       releaseUrl: data.html_url,
       checksum: checksumMatch ? checksumMatch[1].toLowerCase() : null,
     };

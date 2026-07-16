@@ -611,6 +611,50 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
     });
   });
 
+  it('fetchLatestRelease prefers the npm-pack asset over the source tarball (R-11)', async () => {
+    await withRealModule(async (mod) => {
+      const hash = 'b'.repeat(64);
+      const assetUrl = 'https://github.com/sdsrss/gsd-lite/releases/download/v9.9.9/gsd-lite-9.9.9.tgz';
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({
+          tag_name: 'v9.9.9',
+          tarball_url: TARBALL_URL,
+          html_url: 'x',
+          body: `Release notes\n\nsha256: ${hash}\n`,
+          assets: [
+            { name: 'notes.txt', browser_download_url: 'https://github.com/sdsrss/gsd-lite/releases/download/v9.9.9/notes.txt' },
+            { name: 'gsd-lite-9.9.9.tgz', browser_download_url: assetUrl },
+          ],
+        }),
+      });
+      try {
+        const latest = await mod.fetchLatestRelease(null);
+        assert.equal(latest.tarballUrl, assetUrl, 'must download the deterministic asset, not the source tarball');
+        assert.equal(latest.checksum, hash);
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
+  it('fetchLatestRelease falls back to the source tarball for legacy releases without an asset (R-11)', async () => {
+    await withRealModule(async (mod) => {
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({ tag_name: 'v9.9.9', tarball_url: TARBALL_URL, html_url: 'x', body: 'no asset', assets: [] }),
+      });
+      try {
+        const latest = await mod.fetchLatestRelease(null);
+        assert.equal(latest.tarballUrl, TARBALL_URL, 'legacy release falls back to source tarball');
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
   const latestStub = (version = '9.9.9', checksum = null) => async () => ({
     version, tarballUrl: TARBALL_URL, releaseUrl: 'x', checksum,
   });

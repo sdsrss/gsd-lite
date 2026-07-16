@@ -84,6 +84,21 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Pack deterministic tarball + compute SHA-256
+        id: pack
+        # R-11: npm pack produces the exact bytes published to npm — deterministic,
+        # so the SHA-256 computed here is what every auto-update client downloads
+        # and verifies. Unlike GitHub's source tarball_url, these bytes are fixed.
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TARBALL="gsd-lite-${VERSION}.tgz"
+          npm pack
+          test -f "$TARBALL" || { echo "::error::expected $TARBALL from npm pack"; exit 1; }
+          SHA=$(sha256sum "$TARBALL" | awk '{print $1}')
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Packed $TARBALL — sha256=$SHA"
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -92,3 +107,14 @@ jobs:
           # this updates it with auto-generated notes appended.
           # If no release exists, it creates one from scratch.
           make_latest: true
+          # R-11: attach the deterministic tarball as a release asset and publish
+          # its SHA-256 in the body. The auto-update client prefers this asset over
+          # the source tarball and enforces `sha256:` before running install.js.
+          files: ${{ steps.pack.outputs.tarball }}
+          append_body: true
+          body: |
+
+            ---
+            **Integrity** — SHA-256 of the attached `${{ steps.pack.outputs.tarball }}` (auto-update verifies this before install):
+
+            sha256: ${{ steps.pack.outputs.sha256 }}
