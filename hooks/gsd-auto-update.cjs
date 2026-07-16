@@ -16,6 +16,31 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const RATE_LIMIT_INTERVAL_MS = 48 * 60 * 60 * 1000; // 48h back-off if rate-limited
 const FETCH_TIMEOUT_MS = 3000; // 3s network timeout
 
+// ── Release signing (R-11b: tamper-proofing) ───────────────
+// Ed25519 public key. The matching private key lives ONLY in the CI secret
+// RELEASE_SIGNING_KEY and signs each release's SHA-256. Releases at or after
+// MIN_SIGNED_VERSION MUST carry a valid signature over their checksum — this
+// blocks tampering AND signature-stripping/downgrade, because an attacker
+// cannot forge a signature without the private key. Unlike the checksum alone
+// (which only detects transit corruption), this establishes authenticity.
+const RELEASE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAMTCfaIW82bCERaG7MuuQWbevfrTLkp0l/tNYN7kmQ/o=
+-----END PUBLIC KEY-----
+`;
+const MIN_SIGNED_VERSION = '0.8.3';
+
+// Verify an Ed25519 signature over the ASCII SHA-256 hex string. Returns false
+// on any error (missing signature, malformed key, bad signature) — fails closed.
+function verifyReleaseSignature(sha256Hex, signatureB64, publicKeyPem = RELEASE_PUBLIC_KEY) {
+  if (!sha256Hex || !signatureB64) return false;
+  try {
+    const pub = crypto.createPublicKey(publicKeyPem);
+    return crypto.verify(null, Buffer.from(String(sha256Hex), 'utf8'), pub, Buffer.from(String(signatureB64), 'base64'));
+  } catch {
+    return false;
+  }
+}
+
 // ── Paths ──────────────────────────────────────────────────
 const claudeDir =
   process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -159,7 +184,13 @@ async function checkForUpdate(options = {}) {
         }
 
         if (verbose) console.log(`Downloading v${latest.version}...`);
-        const success = await downloadAndInstallImpl(latest.tarballUrl, verbose, token, { expectedChecksum: latest.checksum });
+        const success = await downloadAndInstallImpl(latest.tarballUrl, verbose, token, {
+          expectedChecksum: latest.checksum,
+          expectedSignature: latest.signature,
+          // Releases at/after MIN_SIGNED_VERSION MUST verify — a stripped or
+          // absent signature on such a release aborts the update (anti-downgrade).
+          requireSignature: compareVersions(latest.version, MIN_SIGNED_VERSION) >= 0,
+        });
 
         saveState({
           ...state,
@@ -342,11 +373,16 @@ async function fetchLatestRelease(token) {
     const checksumMatch = typeof data.body === 'string'
       ? data.body.match(/sha256[:=]\s*([a-f0-9]{64})/i)
       : null;
+    // R-11b: the Ed25519 signature over the checksum (a line `sig: <base64>`).
+    const sigMatch = typeof data.body === 'string'
+      ? data.body.match(/\bsig[:=]\s*([A-Za-z0-9+/=]{80,})/i)
+      : null;
     return {
       version: data.tag_name.replace(/^v/, ''),
       tarballUrl: downloadUrl,
       releaseUrl: data.html_url,
       checksum: checksumMatch ? checksumMatch[1].toLowerCase() : null,
+      signature: sigMatch ? sigMatch[1] : null,
     };
   } catch {
     return null;
@@ -413,7 +449,13 @@ function validateTarballUrl(url) {
 
 // ── Download & Install ─────────────────────────────────────
 async function downloadAndInstall(tarballUrl, verbose = false, token = null, opts = {}) {
-  const { expectedChecksum = null, fetchImpl = fetch } = opts;
+  const {
+    expectedChecksum = null,
+    expectedSignature = null,
+    requireSignature = false,
+    publicKey = RELEASE_PUBLIC_KEY,
+    fetchImpl = fetch,
+  } = opts;
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
   const backupPath = path.join(runtimeDir, 'package.json.bak');
   let backedUp = false;
@@ -462,15 +504,28 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
     // anything. A published SHA-256 must match the downloaded bytes; a mismatch
     // (tampering or truncation in transit) aborts here — install.js is never run.
     // Fails closed: a bad checksum means no auto-update, not a bad install.
+    const actualSha = crypto.createHash('sha256').update(tarData).digest('hex');
     if (expectedChecksum) {
-      const actual = crypto.createHash('sha256').update(tarData).digest('hex');
       const expected = String(expectedChecksum).trim().toLowerCase().replace(/^sha256:/, '');
-      if (actual !== expected) {
-        throw new Error(`Tarball checksum mismatch — expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}… (aborting before install)`);
+      if (actualSha !== expected) {
+        throw new Error(`Tarball checksum mismatch — expected ${expected.slice(0, 12)}…, got ${actualSha.slice(0, 12)}… (aborting before install)`);
       }
       if (verbose) console.log('  Checksum verified ✓');
     } else if (verbose) {
       console.log('  No published checksum for this release — skipping integrity verification');
+    }
+
+    // R-11b: Ed25519 signature verification — tamper-proofing / authenticity.
+    // A release at or after MIN_SIGNED_VERSION must carry a valid signature over
+    // its checksum; a missing or invalid signature aborts before install (fails
+    // closed). This also defends against stripping the signature off a signed
+    // release. `actualSha` is the hash of the bytes we actually downloaded, so a
+    // valid signature over it authenticates those exact bytes.
+    if (requireSignature || expectedSignature) {
+      if (!verifyReleaseSignature(actualSha, expectedSignature, publicKey)) {
+        throw new Error('Release signature verification failed — aborting before install');
+      }
+      if (verbose) console.log('  Signature verified ✓');
     }
 
     // Write tarball to file, then extract with spawnSync (no shell)
@@ -722,6 +777,9 @@ module.exports = {
   shouldSkipUpdateCheck,
   validateExtractedPackage,
   validateTarballUrl,
+  verifyReleaseSignature,
+  RELEASE_PUBLIC_KEY,
+  MIN_SIGNED_VERSION,
 };
 
 // ── CLI Entry Point (for background auto-install) ─────────

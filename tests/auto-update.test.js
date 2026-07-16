@@ -479,6 +479,80 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
     }
   }
 
+  // R-11b: Ed25519 signing. Sign with a TEST keypair and inject its public key
+  // (the module's embedded RELEASE_PUBLIC_KEY pairs with the CI-only secret).
+  const { generateKeyPairSync, sign: edSign } = req('node:crypto');
+  const { publicKey: testPub, privateKey: testPriv } = generateKeyPairSync('ed25519');
+  const testPubPem = testPub.export({ type: 'spki', format: 'pem' });
+  const signSha = (shaHex) => edSign(null, Buffer.from(shaHex, 'utf8'), testPriv).toString('base64');
+
+  it('installs when a required Ed25519 signature is valid (R-11b)', async () => {
+    await withRealModule(async (mod, root, marker) => {
+      const { bytes, sha256 } = await buildFixtureTarball(root);
+      const ok = await mod.downloadAndInstall(TARBALL_URL, true, null, {
+        expectedChecksum: sha256,
+        expectedSignature: signSha(sha256),
+        requireSignature: true,
+        publicKey: testPubPem,
+        fetchImpl: makeFetchImpl(bytes),
+      });
+      assert.equal(ok, true, 'valid signature must install');
+      assert.equal(await readFile(marker, 'utf8'), 'installed');
+    });
+  });
+
+  it('rejects an invalid signature and does NOT run install.js (R-11b)', async () => {
+    await withRealModule(async (mod, root, marker) => {
+      const { bytes, sha256 } = await buildFixtureTarball(root);
+      const ok = await mod.downloadAndInstall(TARBALL_URL, true, null, {
+        expectedChecksum: sha256,
+        expectedSignature: signSha('0'.repeat(64)), // signature over a DIFFERENT hash
+        requireSignature: true,
+        publicKey: testPubPem,
+        fetchImpl: makeFetchImpl(bytes),
+      });
+      assert.equal(ok, false, 'invalid signature must be rejected');
+      assert.equal(await markerWritten(marker), false);
+    });
+  });
+
+  it('fails closed when a signature is required but absent (anti-downgrade, R-11b)', async () => {
+    await withRealModule(async (mod, root, marker) => {
+      const { bytes, sha256 } = await buildFixtureTarball(root);
+      const ok = await mod.downloadAndInstall(TARBALL_URL, true, null, {
+        expectedChecksum: sha256,
+        expectedSignature: null,
+        requireSignature: true,
+        publicKey: testPubPem,
+        fetchImpl: makeFetchImpl(bytes),
+      });
+      assert.equal(ok, false, 'a required-but-missing signature must abort');
+      assert.equal(await markerWritten(marker), false);
+    });
+  });
+
+  it('verifyReleaseSignature accepts good, rejects bad/missing/malformed (R-11b)', async () => {
+    await withRealModule(async (mod) => {
+      const sha = 'a'.repeat(64);
+      assert.equal(mod.verifyReleaseSignature(sha, signSha(sha), testPubPem), true);
+      assert.equal(mod.verifyReleaseSignature(sha, signSha('b'.repeat(64)), testPubPem), false, 'wrong-message signature');
+      assert.equal(mod.verifyReleaseSignature(sha, null, testPubPem), false, 'missing signature');
+      assert.equal(mod.verifyReleaseSignature(sha, 'not!base64', testPubPem), false, 'malformed signature');
+      assert.equal(mod.verifyReleaseSignature('', signSha(sha), testPubPem), false, 'missing hash');
+    });
+  });
+
+  it('MIN_SIGNED_VERSION gates the anti-downgrade signature requirement (R-11b)', async () => {
+    await withRealModule(async (mod) => {
+      // checkForUpdate derives requireSignature = compareVersions(latest, MIN) >= 0,
+      // so any release at/after MIN_SIGNED_VERSION must verify a signature (a
+      // stripped/absent one then fails closed — see the required-but-absent test).
+      assert.ok(mod.compareVersions(mod.MIN_SIGNED_VERSION, mod.MIN_SIGNED_VERSION) >= 0, 'MIN itself requires a signature');
+      assert.ok(mod.compareVersions('99.0.0', mod.MIN_SIGNED_VERSION) >= 0, 'a newer version requires a signature');
+      assert.ok(mod.compareVersions('0.8.2', mod.MIN_SIGNED_VERSION) < 0, 'a pre-signing version does not');
+    });
+  });
+
   it('installs a legitimate tarball whose checksum matches, running install.js', async () => {
     await withRealModule(async (mod, root, marker) => {
       const { bytes, sha256 } = await buildFixtureTarball(root);
@@ -605,6 +679,25 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
       try {
         const latest = await mod.fetchLatestRelease(null);
         assert.equal(latest.checksum, null);
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
+  it('fetchLatestRelease parses the Ed25519 signature from the release body (R-11b)', async () => {
+    await withRealModule(async (mod) => {
+      const hash = 'a'.repeat(64);
+      const sig = 'A'.repeat(88);
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({ tag_name: 'v9.9.9', tarball_url: TARBALL_URL, html_url: 'x', body: `sha256: ${hash}\nsig: ${sig}\n`, assets: [] }),
+      });
+      try {
+        const latest = await mod.fetchLatestRelease(null);
+        assert.equal(latest.checksum, hash);
+        assert.equal(latest.signature, sig);
       } finally {
         globalThis.fetch = realFetch;
       }

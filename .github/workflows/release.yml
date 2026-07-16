@@ -99,6 +99,29 @@ jobs:
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "Packed $TARBALL — sha256=$SHA"
 
+      - name: Sign the checksum (Ed25519)
+        id: sign
+        # R-11b: sign the SHA-256 with the private key held only in the
+        # RELEASE_SIGNING_KEY secret. The auto-update client verifies this against
+        # its embedded public key — tamper-proofing, not just corruption detection.
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          SHA: ${{ steps.pack.outputs.sha256 }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::RELEASE_SIGNING_KEY secret is not set — cannot sign release"
+            exit 1
+          fi
+          SIG=$(node -e '
+            const crypto = require("crypto");
+            const key = crypto.createPrivateKey(process.env.RELEASE_SIGNING_KEY);
+            const sig = crypto.sign(null, Buffer.from(process.env.SHA, "utf8"), key);
+            process.stdout.write(sig.toString("base64"));
+          ')
+          test -n "$SIG" || { echo "::error::signing produced an empty signature"; exit 1; }
+          echo "sig=$SIG" >> "$GITHUB_OUTPUT"
+          echo "Signed checksum (Ed25519)"
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -110,11 +133,14 @@ jobs:
           # R-11: attach the deterministic tarball as a release asset and publish
           # its SHA-256 in the body. The auto-update client prefers this asset over
           # the source tarball and enforces `sha256:` before running install.js.
+          # R-11b: `sig:` is the Ed25519 signature over the checksum, verified by
+          # the client against its embedded public key before install.
           files: ${{ steps.pack.outputs.tarball }}
           append_body: true
           body: |
 
             ---
-            **Integrity** — SHA-256 of the attached `${{ steps.pack.outputs.tarball }}` (auto-update verifies this before install):
+            **Integrity** — SHA-256 of the attached `${{ steps.pack.outputs.tarball }}` (auto-update verifies checksum + signature before install):
 
             sha256: ${{ steps.pack.outputs.sha256 }}
+            sig: ${{ steps.sign.outputs.sig }}
