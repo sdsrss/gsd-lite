@@ -196,6 +196,9 @@ export function validateStateUpdate(state, updates) {
       case 'current_phase':
         if (!Number.isFinite(updates.current_phase)) {
           errors.push('current_phase must be a finite number');
+        } else if (updates.current_phase < 1) {
+          // R-19: phase ids are 1-based; current_phase 0 (or negative) is invalid.
+          errors.push(`current_phase must be >= 1 (got ${updates.current_phase})`);
         }
         break;
       case 'current_task':
@@ -298,6 +301,35 @@ export function validateStateUpdate(state, updates) {
     }
   }
 
+  // R-02 (audit H2): the fast path previously skipped the reviewing-mode / scope_id
+  // cross-invariants that the full validator enforces, letting an update slip the
+  // state into reviewing_* with a null/mismatched current_review. Mirror the
+  // full-path P2-9 checks whenever either coupled field is in play.
+  if ('workflow_mode' in updates || 'current_review' in updates) {
+    const effectiveMode = 'workflow_mode' in updates ? updates.workflow_mode : state.workflow_mode;
+    const effectiveReview = 'current_review' in updates ? updates.current_review : state.current_review;
+    // ① reviewing_* modes require a matching current_review scope
+    if (effectiveMode === 'reviewing_phase' || effectiveMode === 'reviewing_task') {
+      const expectedScope = effectiveMode === 'reviewing_phase' ? 'phase' : 'task';
+      if (!effectiveReview || effectiveReview.scope !== expectedScope) {
+        errors.push(`workflow_mode "${effectiveMode}" requires current_review with scope="${expectedScope}"`);
+      }
+    }
+    // ② current_review.scope_id must reference an existing phase or task
+    if (effectiveReview && effectiveReview.scope_id != null && Array.isArray(state.phases)) {
+      if (effectiveReview.scope === 'phase') {
+        if (!state.phases.some(p => p.id === effectiveReview.scope_id)) {
+          errors.push(`current_review.scope_id ${effectiveReview.scope_id} references non-existent phase`);
+        }
+      } else if (effectiveReview.scope === 'task') {
+        const curPhase = state.phases.find(p => p.id === effectivePhase);
+        if (curPhase && Array.isArray(curPhase.todo) && !curPhase.todo.some(t => t.id === effectiveReview.scope_id)) {
+          errors.push(`current_review.scope_id "${effectiveReview.scope_id}" references non-existent task in phase ${effectivePhase}`);
+        }
+      }
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
 
@@ -317,6 +349,9 @@ export function validateState(state) {
   }
   if (!Number.isFinite(state.current_phase)) {
     errors.push('current_phase must be a finite number');
+  } else if (state.current_phase < 1) {
+    // R-19: phase ids are 1-based; current_phase 0 (or negative) is invalid.
+    errors.push(`current_phase must be >= 1 (got ${state.current_phase})`);
   }
   if (state.git_head !== null && typeof state.git_head !== 'string') {
     errors.push('git_head must be a string or null');
@@ -634,6 +669,18 @@ export function validateReviewerResult(r) {
       errors.push('critical_issues[].invalidates_downstream must be boolean');
     }
   }
+  // R-03: optional L3 human-confirmation fields (audit H3). A reviewer approving an
+  // L3 task sets requires_human_confirmation:true and describes the security impact;
+  // the orchestrator then holds the task for explicit human sign-off (see reviewer.js).
+  if ('requires_human_confirmation' in r && typeof r.requires_human_confirmation !== 'boolean') {
+    errors.push('requires_human_confirmation must be boolean');
+  }
+  if ('security_implications' in r && r.security_implications != null) {
+    const si = r.security_implications;
+    const ok = typeof si === 'string'
+      || (Array.isArray(si) && si.every((x) => typeof x === 'string'));
+    if (!ok) errors.push('security_implications must be a string or string[]');
+  }
   return { valid: errors.length === 0, errors };
 }
 
@@ -815,6 +862,14 @@ export function createInitialState({ project, phases }) {
           const phaseId = Number(dep.id);
           if (!Number.isFinite(phaseId) || phaseId < 1 || phaseId > phases.length) {
             return { error: true, message: `Task ${taskId}: requires references non-existent phase "${dep.id}" (valid: 1-${phases.length})` };
+          }
+          // R-06 (audit M1): phases execute in id order, so a task may only depend
+          // on EARLIER phases. A dependency on its own phase or a later one
+          // (phaseId >= owning phase pi+1) is a forward/self reference that
+          // deadlocks at runtime and, for mutual deps, forms a phase-graph cycle.
+          // Rejecting it keeps the phase dependency graph a backward-only DAG.
+          if (phaseId >= pi + 1) {
+            return { error: true, message: `Task ${taskId}: phase dependency {kind:"phase", id:${dep.id}} is a forward/self reference — a task in phase ${pi + 1} may only depend on earlier phases (${pi >= 1 ? `1-${pi}` : 'none available'})` };
           }
         }
       }

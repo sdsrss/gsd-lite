@@ -476,3 +476,32 @@ describe('TC14: Pre-flight — direction drift → awaiting_user', () => {
     assert.equal(state.current_review.stage, 'direction_drift');
   });
 });
+
+// ── TC-R08: executing_task — permanently-failed task surfaces recovery, not idle ──
+
+describe('TC-R08: executing_task — failed task with no runnable work → await_recovery_decision', () => {
+  let dir;
+  before(async () => { dir = await createTempDir(); });
+  after(async () => { await removeTempDir(dir); });
+
+  it('returns await_recovery_decision (not idle) and lists the failed task', async () => {
+    await initProject(dir);
+    // Phase 1 = [1.1, 1.2]. Accept 1.1, then permanently fail 1.2 → no runnable work.
+    await acceptTask(dir, 1, '1.1');
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.2', lifecycle: 'running' }] }] }, basePath: dir });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.2', lifecycle: 'failed', debug_context: { root_cause: 'unfixable dependency' } }] }] },
+      basePath: dir,
+    });
+
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.equal(res.success, true);
+    assert.equal(res.action, 'await_recovery_decision', 'must surface recovery, not idle');
+    assert.equal(res.phase_id, 1);
+    assert.ok(Array.isArray(res.failed_tasks));
+    const failed = res.failed_tasks.find(t => t.id === '1.2');
+    assert.ok(failed, 'failed task 1.2 must be listed');
+    assert.deepEqual(failed.debug_context, { root_cause: 'unfixable dependency' });
+    assert.deepEqual(res.recovery_options, ['retry_failed', 'skip_failed', 'replan']);
+  });
+});

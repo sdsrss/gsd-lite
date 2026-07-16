@@ -6,6 +6,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { execSync, spawnSync } = require('node:child_process');
 const { semverSortComparator } = require('./lib/semver-sort.cjs');
 
@@ -23,7 +24,10 @@ const stateDir = path.join(runtimeDir, 'runtime');
 const STATE_FILE = path.join(stateDir, 'update-state.json');
 const STATE_LOCK_FILE = path.join(stateDir, 'update-state.lock');
 const NOTIFICATION_FILE = path.join(stateDir, 'update-notification.json');
-const pluginRoot = path.resolve(__dirname, '..');
+// pluginRoot is normally derived from this file's location. GSD_TEST_PLUGIN_ROOT
+// lets tests run the *real* module against a temp plugin root (so integrity /
+// install paths get real coverage without writing to the actual repo).
+const pluginRoot = process.env.GSD_TEST_PLUGIN_ROOT || path.resolve(__dirname, '..');
 
 const LOCK_STALE_MS = 10_000;
 const LOCK_RETRY_MS = 50;
@@ -155,7 +159,7 @@ async function checkForUpdate(options = {}) {
         }
 
         if (verbose) console.log(`Downloading v${latest.version}...`);
-        const success = await downloadAndInstallImpl(latest.tarballUrl, verbose, token);
+        const success = await downloadAndInstallImpl(latest.tarballUrl, verbose, token, { expectedChecksum: latest.checksum });
 
         saveState({
           ...state,
@@ -320,10 +324,17 @@ async function fetchLatestRelease(token) {
 
     const data = await res.json();
     if (!data.tag_name || !data.tarball_url) return null;
+    // R-11: releases may publish the source tarball's SHA-256 in the release body
+    // (e.g. a line `sha256: <64 hex>`). When present the updater enforces it before
+    // running install.js; when absent it proceeds (legacy releases).
+    const checksumMatch = typeof data.body === 'string'
+      ? data.body.match(/sha256[:=]\s*([a-f0-9]{64})/i)
+      : null;
     return {
       version: data.tag_name.replace(/^v/, ''),
       tarballUrl: data.tarball_url,
       releaseUrl: data.html_url,
+      checksum: checksumMatch ? checksumMatch[1].toLowerCase() : null,
     };
   } catch {
     return null;
@@ -389,7 +400,8 @@ function validateTarballUrl(url) {
 }
 
 // ── Download & Install ─────────────────────────────────────
-async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
+async function downloadAndInstall(tarballUrl, verbose = false, token = null, opts = {}) {
+  const { expectedChecksum = null, fetchImpl = fetch } = opts;
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
   const backupPath = path.join(runtimeDir, 'package.json.bak');
   let backedUp = false;
@@ -408,7 +420,7 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
     const dlTimeout = setTimeout(() => controller.abort(), 30000);
     let tarData;
     try {
-      let res = await fetch(tarballUrl, { signal: controller.signal, headers, redirect: 'manual' });
+      let res = await fetchImpl(tarballUrl, { signal: controller.signal, headers, redirect: 'manual' });
       // Handle redirect manually to prevent Authorization header leakage
       if (res.status === 301 || res.status === 302) {
         const location = res.headers.get('location');
@@ -418,20 +430,35 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null) {
         // Follow redirect WITHOUT Authorization header (prevent token leakage to CDN)
         // Use redirect: 'manual' to validate any further redirects in the chain
         const redirectHeaders = { Accept: 'application/vnd.github+json', 'User-Agent': 'gsd-lite-auto-update/1.0' };
-        res = await fetch(location, { signal: controller.signal, headers: redirectHeaders, redirect: 'manual' });
+        res = await fetchImpl(location, { signal: controller.signal, headers: redirectHeaders, redirect: 'manual' });
         // Handle one more potential redirect from CDN (e.g., 303/307/308)
         if (res.status >= 300 && res.status < 400) {
           const loc2 = res.headers.get('location');
           if (!loc2 || !validateTarballUrl(loc2)) {
             throw new Error(`Secondary redirect URL failed host validation: ${loc2 || '(empty)'}`);
           }
-          res = await fetch(loc2, { signal: controller.signal, headers: redirectHeaders, redirect: 'error' });
+          res = await fetchImpl(loc2, { signal: controller.signal, headers: redirectHeaders, redirect: 'error' });
         }
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       tarData = Buffer.from(await res.arrayBuffer());
     } finally {
       clearTimeout(dlTimeout);
+    }
+
+    // R-11 (audit M9): verify tarball integrity BEFORE extracting or executing
+    // anything. A published SHA-256 must match the downloaded bytes; a mismatch
+    // (tampering or truncation in transit) aborts here — install.js is never run.
+    // Fails closed: a bad checksum means no auto-update, not a bad install.
+    if (expectedChecksum) {
+      const actual = crypto.createHash('sha256').update(tarData).digest('hex');
+      const expected = String(expectedChecksum).trim().toLowerCase().replace(/^sha256:/, '');
+      if (actual !== expected) {
+        throw new Error(`Tarball checksum mismatch — expected ${expected.slice(0, 12)}…, got ${actual.slice(0, 12)}… (aborting before install)`);
+      }
+      if (verbose) console.log('  Checksum verified ✓');
+    } else if (verbose) {
+      console.log('  No published checksum for this release — skipping integrity verification');
     }
 
     // Write tarball to file, then extract with spawnSync (no shell)
@@ -672,6 +699,8 @@ function syncPluginCache(extractedDir, verbose = false) {
 
 module.exports = {
   checkForUpdate,
+  downloadAndInstall,
+  fetchLatestRelease,
   getCurrentVersion,
   compareVersions,
   getInstallMode,

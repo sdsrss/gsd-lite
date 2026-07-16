@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update } from '../src/tools/state/index.js';
+import { handleExecutorResult } from '../src/tools/orchestrator/index.js';
 import { ERROR_CODES } from '../src/tools/state/constants.js';
 import { createInitialState } from '../src/schema.js';
 import { readJson } from '../src/utils.js';
@@ -146,6 +147,42 @@ describe('optimistic concurrency version control (#8)', () => {
       const result = await read({ basePath: tempDir, validate: true });
       assert.ok(!result.error, `unexpected error: ${result.message}`);
       assert.equal(result._version, 1);
+    });
+  });
+
+  describe('R-21: orchestrator handlers pass expectedVersion (optimistic lock)', () => {
+    it('two concurrent executor results on the same task surface VERSION_CONFLICT', async () => {
+      // Put task 1.1 into running so both handler calls take the checkpointed path.
+      await update({
+        updates: { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+        basePath: tempDir,
+      });
+
+      const mkResult = (commit) => ({
+        task_id: '1.1',
+        outcome: 'checkpointed',
+        summary: 'work',
+        checkpoint_commit: commit,
+        files_changed: ['a.js'],
+        decisions: [],
+        blockers: [],
+        contract_changed: false,
+        evidence: [],
+      });
+
+      // Both handlers read the same _version (reads run outside the state lock),
+      // then their persists serialize: the first wins, the second's expectedVersion
+      // is now stale → VERSION_CONFLICT rather than a silent clobber.
+      const [a, b] = await Promise.all([
+        handleExecutorResult({ result: mkResult('c1'), basePath: tempDir }),
+        handleExecutorResult({ result: mkResult('c2'), basePath: tempDir }),
+      ]);
+
+      const outcomes = [a, b];
+      const conflicts = outcomes.filter(r => r.error && r.code === ERROR_CODES.VERSION_CONFLICT);
+      const successes = outcomes.filter(r => r.success);
+      assert.equal(conflicts.length, 1, `exactly one call should conflict: ${JSON.stringify(outcomes)}`);
+      assert.equal(successes.length, 1, 'exactly one call should succeed');
     });
   });
 });

@@ -191,6 +191,11 @@ const TOOLS = [
           items: { type: 'string' },
           description: 'Optional task IDs to force-unblock before resuming (e.g. ["1.1", "2.3"])',
         },
+        confirm_review: {
+          type: 'string',
+          enum: ['confirm', 'reject'],
+          description: 'Resolve a pending L3 human-confirmation hold: "confirm" accepts the held task(s), "reject" sends them back for rework. Only acts when workflow_mode is awaiting_user with an active human_confirmation review.',
+        },
       },
     },
   },
@@ -202,7 +207,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: [{id, summary, rationale}], blockers: [{description}], contract_changed: boolean, evidence: string[]}',
+          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: [{id, summary, rationale}], blockers: [{description}], contract_changed: boolean, evidence: [{id: string, scope: string, type?: string}]}',
         },
       },
       required: ['result'],
@@ -216,7 +221,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Debugger result: {task_id: string, outcome: "root_cause_found"|"fix_suggested"|"failed", root_cause: string, evidence: object[], hypothesis_tested: [{hypothesis: string, result: "confirmed"|"rejected", evidence: string}], fix_direction: string, fix_attempts: integer, blockers: object[], architecture_concern: boolean}',
+          description: 'Debugger result: {task_id: string, outcome: "root_cause_found"|"fix_suggested"|"failed", root_cause: string, evidence: [{id: string, scope: string, type?: string}], hypothesis_tested: [{hypothesis: string, result: "confirmed"|"rejected", evidence: string}], fix_direction: string, fix_attempts: integer, blockers: object[], architecture_concern: boolean}',
         },
       },
       required: ['result'],
@@ -246,7 +251,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Reviewer result: {scope: "task"|"phase", scope_id: string|number, review_level: "L2"|"L1-batch", spec_passed: boolean, quality_passed: boolean, critical_issues: [{reason|description: string, task_id?: string, invalidates_downstream?: boolean}], important_issues: [{reason|description: string}], minor_issues: object[], accepted_tasks: string[], rework_tasks: string[], evidence: object[]}',
+          description: 'Reviewer result: {scope: "task"|"phase", scope_id: string|number, review_level: "L3"|"L2"|"L1-batch"|"L1", spec_passed: boolean, quality_passed: boolean, critical_issues: [{reason|description: string, task_id?: string, invalidates_downstream?: boolean}], important_issues: [{reason|description: string}], minor_issues: object[], accepted_tasks: string[], rework_tasks: string[], requires_human_confirmation?: boolean, security_implications?: string[], evidence: [{id: string, scope: string, type?: string}]}',
         },
       },
       required: ['result'],
@@ -257,6 +262,27 @@ const TOOLS = [
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: TOOLS,
 }));
+
+// R-10 (audit M8): whitelist of top-level argument keys each tool declares.
+const _toolSchemaKeys = new Map(
+  TOOLS.map(t => [t.name, new Set(Object.keys(t.inputSchema?.properties || {}))]),
+);
+
+/**
+ * Strip any argument key a tool does not declare in its inputSchema. This keeps
+ * a remote MCP caller from steering the server off process.cwd() via an injected
+ * `basePath`, or from setting internal-only params (_append_decisions, _depth,
+ * expectedVersion, …) that are meant solely for direct in-process callers.
+ */
+function sanitizeToolArgs(name, args) {
+  const allowed = _toolSchemaKeys.get(name);
+  if (!allowed) return {};
+  const out = {};
+  for (const key of Object.keys(args)) {
+    if (allowed.has(key)) out[key] = args[key];
+  }
+  return out;
+}
 
 async function dispatchToolCall(name, args) {
   // Normalize missing args (MCP clients may omit `arguments`, sending null/undefined)
@@ -341,29 +367,35 @@ async function dispatchToolCall(name, args) {
   return result;
 }
 
-// Strip result_contract from orchestrator responses — it's static reference data
-// already available in MCP tool descriptions. Saves ~200 tokens per call.
-function stripResultContract(result) {
-  if (result && typeof result === 'object' && 'result_contract' in result) {
-    const { result_contract, ...rest } = result;
-    return rest;
-  }
-  return result;
+// R-25 (audit L13): opt-in diagnostic channel. `GSD_DEBUG=1` emits tool dispatch
+// + outcome to stderr (never stdout — that carries the MCP JSON-RPC stream).
+function gsdDebug(...parts) {
+  if (process.env.GSD_DEBUG) process.stderr.write(`[gsd:debug] ${parts.join(' ')}\n`);
 }
 
 export async function handleToolCall(name, args) {
+  gsdDebug('dispatch', name);
   try {
+    // R-17: orchestrator responses no longer embed a `result_contract` field, so
+    // the former strip step is gone — agents get their result contracts from
+    // agents/*.md (single source of truth).
     const result = await dispatchToolCall(name, args);
-    return stripResultContract(result);
+    gsdDebug('result', name, result?.error ? `error:${result.code || result.message}` : 'ok');
+    return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    gsdDebug('throw', name, message);
     return { error: true, message: `Tool execution failed: ${message}` };
   }
 }
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const result = await handleToolCall(name, args);
+  // R-10 (audit M8): sanitize at the external JSON-RPC boundary — strip any
+  // undeclared key (notably `basePath`) so a remote caller cannot steer the
+  // server off process.cwd(). In-process callers of handleToolCall (tests,
+  // internal code) keep their trusted args untouched.
+  const result = await handleToolCall(name, sanitizeToolArgs(name, args || {}));
 
   return {
     content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],

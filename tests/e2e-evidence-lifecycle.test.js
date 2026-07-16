@@ -330,3 +330,50 @@ describe('E2E evidence lifecycle: archival across phase transitions', () => {
   });
 
 });
+
+describe('R-20: two-step-commit crash-recovery is idempotent (no dup, no loss)', () => {
+  let basePath;
+
+  before(async () => {
+    basePath = await createTempDir();
+    await initProject(basePath, {
+      phases: [
+        { name: 'P1', tasks: [{ index: 1, name: 'A', level: 'L0', requires: [] }] },
+        { name: 'P2', tasks: [{ index: 1, name: 'B', level: 'L0', requires: [{ kind: 'phase', id: 1, gate: 'accepted' }] }] },
+        { name: 'P3', tasks: [{ index: 1, name: 'C', level: 'L0', requires: [{ kind: 'phase', id: 2, gate: 'accepted' }] }] },
+        { name: 'P4', tasks: [{ index: 1, name: 'D', level: 'L0', requires: [{ kind: 'phase', id: 3, gate: 'accepted' }] }] },
+      ],
+    });
+
+    await acceptAndCountDone(basePath, 1, '1.1', 1);
+    await addEvidence({ id: 'ev:1.1', data: { scope: 'task:1.1', type: 'test', data: { p: 1 } }, basePath });
+    await completePhase(basePath, 1);
+
+    await acceptAndCountDone(basePath, 2, '2.1', 1);
+    await addEvidence({ id: 'ev:2.1', data: { scope: 'task:2.1', type: 'test', data: { p: 2 } }, basePath });
+    await completePhase(basePath, 2);
+    // Now current_phase=3; ev:1.1 and ev:2.1 archived, state pruned.
+
+    // Simulate a crash between the archive write and the state.json write: the
+    // archived ev:1.1 is still present in state.json (state never got pruned).
+    await update({ updates: { evidence: { 'ev:1.1': { id: 'ev:1.1', scope: 'task:1.1', type: 'test' } } }, basePath });
+
+    // Recovery continues: completing phase 3 re-runs the prune.
+    await acceptAndCountDone(basePath, 3, '3.1', 1);
+    await completePhase(basePath, 3);
+  });
+
+  after(async () => { await removeTempDir(basePath); });
+
+  it('re-archival reconciles the duplicate: archive keeps one entry, state drops it, nothing lost', async () => {
+    const state = await read({ basePath });
+    assert.equal(state.evidence['ev:1.1'], undefined, 're-injected ev:1.1 must be re-archived out of state');
+
+    const archive = await readJson(join(basePath, '.gsd', 'evidence-archive.json'));
+    assert.equal(archive.ok, true);
+    // Object.assign dedupes by id — exactly one ev:1.1, no corruption.
+    assert.ok(archive.data['ev:1.1'], 'ev:1.1 present in archive');
+    assert.equal(archive.data['ev:1.1'].scope, 'task:1.1');
+    assert.ok(archive.data['ev:2.1'], 'ev:2.1 must not be lost by the re-archival');
+  });
+});

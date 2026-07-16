@@ -72,6 +72,27 @@ describe('round2 — edge cases & error UX', () => {
     assert.match(r.message, /force.*true|already exists/i);
   });
 
+  it('strips an injected basePath so tools/call cannot write outside the server cwd (R-10)', async () => {
+    const serverCwd = await mkdtemp(join(tmpdir(), 'gsd-r10-cwd-'));
+    const injectDir = await mkdtemp(join(tmpdir(), 'gsd-r10-inject-'));
+    const m = await init(serverCwd);
+    const { access } = await import('node:fs/promises');
+    const exists = async (p) => { try { await access(p); return true; } catch { return false; } };
+    try {
+      await m.call('state-init', {
+        project: 'inj',
+        phases: [{ name: 'P1', tasks: [{ name: 't' }] }],
+        basePath: injectDir, // must be ignored — undeclared key stripped at the boundary
+      });
+      assert.equal(await exists(join(injectDir, '.gsd')), false, 'injected basePath must receive no .gsd/ write');
+      assert.equal(await exists(join(serverCwd, '.gsd', 'state.json')), true, 'state must land in the server cwd');
+    } finally {
+      await m.close();
+      await rm(serverCwd, { recursive: true, force: true });
+      await rm(injectDir, { recursive: true, force: true });
+    }
+  });
+
   it('state-init with empty phases array is rejected', async () => {
     const d2 = await mkdtemp(join(tmpdir(), 'gsd-r2b-'));
     const m2 = await init(d2);

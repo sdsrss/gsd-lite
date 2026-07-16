@@ -1,10 +1,21 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+// Force state.json into a shape that update()'s validation now rejects (R-02),
+// bypassing the write-path guard. Used to exercise resume.js's defensive
+// derivation of current_review for pre-R-02 / partially-written on-disk states —
+// a state production never writes but recovery must still tolerate.
+function corruptStateOnDisk(dir, mutate) {
+  const p = join(dir, '.gsd', 'state.json');
+  const state = JSON.parse(readFileSync(p, 'utf-8'));
+  mutate(state);
+  writeFileSync(p, `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
+}
 import { init, read, update } from '../src/tools/state/index.js';
 import {
   handleDebuggerResult,
@@ -411,12 +422,8 @@ describe('orchestrator skeleton', () => {
       updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc123' }] }] },
       basePath: tempDir,
     });
-    await update({
-      updates: {
-        workflow_mode: 'reviewing_phase',
-      },
-      basePath: tempDir,
-    });
+    // On-disk reviewing_phase without current_review — resume must derive it.
+    corruptStateOnDisk(tempDir, (s) => { s.workflow_mode = 'reviewing_phase'; s.current_review = null; });
 
     const result = await resumeWorkflow({ basePath: tempDir });
     assert.equal(result.success, true);
@@ -508,6 +515,47 @@ describe('orchestrator skeleton', () => {
     assert.equal(state.current_review, null);
     assert.equal(state.phases[0].todo[0].retry_count, 1);
     assert.equal(state.phases[0].todo[0].last_error_fingerprint, 'db-timeout');
+  });
+
+  it('persists evidence submitted in the documented {id, scope, type?} shape (R-04)', async () => {
+    await init({
+      project: 'evidence-shape',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        current_task: '1.1',
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }],
+      },
+      basePath: tempDir,
+    });
+
+    // Shape here matches exactly what the MCP tool description advertises.
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1',
+        outcome: 'checkpointed',
+        summary: 'implemented Task A',
+        checkpoint_commit: 'abc1234',
+        files_changed: ['src/a.js'],
+        decisions: [],
+        blockers: [],
+        contract_changed: false,
+        evidence: [
+          { id: 'ev:test:1.1', scope: 'task:1.1', type: 'test' },
+          { id: 'ev:lint:1.1', scope: 'task:1.1', type: 'lint' },
+        ],
+      },
+    });
+    assert.equal(result.success, true);
+
+    const state = await read({ basePath: tempDir });
+    assert.ok(state.evidence['ev:test:1.1'], 'test evidence must land in state.evidence, not be silently filtered');
+    assert.ok(state.evidence['ev:lint:1.1'], 'lint evidence must land in state.evidence');
+    assert.equal(state.evidence['ev:test:1.1'].scope, 'task:1.1');
+    assert.equal(state.evidence['ev:test:1.1'].type, 'test');
   });
 
   it('routes to debugger after repeated executor failures', async () => {
@@ -1139,14 +1187,9 @@ describe('orchestrator skeleton', () => {
       updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] },
       basePath: tempDir,
     });
-    await update({
-      updates: {
-        workflow_mode: 'reviewing_task',
-        current_task: '1.1',
-        current_review: null,
-      },
-      basePath: tempDir,
-    });
+    await update({ updates: { current_task: '1.1' }, basePath: tempDir });
+    // On-disk reviewing_task without current_review — resume derives from current_task.
+    corruptStateOnDisk(tempDir, (s) => { s.workflow_mode = 'reviewing_task'; s.current_review = null; });
 
     const result = await resumeWorkflow({ basePath: tempDir });
     assert.equal(result.success, true);
@@ -1160,13 +1203,12 @@ describe('orchestrator skeleton', () => {
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
-    await update({
-      updates: {
-        workflow_mode: 'reviewing_task',
-        current_task: null,
-        current_review: null,
-      },
-      basePath: tempDir,
+    // On-disk reviewing_task with neither current_review nor current_task —
+    // resume cannot derive a scope and must surface a structured error.
+    corruptStateOnDisk(tempDir, (s) => {
+      s.workflow_mode = 'reviewing_task';
+      s.current_task = null;
+      s.current_review = null;
     });
 
     const result = await resumeWorkflow({ basePath: tempDir });
@@ -1180,13 +1222,8 @@ describe('orchestrator skeleton', () => {
       phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
       basePath: tempDir,
     });
-    await update({
-      updates: {
-        workflow_mode: 'reviewing_phase',
-        current_review: null,
-      },
-      basePath: tempDir,
-    });
+    // On-disk reviewing_phase without current_review — resume derives + persists it.
+    corruptStateOnDisk(tempDir, (s) => { s.workflow_mode = 'reviewing_phase'; s.current_review = null; });
 
     const result = await resumeWorkflow({ basePath: tempDir });
     assert.equal(result.success, true);
@@ -2096,7 +2133,7 @@ describe('orchestrator skeleton', () => {
     await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: tempDir });
     await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: tempDir });
     await update({ updates: { phases: [{ id: 1, lifecycle: 'accepted' }] }, basePath: tempDir });
-    await update({ updates: { workflow_mode: 'reviewing_phase' }, basePath: tempDir });
+    await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: tempDir });
     await update({ updates: { workflow_mode: 'completed' }, basePath: tempDir });
 
     const result = await resumeWorkflow({ basePath: tempDir });
@@ -2449,5 +2486,339 @@ describe('orchestrator skeleton', () => {
     assert.equal(result.workflow_mode, 'reconcile_workspace');
     assert.ok(result.summary, 'preflight override response should include summary');
     assert.equal(result.summary.workflow_mode, 'reconcile_workspace');
+  });
+});
+describe('R-03: L3 human-confirmation gate', () => {
+  let tempDir;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-l3-gate-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  // Drive an L3 task to checkpointed and into task-scoped review.
+  async function setupL3Review(project) {
+    await init({
+      project,
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Secure task', level: 'L3' }] }],
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc123' }] }] },
+      basePath: tempDir,
+    });
+    await update({
+      updates: {
+        workflow_mode: 'reviewing_task',
+        current_task: '1.1',
+        current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' },
+      },
+      basePath: tempDir,
+    });
+  }
+
+  const passingL3Result = (extra = {}) => ({
+    scope: 'task',
+    scope_id: '1.1',
+    review_level: 'L3',
+    spec_passed: true,
+    quality_passed: true,
+    critical_issues: [],
+    important_issues: [],
+    minor_issues: [],
+    accepted_tasks: ['1.1'],
+    rework_tasks: [],
+    evidence: [],
+    requires_human_confirmation: true,
+    security_implications: ['touches auth token signing', 'writes to secrets store'],
+    ...extra,
+  });
+
+  it('holds an approved L3 task at awaiting_user instead of auto-accepting', async () => {
+    await setupL3Review('l3-hold');
+    const result = await handleReviewerResult({ basePath: tempDir, result: passingL3Result() });
+
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'awaiting_human_confirmation');
+    assert.equal(result.workflow_mode, 'awaiting_user');
+    assert.deepEqual(result.pending_tasks, ['1.1']);
+    assert.deepEqual(result.security_implications, ['touches auth token signing', 'writes to secrets store']);
+
+    const state = await read({ basePath: tempDir });
+    // Task must NOT be accepted — it is held for human sign-off.
+    assert.equal(state.phases[0].todo[0].lifecycle, 'checkpointed');
+    assert.equal(state.workflow_mode, 'awaiting_user');
+    assert.equal(state.current_review.stage, 'human_confirmation');
+    assert.deepEqual(state.current_review.security_implications, ['touches auth token signing', 'writes to secrets store']);
+  });
+
+  it('resume surfaces the pending confirmation with security implications', async () => {
+    await setupL3Review('l3-resume-surface');
+    await handleReviewerResult({ basePath: tempDir, result: passingL3Result() });
+
+    const resumed = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(resumed.action, 'awaiting_human_confirmation');
+    assert.deepEqual(resumed.pending_tasks, ['1.1']);
+    assert.deepEqual(resumed.security_implications, ['touches auth token signing', 'writes to secrets store']);
+  });
+
+  it('confirm accepts the held task and resumes execution', async () => {
+    await setupL3Review('l3-confirm');
+    await handleReviewerResult({ basePath: tempDir, result: passingL3Result() });
+
+    const confirmed = await resumeWorkflow({ basePath: tempDir, confirm_review: 'confirm' });
+    assert.equal(confirmed.success, true);
+
+    const state = await read({ basePath: tempDir });
+    // Task is accepted; workflow then advances naturally out of the hold
+    // (single-task phase → phase review). It must no longer be awaiting_user.
+    assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
+    assert.notEqual(state.workflow_mode, 'awaiting_user');
+    assert.notEqual(state.current_review?.stage, 'human_confirmation');
+  });
+
+  it('reject sends the held task back for rework', async () => {
+    await setupL3Review('l3-reject');
+    await handleReviewerResult({ basePath: tempDir, result: passingL3Result() });
+
+    const rejected = await resumeWorkflow({ basePath: tempDir, confirm_review: 'reject' });
+    assert.equal(rejected.success, true);
+
+    const state = await read({ basePath: tempDir });
+    // Rejected → not accepted; the task re-enters the execution pipeline
+    // (needs_revalidation, then re-dispatched to the executor → running).
+    assert.ok(['needs_revalidation', 'running'].includes(state.phases[0].todo[0].lifecycle),
+      `expected task back in rework, got ${state.phases[0].todo[0].lifecycle}`);
+    assert.notEqual(state.workflow_mode, 'awaiting_user');
+    assert.notEqual(state.current_review?.stage, 'human_confirmation');
+  });
+
+  it('does not gate an L3 task when requires_human_confirmation is absent', async () => {
+    await setupL3Review('l3-no-flag');
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: passingL3Result({ requires_human_confirmation: false, security_implications: [] }),
+    });
+    assert.equal(result.action, 'review_accepted');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
+  });
+
+  it('does not gate a non-L3 task even if requires_human_confirmation is set', async () => {
+    await init({
+      project: 'l3-only-gate',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Normal task', level: 'L2' }] }],
+      basePath: tempDir,
+    });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+    await update({
+      updates: { workflow_mode: 'reviewing_task', current_task: '1.1', current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' } },
+      basePath: tempDir,
+    });
+
+    const result = await handleReviewerResult({ basePath: tempDir, result: passingL3Result({ review_level: 'L2' }) });
+    assert.equal(result.action, 'review_accepted');
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
+  });
+
+  it('rework takes precedence over the human-confirmation hold', async () => {
+    await setupL3Review('l3-rework-precedence');
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: passingL3Result({
+        spec_passed: false,
+        accepted_tasks: [],
+        rework_tasks: ['1.1'],
+        critical_issues: [{ reason: 'missing authz check', task_id: '1.1' }],
+      }),
+    });
+    assert.equal(result.action, 'rework_required');
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation');
+  });
+});
+
+describe('R-07: reviewer accept/rework overlap resolution', () => {
+  let tempDir;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-r07-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  async function setupCheckpointedPhase(project, taskCount = 1) {
+    const tasks = Array.from({ length: taskCount }, (_, i) => ({ index: i + 1, name: `Task ${i + 1}` }));
+    await init({ project, phases: [{ name: 'Core', tasks }], basePath: tempDir });
+    for (const t of tasks) {
+      const id = `1.${t.index}`;
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'checkpointed', checkpoint_commit: `c${t.index}` }] }] }, basePath: tempDir });
+    }
+    await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: tempDir });
+  }
+
+  it('a task with a critical issue does not stay accepted even if also in accepted_tasks (R-07)', async () => {
+    await setupCheckpointedPhase('r07-critical-overlap');
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        spec_passed: true,
+        quality_passed: true,
+        critical_issues: [{ reason: 'unsafe deserialization', task_id: '1.1' }],
+        important_issues: [],
+        minor_issues: [],
+        accepted_tasks: ['1.1'],
+        rework_tasks: [],
+        evidence: [],
+      },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.action, 'rework_required');
+
+    const state = await read({ basePath: tempDir });
+    // Rework must win over the accept for the same task.
+    assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation');
+  });
+
+  it('rework wins when a task is both accepted and revalidated via the safety net (R-07)', async () => {
+    await setupCheckpointedPhase('r07-safetynet', 2);
+    // spec_passed:false triggers rework with no explicit rework_tasks → safety net
+    // marks all completed tasks; 1.1 is also in accepted_tasks.
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        spec_passed: false,
+        quality_passed: true,
+        critical_issues: [],
+        important_issues: [],
+        minor_issues: [],
+        accepted_tasks: ['1.1'],
+        rework_tasks: [],
+        evidence: [],
+      },
+    });
+    assert.equal(result.action, 'rework_required');
+    assert.equal(result.accepted_count, 0, 'no task should remain accepted when rework is required');
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation');
+  });
+
+  it('validation rejects a result listing the same task in accepted and rework (R-07)', async () => {
+    await setupCheckpointedPhase('r07-disjoint');
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        spec_passed: true,
+        quality_passed: true,
+        critical_issues: [],
+        important_issues: [],
+        minor_issues: [],
+        accepted_tasks: ['1.1'],
+        rework_tasks: ['1.1'],
+        evidence: [],
+      },
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /disjoint/);
+  });
+
+  it('a clean phase review still accepts all tasks (no false rework) (R-07 regression)', async () => {
+    await setupCheckpointedPhase('r07-clean', 2);
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase',
+        scope_id: 1,
+        review_level: 'L1-batch',
+        spec_passed: true,
+        quality_passed: true,
+        critical_issues: [],
+        important_issues: [],
+        minor_issues: [],
+        accepted_tasks: ['1.1', '1.2'],
+        rework_tasks: [],
+        evidence: [],
+      },
+    });
+    assert.equal(result.action, 'review_accepted');
+    assert.equal(result.accepted_count, 2);
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
+    assert.equal(state.phases[0].todo[1].lifecycle, 'accepted');
+  });
+});
+
+describe('R-22: result handlers reject tasks outside current_phase', () => {
+  let tempDir;
+  beforeEach(async () => { tempDir = await mkdtemp(join(tmpdir(), 'gsd-r22-')); });
+  afterEach(async () => { await rm(tempDir, { recursive: true, force: true }); });
+
+  it('rejects an executor result for a task in a non-current phase', async () => {
+    await init({
+      project: 'r22',
+      phases: [
+        { name: 'P1', tasks: [{ index: 1, name: 'A' }] },
+        { name: 'P2', tasks: [{ index: 1, name: 'B', requires: [{ kind: 'phase', id: 1 }] }] },
+      ],
+      basePath: tempDir,
+    });
+    // current_phase is 1; task 2.1 exists but is in phase 2.
+    const res = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '2.1', outcome: 'checkpointed', summary: 'x', checkpoint_commit: 'c',
+        files_changed: [], decisions: [], blockers: [], contract_changed: false, evidence: [],
+      },
+    });
+    assert.equal(res.error, true);
+    assert.match(res.message, /not the current phase/);
+
+    // Phase 2 task must be untouched.
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[1].todo[0].lifecycle, 'pending');
+  });
+
+  it('rejects a debugger result for a task in a non-current phase', async () => {
+    await init({
+      project: 'r22b',
+      phases: [
+        { name: 'P1', tasks: [{ index: 1, name: 'A' }] },
+        { name: 'P2', tasks: [{ index: 1, name: 'B', requires: [{ kind: 'phase', id: 1 }] }] },
+      ],
+      basePath: tempDir,
+    });
+    const res = await handleDebuggerResult({
+      basePath: tempDir,
+      result: {
+        task_id: '2.1', outcome: 'fix_suggested', root_cause: 'rc', evidence: [],
+        hypothesis_tested: [], fix_direction: 'do x', fix_attempts: 1, blockers: [], architecture_concern: false,
+      },
+    });
+    assert.equal(res.error, true);
+    assert.match(res.message, /not the current phase/);
   });
 });

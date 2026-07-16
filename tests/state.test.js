@@ -476,3 +476,55 @@ describe('phaseComplete — active phase auto-advance to accepted', () => {
     assert.equal(stateAfter.phases[0].lifecycle, 'accepted');
   });
 });
+
+describe('R-19: update() forces injected tasks/phases to initial lifecycle', () => {
+  it('a new task injected via update() is forced to pending, not accepted', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-r19-'));
+    try {
+      await init({ project: 'r19', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'A' }] }], basePath: dir });
+      const res = await update({
+        updates: { phases: [{ id: 1, todo: [{
+          id: '1.9', name: 'Injected', lifecycle: 'accepted', level: 'L1', requires: [],
+          retry_count: 0, review_required: true, verification_required: true,
+          checkpoint_commit: 'fake', research_basis: [], evidence_refs: [],
+        }] }] },
+        basePath: dir,
+      });
+      assert.equal(res.success, true);
+      const state = await read({ basePath: dir });
+      const injected = state.phases[0].todo.find(t => t.id === '1.9');
+      assert.ok(injected, 'injected task should exist');
+      assert.equal(injected.lifecycle, 'pending', 'injected task must be forced to pending, not the caller-supplied accepted');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a new phase injected via update() is forced to pending with pending tasks', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-r19b-'));
+    try {
+      await init({ project: 'r19b', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'A' }] }], basePath: dir });
+      const res = await update({
+        updates: {
+          total_phases: 2,
+          phases: [{
+            id: 2, name: 'P2', lifecycle: 'accepted',
+            phase_review: { status: 'accepted', retry_count: 0 },
+            phase_handoff: { required_reviews_passed: true, tests_passed: true, critical_issues_open: 0 },
+            tasks: 1, done: 0,
+            todo: [{ id: '2.1', name: 'B', lifecycle: 'accepted', level: 'L1', requires: [], retry_count: 0, review_required: true, verification_required: true, checkpoint_commit: null, research_basis: [], evidence_refs: [] }],
+          }],
+        },
+        basePath: dir,
+      });
+      assert.equal(res.success, true, `injection should succeed: ${JSON.stringify(res)}`);
+      const state = await read({ basePath: dir });
+      const p2 = state.phases.find(p => p.id === 2);
+      assert.ok(p2, 'phase 2 should exist');
+      assert.equal(p2.lifecycle, 'pending', 'injected phase must be forced to pending');
+      assert.equal(p2.todo[0].lifecycle, 'pending', 'injected phase task must be forced to pending');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

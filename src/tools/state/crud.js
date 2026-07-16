@@ -21,7 +21,7 @@ import {
   ensureLockPathFromStatePath,
   withStateLock,
 } from './constants.js';
-import { propagateInvalidation } from './logic.js';
+import { propagateInvalidation, propagateCrossPhaseInvalidation } from './logic.js';
 
 function friendlyReadError(rawError) {
   if (rawError?.includes('ENOENT')) {
@@ -295,19 +295,30 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
             const newTask = newPhase.todo.find(t => t.id === oldTask.id);
             return newTask ? { ...oldTask, ...newTask } : oldTask;
           });
-          // Add any new tasks not in old phase
+          // Add any new tasks not in old phase.
+          // R-19: update() is not a plan-authoring path — a task it injects must
+          // start at the initial 'pending' lifecycle so a caller cannot fabricate
+          // an already-accepted/checkpointed task that skips execution + review.
+          // Use patchPlan (add_task) for real plan changes.
           for (const newTask of newPhase.todo) {
             if (!oldPhase.todo.find(t => t.id === newTask.id)) {
-              mergedPhase.todo.push(newTask);
+              mergedPhase.todo.push({ ...newTask, lifecycle: 'pending' });
             }
           }
         }
         return mergedPhase;
       });
-      // Add any new phases not in old state
+      // Add any new phases not in old state — R-19: force initial 'pending'
+      // lifecycle on the phase and every task it carries.
       for (const newPhase of updates.phases) {
         if (!state.phases.find(p => p.id === newPhase.id)) {
-          merged.phases.push(newPhase);
+          merged.phases.push({
+            ...newPhase,
+            lifecycle: 'pending',
+            todo: Array.isArray(newPhase.todo)
+              ? newPhase.todo.map(t => ({ ...t, lifecycle: 'pending' }))
+              : newPhase.todo,
+          });
         }
       }
     }
@@ -324,12 +335,19 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
 
     // Atomic propagation: run invalidation inside the lock on freshly-merged state
     if (Array.isArray(_propagation_tasks) && _propagation_tasks.length > 0) {
+      const contractChangedPhases = new Set();
       for (const { phase_id, task_id, contract_changed } of _propagation_tasks) {
         if (!contract_changed) continue;
         const targetPhase = merged.phases.find(p => p.id === phase_id);
         if (targetPhase) {
           propagateInvalidation(targetPhase, task_id, true);
+          contractChangedPhases.add(phase_id);
         }
+      }
+      // R-12: a contract change also invalidates later phases that depend on the
+      // changed phase via a phase-kind dependency (cascades transitively).
+      for (const sourcePhaseId of contractChangedPhases) {
+        propagateCrossPhaseInvalidation(merged, sourcePhaseId);
       }
     }
 
@@ -377,6 +395,10 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     merged._version = (merged._version ?? 0) + 1;
 
     await writeJson(statePath, merged);
+    // R-25 (audit L13): GSD_DEBUG state-write trace (stderr only).
+    if (process.env.GSD_DEBUG) {
+      process.stderr.write(`[gsd:debug] state-write v${merged._version} keys=[${Object.keys(updates || {}).join(',')}]\n`);
+    }
     return { success: true, state: merged };
   }, statePath);
 }
@@ -671,6 +693,16 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
   const archivedCount = Object.keys(toArchive).length;
 
   if (archivedCount > 0) {
+    // R-20 (audit L3): two-step commit recovery semantics. The archive file is
+    // written FIRST, then `state.evidence = toKeep` (in-memory) and the caller
+    // persists state.json afterwards. This archive-first ordering has no
+    // data-loss window: a crash between the archive write and the state.json
+    // write leaves the archived entries in BOTH the archive and state.json.
+    // That transient duplication is safe and self-healing — `Object.assign`
+    // below dedupes by id, so the next prune re-archives the same entries
+    // idempotently (no duplicate keys, no loss). Decision: accept the duplication
+    // rather than add a crash sentinel; a sentinel would guard a state that is
+    // already benign and idempotently reconciled.
     const archivePath = join(gsdDir, 'evidence-archive.json');
     const existing = await readJson(archivePath);
     const archive = existing.ok ? existing.data : {};
@@ -820,6 +852,20 @@ function _applyPatchOp(state, op) {
 
       // Cannot add tasks to accepted phases
       if (phase.lifecycle === 'accepted') return { error: true, message: `Cannot add tasks to accepted phase ${phase_id}` };
+
+      // R-06 (audit M1): reject forward/self phase dependencies on the new task —
+      // a task may only depend on earlier phases (see createInitialState).
+      for (const dep of (task.requires || [])) {
+        if (dep && dep.kind === 'phase') {
+          const depPhaseId = Number(dep.id);
+          if (!Number.isFinite(depPhaseId) || !state.phases.some(p => p.id === depPhaseId)) {
+            return { error: true, message: `requires references non-existent phase "${dep.id}"` };
+          }
+          if (depPhaseId >= phase_id) {
+            return { error: true, message: `phase dependency {kind:"phase", id:${dep.id}} is a forward/self reference — a task in phase ${phase_id} may only depend on earlier phases (${phase_id > 1 ? `1-${phase_id - 1}` : 'none available'})` };
+          }
+        }
+      }
 
       // Compute next task index
       const existingIndices = phase.todo.map(t => {
@@ -978,6 +1024,12 @@ function _applyPatchOp(state, op) {
         const phaseId = Number(requires.id);
         if (!state.phases.some(p => p.id === phaseId)) {
           return { error: true, message: `Dependency target phase ${requires.id} not found` };
+        }
+        // R-06 (audit M1): forbid forward/self phase references — a task may only
+        // depend on earlier phases (owning phase = phase.id). Keeps the phase
+        // dependency graph a backward-only DAG (no cycles, no runtime deadlock).
+        if (phaseId >= phase.id) {
+          return { error: true, message: `Phase dependency ${requires.id} is a forward/self reference — task ${task_id} in phase ${phase.id} may only depend on earlier phases (${phase.id > 1 ? `1-${phase.id - 1}` : 'none available'})` };
         }
       }
 

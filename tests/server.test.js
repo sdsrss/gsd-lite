@@ -23,6 +23,39 @@ describe('server tool handling', () => {
     assert.match(result.message, /Unknown tool/);
   });
 
+  it('emits GSD_DEBUG dispatch diagnostics to stderr when enabled (R-25)', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const captured = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => { captured.push(String(chunk)); return origWrite(chunk, ...rest); };
+    const prev = process.env.GSD_DEBUG;
+    process.env.GSD_DEBUG = '1';
+    try {
+      await handleToolCall('health', {});
+    } finally {
+      process.stderr.write = origWrite;
+      if (prev === undefined) delete process.env.GSD_DEBUG; else process.env.GSD_DEBUG = prev;
+    }
+    assert.ok(captured.some(l => l.includes('[gsd:debug] dispatch health')), 'dispatch trace should be emitted');
+    assert.ok(captured.some(l => l.includes('[gsd:debug] result health')), 'result trace should be emitted');
+  });
+
+  it('emits no GSD_DEBUG output when disabled (R-25)', async () => {
+    const { handleToolCall } = await import('../src/server.js');
+    const captured = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => { captured.push(String(chunk)); return origWrite(chunk, ...rest); };
+    const prev = process.env.GSD_DEBUG;
+    delete process.env.GSD_DEBUG;
+    try {
+      await handleToolCall('health', {});
+    } finally {
+      process.stderr.write = origWrite;
+      if (prev !== undefined) process.env.GSD_DEBUG = prev;
+    }
+    assert.ok(!captured.some(l => l.includes('[gsd:debug]')), 'no debug output when GSD_DEBUG unset');
+  });
+
   it('returns clean validation errors when args are omitted (null/undefined)', async () => {
     const { handleToolCall } = await import('../src/server.js');
     // MCP clients may omit `arguments`; tools must not leak raw destructuring TypeErrors.

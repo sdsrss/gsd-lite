@@ -1472,6 +1472,46 @@ describe('createInitialState — requires validation', () => {
     assert.equal(result.project, 'test');
   });
 
+  it('rejects a forward phase dependency (R-06)', () => {
+    // Phase 1 task depends on the later phase 2 — deadlocks (phases run in order).
+    const result = createInitialState({
+      project: 'test',
+      phases: [
+        { name: 'P1', tasks: [{ name: 'A', requires: [{ kind: 'phase', id: 2 }] }] },
+        { name: 'P2', tasks: [{ name: 'B' }] },
+      ],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /forward\/self reference/);
+    assert.match(result.message, /phase 1/);
+  });
+
+  it('rejects a self phase dependency (R-06)', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [
+        { name: 'P1', tasks: [{ name: 'A' }] },
+        { name: 'P2', tasks: [{ name: 'B', requires: [{ kind: 'phase', id: 2 }] }] },
+      ],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /forward\/self reference/);
+  });
+
+  it('rejects two mutually-dependent phases (R-06 cycle via forward ref)', () => {
+    // phase 1 → phase 2 and phase 2 → phase 1 would form a phase-graph cycle;
+    // the forward edge (phase 1 → phase 2) is rejected at plan build time.
+    const result = createInitialState({
+      project: 'test',
+      phases: [
+        { name: 'P1', tasks: [{ name: 'A', requires: [{ kind: 'phase', id: 2 }] }] },
+        { name: 'P2', tasks: [{ name: 'B', requires: [{ kind: 'phase', id: 1 }] }] },
+      ],
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /forward\/self reference/);
+  });
+
   it('rejects non-positive-integer task index (malformed IDs)', () => {
     for (const index of [0, -1, 1.5, 'x']) {
       const result = createInitialState({

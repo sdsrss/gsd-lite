@@ -1,8 +1,8 @@
 // Automation/business logic functions
 
 import { dirname, join } from 'node:path';
-import { writeFile, rename, unlink } from 'node:fs/promises';
-import { ensureDir, readJson, writeJson, getStatePath } from '../../utils.js';
+import { writeFile, rename, unlink, open } from 'node:fs/promises';
+import { ensureDir, readJson, writeJson, getStatePath, fsyncDir } from '../../utils.js';
 import {
   TASK_LIFECYCLE,
   migrateState,
@@ -172,6 +172,61 @@ export function propagateInvalidation(phase, reworkTaskId, contractChanged) {
     if (affected.has(task.id) && canInvalidate.has(task.lifecycle)) {
       task.lifecycle = 'needs_revalidation';
       task.evidence_refs = [];
+    }
+  }
+}
+
+/**
+ * R-12 (audit M2): propagate a contract-change invalidation ACROSS phases.
+ * When a phase's contract changes, later phases that depend on it via a
+ * phase-kind dependency have their already-completed (accepted/checkpointed)
+ * dependent tasks marked needs_revalidation. An invalidated phase becomes a new
+ * source so the effect cascades transitively; the invalidated phase is rolled
+ * back from accepted/reviewing to active for re-review.
+ *
+ * Terminates because forward/self phase refs are rejected at plan time (R-06),
+ * so phase dependencies form a backward-only DAG — each cascade step strictly
+ * increases the source phase id.
+ *
+ * @param {object} state - full merged state (mutated in place)
+ * @param {number} sourcePhaseId - id of the phase whose contract changed
+ */
+export function propagateCrossPhaseInvalidation(state, sourcePhaseId) {
+  if (!Array.isArray(state.phases)) return;
+  const canInvalidate = new Set(
+    Object.entries(TASK_LIFECYCLE)
+      .filter(([, targets]) => targets.includes('needs_revalidation'))
+      .map(([s]) => s),
+  );
+
+  const processed = new Set();
+  const queue = [sourcePhaseId];
+  while (queue.length > 0) {
+    const src = queue.shift();
+    if (processed.has(src)) continue;
+    processed.add(src);
+
+    for (const phase of state.phases) {
+      if (phase.id <= src) continue; // deps point backward — dependents have higher id
+      let invalidatedAny = false;
+      for (const task of (phase.todo || [])) {
+        const dependsOnSrc = (task.requires || []).some(
+          dep => dep.kind === 'phase' && Number(dep.id) === src,
+        );
+        if (dependsOnSrc && canInvalidate.has(task.lifecycle)) {
+          task.lifecycle = 'needs_revalidation';
+          task.evidence_refs = [];
+          invalidatedAny = true;
+        }
+      }
+      if (invalidatedAny) {
+        if (phase.lifecycle === 'accepted' || phase.lifecycle === 'reviewing') {
+          phase.lifecycle = 'active';
+          phase.phase_review = { status: 'pending', retry_count: 0 };
+          if (phase.phase_handoff) phase.phase_handoff.required_reviews_passed = false;
+        }
+        queue.push(phase.id); // this phase is now incomplete → cascade to its dependents
+      }
     }
   }
 }
@@ -465,12 +520,21 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
         const finalPath = join(researchDir, fileName);
         const tmpFile = finalPath + tmpSuffix;
         tmpPaths.push({ tmp: tmpFile, final: finalPath });
-        await writeFile(tmpFile, normalizedArtifacts[fileName], 'utf-8');
+        // R-13 (audit M5): fsync each artifact's data before renaming it in.
+        const fh = await open(tmpFile, 'w');
+        try {
+          await fh.writeFile(normalizedArtifacts[fileName], 'utf-8');
+          await fh.sync();
+        } finally {
+          await fh.close();
+        }
       }
-      // All writes succeeded — rename in batch
+      // All writes succeeded + fsync'd — rename in batch, then fsync the dir so
+      // the renames themselves survive a power loss.
       for (const { tmp, final: finalPath } of tmpPaths) {
         await rename(tmp, finalPath);
       }
+      await fsyncDir(researchDir);
     } catch (err) {
       // Cleanup any temp files on failure
       for (const { tmp } of tmpPaths) {

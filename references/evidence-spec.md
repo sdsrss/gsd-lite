@@ -163,4 +163,4 @@ _pruneEvidenceFromState()
 - 更新时机: executor checkpointed / blocked / failed 时从 result.evidence 覆写
 - 清空时机: `propagateInvalidation()` 或 reviewer 标记 rework 时清空为 `[]`
 
-来源: `addEvidence()`, `_pruneEvidenceFromState()`, `pruneEvidence()`, `phaseComplete()` in `src/tools/state/`; `handleExecutorResult()`, `handleReviewerResult()` in `src/tools/orchestrator.js`
+来源: `addEvidence()`, `_pruneEvidenceFromState()`, `pruneEvidence()`, `phaseComplete()` in `src/tools/state/`; `handleExecutorResult()` in `src/tools/orchestrator/executor.js`, `handleReviewerResult()` in `src/tools/orchestrator/reviewer.js`

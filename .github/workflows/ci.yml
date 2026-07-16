@@ -45,4 +45,10 @@ jobs:
           fi
 
       - name: Security audit
-        run: npm audit --omit=dev
+        # R-16: gate on high+ only so unrelated low/moderate advisories don't block
+        # unrelated hotfixes. The transitive `hono` advisories (serve-static path
+        # traversal, CORS, AWS Lambda / Lambda@Edge adapters, body-limit) target
+        # HTTP-server / serverless features that a stdio-only MCP server never
+        # invokes — they are unreachable here. `overrides.hono` still pins hono to a
+        # patched version, so this currently reports 0 vulnerabilities.
+        run: npm audit --omit=dev --audit-level=high

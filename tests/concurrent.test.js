@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile, writeFile as fsWriteFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, update, read, setLockPath } from '../src/tools/state/index.js';
-import { withFileLock } from '../src/utils.js';
+import { withFileLock, LOCK_STALE_MS, LOCK_RETRY_MS, LOCK_MAX_RETRIES } from '../src/utils.js';
 
 describe('concurrent state operations (P2-11)', () => {
   let tempDir;
@@ -223,15 +223,77 @@ try {
     const lockPath = join(tempDir, 'exhaust-test.lock');
     await fsWriteFile(lockPath, '99999', { flag: 'w' });
 
-    // withFileLock should throw after retries exhaust (lock is fresh, not stale)
+    // withFileLock should throw after retries exhaust (lock is fresh, not stale).
+    // Use a small injected budget so the test stays fast; default budget is 12s.
     await assert.rejects(
-      () => withFileLock(lockPath, async () => 'should not reach'),
+      () => withFileLock(lockPath, async () => 'should not reach', { staleMs: 60_000, retryMs: 5, maxRetries: 10 }),
       (err) => {
         assert.ok(err instanceof Error);
         assert.match(err.message, /Lock acquisition timeout/);
         return true;
       },
     );
+  });
+
+  it('release only removes the lock when its token still matches (R-01 anti-steal)', async () => {
+    const lockPath = join(tempDir, 'token-release.lock');
+    await withFileLock(lockPath, async () => {
+      // Simulate another process stealing + re-acquiring the lock mid-operation.
+      await fsWriteFile(lockPath, 'someone-elses-token', { flag: 'w' });
+    });
+    // Our release must NOT delete the other holder's lock — token mismatch.
+    const content = await readFile(lockPath, 'utf-8');
+    assert.equal(content, 'someone-elses-token', 'foreign lock must survive our release');
+  });
+
+  it('stale-break leaves a re-acquired lock intact (R-01 compare-and-delete)', async () => {
+    const lockPath = join(tempDir, 'stale-reacquire.lock');
+    // A genuinely stale lock (old mtime).
+    await fsWriteFile(lockPath, 'old-holder', { flag: 'w' });
+    const { utimes } = await import('node:fs/promises');
+    const past = new Date(Date.now() - 15000);
+    await utimes(lockPath, past, past);
+
+    // Fresh acquirer succeeds by breaking the stale lock, then holds it while a
+    // second waiter runs. The waiter must not delete the fresh holder's lock.
+    let waiterEntered = false;
+    const holder = withFileLock(lockPath, async () => {
+      await new Promise(r => setTimeout(r, 300));
+      return 'held';
+    }, { staleMs: 10_000, retryMs: 20, maxRetries: 200 });
+    await new Promise(r => setTimeout(r, 50));
+    const waiter = withFileLock(lockPath, async () => {
+      waiterEntered = true;
+      return 'waited';
+    }, { staleMs: 10_000, retryMs: 20, maxRetries: 200 });
+
+    assert.equal(await holder, 'held');
+    assert.equal(await waiter, 'waited');
+    assert.equal(waiterEntered, true);
+  });
+
+  it('default retry budget covers the stale threshold (R-09)', () => {
+    // A waiter must be able to wait out the entire window before a held lock
+    // ages into staleness — otherwise it falsely times out on legitimate holds.
+    assert.ok(
+      LOCK_MAX_RETRIES * LOCK_RETRY_MS >= LOCK_STALE_MS,
+      `retry budget ${LOCK_MAX_RETRIES * LOCK_RETRY_MS}ms must be >= stale threshold ${LOCK_STALE_MS}ms`,
+    );
+  });
+
+  it('waiter survives a legitimate hold longer than a too-small budget (R-09)', async () => {
+    const lockPath = join(tempDir, 'budget.lock');
+    // Holder keeps the lock ~600ms with a 2s stale threshold (lock never goes
+    // stale). Waiter uses a budget (1.2s) >= stale — it must wait, not time out.
+    const holder = withFileLock(lockPath, async () => {
+      await new Promise(r => setTimeout(r, 600));
+      return 'holder-done';
+    }, { staleMs: 2000, retryMs: 20, maxRetries: 100 });
+    await new Promise(r => setTimeout(r, 50));
+    const waiter = withFileLock(lockPath, async () => 'waiter-done',
+      { staleMs: 2000, retryMs: 20, maxRetries: 60 });
+    assert.equal(await holder, 'holder-done');
+    assert.equal(await waiter, 'waiter-done');
   });
 
   it('file lock prevents stale lock from blocking operations', async () => {

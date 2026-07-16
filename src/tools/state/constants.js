@@ -18,7 +18,22 @@ export const ERROR_CODES = {
   TRANSITION_ERROR: 'TRANSITION_ERROR',
   HANDOFF_GATE: 'HANDOFF_GATE',
   VERSION_CONFLICT: 'VERSION_CONFLICT',
+  WRITE_FAILED: 'WRITE_FAILED',
 };
+
+// R-14 (audit M6): filesystem failures that should surface as a structured
+// WRITE_FAILED result instead of an uncaught promise rejection to the caller.
+const FS_WRITE_ERROR_CODES = new Set([
+  'ENOSPC', // no space left
+  'EACCES', // permission denied
+  'EROFS',  // read-only filesystem
+  'EPERM',  // operation not permitted
+  'EDQUOT', // disk quota exceeded
+  'EIO',    // I/O error
+  'EBUSY',  // resource busy
+  'EMFILE', // too many open files (process)
+  'ENFILE', // too many open files (system)
+]);
 
 // C-1: Serialize all state mutations to prevent TOCTOU races
 // C-2: Layer cross-process advisory file lock on top of in-process queue
@@ -51,12 +66,20 @@ export function withStateLock(fn, statePath) {
   const lockPath = _fileLockPaths.get(statePath) ?? _fileLockPaths.get(null);
   const queueKey = statePath ?? null;
   const prev = _mutationQueues.get(queueKey) ?? Promise.resolve();
-  const p = prev.then(() => {
-    if (lockPath) {
-      return withFileLock(lockPath, fn);
-    }
+  const runFn = async () => {
+    if (lockPath) return withFileLock(lockPath, fn);
     process.stderr.write('[gsd] WARNING: withStateLock called without lock path — cross-process safety not guaranteed\n');
     return fn();
+  };
+  // R-14 (audit M6): map filesystem write failures to a structured WRITE_FAILED
+  // result so a full disk / read-only fs / permission error reaches the caller as
+  // { error: true, code: 'WRITE_FAILED' } instead of an uncaught rejection.
+  // Non-fs errors (logic bugs) still propagate so they aren't silently masked.
+  const p = prev.then(runFn).catch((err) => {
+    if (err && FS_WRITE_ERROR_CODES.has(err.code)) {
+      return { error: true, code: ERROR_CODES.WRITE_FAILED, message: `State write failed (${err.code}): ${err.message}` };
+    }
+    throw err;
   });
   _mutationQueues.set(queueKey, p.catch(() => {}));
   return p;

@@ -1,10 +1,11 @@
 // tests/error-codes.test.js — M-10: Structured error codes
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ERROR_CODES, init, read, update, addEvidence, phaseComplete, pruneEvidence } from '../src/tools/state/index.js';
+import { withStateLock, setLockPath } from '../src/tools/state/constants.js';
 
 describe('M-10: structured error codes', () => {
   let tempDir;
@@ -23,6 +24,49 @@ describe('M-10: structured error codes', () => {
     assert.equal(typeof ERROR_CODES.TERMINAL_STATE, 'string');
     assert.equal(typeof ERROR_CODES.TRANSITION_ERROR, 'string');
     assert.equal(typeof ERROR_CODES.HANDOFF_GATE, 'string');
+    assert.equal(typeof ERROR_CODES.WRITE_FAILED, 'string');
+  });
+
+  it('withStateLock maps an injected fs write error to WRITE_FAILED (R-14)', async () => {
+    setLockPath(join(tempDir, '.state.lock'));
+    try {
+      const res = await withStateLock(async () => {
+        const e = new Error('no space left on device');
+        e.code = 'ENOSPC';
+        throw e;
+      });
+      assert.equal(res.error, true);
+      assert.equal(res.code, ERROR_CODES.WRITE_FAILED);
+      assert.match(res.message, /ENOSPC/);
+    } finally {
+      setLockPath(null);
+    }
+  });
+
+  it('withStateLock propagates non-fs errors instead of masking them (R-14)', async () => {
+    setLockPath(join(tempDir, '.state.lock'));
+    try {
+      await assert.rejects(
+        () => withStateLock(async () => { throw new Error('logic bug — must not be masked'); }),
+        /logic bug/,
+      );
+    } finally {
+      setLockPath(null);
+    }
+  });
+
+  it('update returns WRITE_FAILED when the state dir is not writable (R-14)', async () => {
+    if (process.getuid && process.getuid() === 0) return; // root bypasses dir perms
+    await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }], basePath: tempDir });
+    const gsdDir = join(tempDir, '.gsd');
+    await chmod(gsdDir, 0o555);
+    try {
+      const result = await update({ updates: { git_head: 'deadbeef' }, basePath: tempDir });
+      assert.equal(result.error, true);
+      assert.equal(result.code, ERROR_CODES.WRITE_FAILED);
+    } finally {
+      await chmod(gsdDir, 0o755);
+    }
   });
 
   it('init returns INVALID_INPUT for bad project', async () => {

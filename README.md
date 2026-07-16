@@ -291,7 +291,7 @@ gsd-lite/
 │   ├── gsd-session-stop.cjs   # Graceful shutdown with crash markers
 │   ├── gsd-statusline.cjs     # StatusLine display (composite-aware)
 │   └── lib/                   # Shared hook utilities (gsd-finder, composite statusline, semver)
-├── tests/                  # 972 tests (unit + simulation + E2E integration)
+├── tests/                  # 1041 tests (unit + simulation + E2E integration)
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script (plugin-aware, idempotent)
 └── uninstall.js            # Uninstall script
@@ -300,11 +300,18 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 972 tests
-npm run test:coverage       # Tests + coverage report (94%+ lines, 83%+ branches)
+npm test                    # Run all 1041 tests
+npm run test:coverage       # Tests + coverage report (whole-package ~91% lines / ~82% branches; c8 gate: 80% lines / 75% branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file
 ```
+
+## Environment variables
+
+| Variable | Effect |
+|----------|--------|
+| `GSD_NO_CLAUDEMD_STATUS=1` | Opt out of the SessionStart hook injecting a `<!-- GSD-STATUS-BEGIN -->…<!-- GSD-STATUS-END -->` progress block into the project's `CLAUDE.md`. The block is idempotent (marker-delimited replace); set this if you'd rather GSD not touch `CLAUDE.md`. |
+| `GSD_DEBUG=1` | Emit diagnostic output to stderr from hooks and the MCP server (tool dispatch + state read/write), for troubleshooting. |
 
 ## Documentation
 

@@ -82,6 +82,15 @@ describe('validateStateUpdate', () => {
       assert.equal(result.valid, false);
       assert.ok(result.errors.some(e => e.includes('current_phase must be a finite number')));
     });
+
+    it('rejects current_phase below 1 (R-19)', () => {
+      const state = baseState();
+      for (const bad of [0, -1]) {
+        const result = validateStateUpdate(state, { current_phase: bad });
+        assert.equal(result.valid, false, `current_phase ${bad} should be rejected`);
+        assert.ok(result.errors.some(e => e.includes('current_phase must be >= 1')));
+      }
+    });
   });
 
   describe('current_task validation', () => {
@@ -367,6 +376,68 @@ describe('validateStateUpdate', () => {
       state.total_phases = 0;
       const result = validateStateUpdate(state, { current_phase: 1 });
       assert.equal(result.valid, true);
+    });
+  });
+
+  describe('R-02: reviewing-mode / scope_id cross-invariants (fast path parity)', () => {
+    it('rejects workflow_mode reviewing_task when current_review is null', () => {
+      const state = baseState();
+      state.workflow_mode = 'executing_task';
+      const result = validateStateUpdate(state, { workflow_mode: 'reviewing_task' });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('requires current_review with scope="task"')));
+    });
+
+    it('rejects clearing current_review to null while in reviewing mode', () => {
+      const state = baseState();
+      state.workflow_mode = 'reviewing_task';
+      state.current_review = { scope: 'task', scope_id: '1.1' };
+      const result = validateStateUpdate(state, { current_review: null });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('requires current_review with scope="task"')));
+    });
+
+    it('rejects current_review.scope_id referencing a non-existent phase', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { current_review: { scope: 'phase', scope_id: 99 } });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('references non-existent phase')));
+    });
+
+    it('rejects current_review.scope_id referencing a non-existent task', () => {
+      const state = baseState();
+      const result = validateStateUpdate(state, { current_review: { scope: 'task', scope_id: '1.9' } });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('references non-existent task')));
+    });
+
+    it('accepts a consistent reviewing_task + current_review update together', () => {
+      const state = baseState();
+      state.workflow_mode = 'executing_task';
+      const result = validateStateUpdate(state, {
+        workflow_mode: 'reviewing_task',
+        current_review: { scope: 'task', scope_id: '1.1' },
+      });
+      assert.equal(result.valid, true);
+    });
+
+    it('fast path and full path agree on the reviewing_task/null-review case', () => {
+      const state = baseState();
+      state.workflow_mode = 'executing_task';
+      const updates = { workflow_mode: 'reviewing_task' };
+      const fast = validateStateUpdate(state, updates);
+      const full = validateState({ ...state, ...updates });
+      assert.equal(fast.valid, false);
+      assert.equal(full.valid, false);
+    });
+
+    it('fast path and full path agree on the bad scope_id case', () => {
+      const state = baseState();
+      const updates = { current_review: { scope: 'phase', scope_id: 99 } };
+      const fast = validateStateUpdate(state, updates);
+      const full = validateState({ ...state, ...updates });
+      assert.equal(fast.valid, false);
+      assert.equal(full.valid, false);
     });
   });
 

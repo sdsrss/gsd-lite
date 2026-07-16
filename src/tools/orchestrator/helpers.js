@@ -14,56 +14,11 @@ const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
 const MAX_PHASE_REVIEW_RETRY = 5;
 
-// ── Result Contracts ──
-// Provided in dispatch responses so agents produce valid results on the first call.
-const RESULT_CONTRACTS = {
-  executor: {
-    task_id: 'string — must match dispatched task_id',
-    outcome: '"checkpointed" | "blocked" | "failed"',
-    summary: 'string — non-empty description of work done',
-    checkpoint_commit: 'string — required when outcome="checkpointed"',
-    files_changed: 'string[] — list of modified file paths',
-    decisions: '{ id, summary|title, rationale }[] — architectural decisions (summary is canonical; title accepted as alias)',
-    blockers: '{ description, type }[] — what blocked progress (when outcome="blocked")',
-    contract_changed: 'boolean — true if external API/behavior contract changed',
-    confidence: '"high" | "medium" | "low" (optional) — executor self-assessed confidence; affects review level',
-    evidence: '{ type, detail }[] — verification evidence (test results, lint, etc.)',
-  },
-  reviewer: {
-    scope: '"task" | "phase"',
-    scope_id: 'string | number — task id (e.g. "1.2") or phase number',
-    review_level: '"L3" | "L2" | "L1-batch" | "L1"',
-    spec_passed: 'boolean',
-    quality_passed: 'boolean',
-    critical_issues: '{ reason|description, task_id?, invalidates_downstream? }[] — blocking issues',
-    important_issues: '{ description, task_id? }[]',
-    minor_issues: '{ description, task_id? }[]',
-    accepted_tasks: 'string[] — task ids that passed review',
-    rework_tasks: 'string[] — task ids that need rework (disjoint with accepted_tasks)',
-    evidence: '{ type, detail }[]',
-  },
-  researcher: {
-    result: {
-      decision_ids: 'string[] — ids of decisions addressed',
-      volatility: '"low" | "medium" | "high"',
-      expires_at: 'string — ISO date when research expires',
-      sources: '{ id, type, ref, title?, accessed_at? }[] — research sources',
-    },
-    decision_index: '{ [id]: { id, title, rationale, status, summary } } — keyed by decision id',
-    artifacts: '{ "STACK.md", "ARCHITECTURE.md", "PITFALLS.md", "SUMMARY.md" } — all four required',
-  },
-  debugger: {
-    task_id: 'string — must match debug target',
-    outcome: '"root_cause_found" | "fix_suggested" | "failed"',
-    root_cause: 'string — non-empty root cause description',
-    evidence: '{ type, detail }[]',
-    hypothesis_tested: '{ hypothesis, result: "confirmed"|"rejected", evidence }[]',
-    fix_direction: 'string — recommended fix approach',
-    fix_attempts: 'number — non-negative integer (>=3 requires outcome="failed")',
-    blockers: '{ description, type }[]',
-    architecture_concern: 'boolean',
-  },
-};
+// R-17: the former RESULT_CONTRACTS reference block was embedded in dispatch
+// responses as `result_contract` and then unconditionally stripped by the server
+// before reaching the agent (dead + drift-prone). The authoritative agent result
+// contracts live in agents/*.md (executor/reviewer/researcher/debugger); this
+// duplicate was removed so there is a single source of truth.
 
 function isTerminalWorkflowMode(workflowMode) {
   return workflowMode === 'completed' || workflowMode === 'failed';
@@ -403,7 +358,6 @@ function buildExecutorDispatch(state, phase, task, extras = {}) {
     phase_id: phase.id,
     task_id: task.id,
     executor_context: context,
-    result_contract: RESULT_CONTRACTS.executor,
     ...extras,
   };
 }
@@ -455,7 +409,6 @@ export {
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
   MAX_PHASE_REVIEW_RETRY,
-  RESULT_CONTRACTS,
   isTerminalWorkflowMode,
   parseTimestamp,
   readContextHealth,

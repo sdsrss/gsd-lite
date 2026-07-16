@@ -60,15 +60,24 @@ process.stdin.on('end', () => {
             if (existing.remaining_percentage === remaining && existing.has_gsd === hasGsd) needsWrite = false;
           } catch { /* no existing file */ }
           if (needsWrite) {
-            const tmpBridge = bridgePath + '.tmp';
-            fs.writeFileSync(tmpBridge, JSON.stringify({
-              session_id: session,
-              remaining_percentage: remaining,
-              used_pct: used,
-              has_gsd: hasGsd,
-              timestamp: Math.floor(Date.now() / 1000),
-            }));
-            fs.renameSync(tmpBridge, bridgePath);
+            // R-23: unique tmp name (pid+timestamp) so concurrent statusline
+            // processes don't race on a shared `.tmp` and corrupt the bridge —
+            // matches the atomic-write naming used across the codebase (utils.js).
+            const tmpBridge = `${bridgePath}.${process.pid}-${Date.now()}.tmp`;
+            try {
+              fs.writeFileSync(tmpBridge, JSON.stringify({
+                session_id: session,
+                remaining_percentage: remaining,
+                used_pct: used,
+                has_gsd: hasGsd,
+                timestamp: Math.floor(Date.now() / 1000),
+              }));
+              fs.renameSync(tmpBridge, bridgePath);
+            } catch (writeErr) {
+              // Unique tmp names don't self-overwrite, so clean up on failure.
+              try { fs.unlinkSync(tmpBridge); } catch { /* ignore */ }
+              throw writeErr;
+            }
           }
         } catch (e) {
           if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: bridge write failed: ${e.message}\n`);

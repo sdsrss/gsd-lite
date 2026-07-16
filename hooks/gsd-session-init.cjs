@@ -340,33 +340,40 @@ setTimeout(() => process.exit(0), 4000).unref();
           END_MARKER,
         ].filter(Boolean).join('\n');
 
-        try {
-          let content = '';
+        // R-24 (audit L12): the SessionStart hook injects a
+        // <!-- GSD-STATUS-BEGIN -->…<!-- GSD-STATUS-END --> block into the
+        // project's CLAUDE.md so the model sees live progress. This modifies a
+        // user-owned file; set GSD_NO_CLAUDEMD_STATUS=1 to opt out (documented in
+        // README). The block is idempotent (marker-delimited replace).
+        if (!process.env.GSD_NO_CLAUDEMD_STATUS) {
           try {
-            content = fs.readFileSync(claudeMdPath, 'utf8');
-          } catch { /* file doesn't exist yet — will create */ }
+            let content = '';
+            try {
+              content = fs.readFileSync(claudeMdPath, 'utf8');
+            } catch { /* file doesn't exist yet — will create */ }
 
-          const beginIdx = content.indexOf(BEGIN_MARKER);
-          const endIdx = content.indexOf(END_MARKER);
+            const beginIdx = content.indexOf(BEGIN_MARKER);
+            const endIdx = content.indexOf(END_MARKER);
 
-          let newContent;
-          if (beginIdx !== -1 && endIdx !== -1) {
-            // Replace existing block
-            newContent = content.substring(0, beginIdx) + statusBlock + content.substring(endIdx + END_MARKER.length);
-          } else {
-            // Append to end (with blank line separator)
-            const separator = content.length > 0 && !content.endsWith('\n\n') ? (content.endsWith('\n') ? '\n' : '\n\n') : '';
-            newContent = content + separator + statusBlock + '\n';
+            let newContent;
+            if (beginIdx !== -1 && endIdx !== -1) {
+              // Replace existing block
+              newContent = content.substring(0, beginIdx) + statusBlock + content.substring(endIdx + END_MARKER.length);
+            } else {
+              // Append to end (with blank line separator)
+              const separator = content.length > 0 && !content.endsWith('\n\n') ? (content.endsWith('\n') ? '\n' : '\n\n') : '';
+              newContent = content + separator + statusBlock + '\n';
+            }
+
+            // Only write if content changed
+            if (newContent !== content) {
+              const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;
+              fs.writeFileSync(tmpClaude, newContent);
+              fs.renameSync(tmpClaude, claudeMdPath);
+            }
+          } catch (e) {
+            if (process.env.GSD_DEBUG) process.stderr.write(`gsd-session-init: CLAUDE.md write failed: ${e.message}\n`);
           }
-
-          // Only write if content changed
-          if (newContent !== content) {
-            const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;
-            fs.writeFileSync(tmpClaude, newContent);
-            fs.renameSync(tmpClaude, claudeMdPath);
-          }
-        } catch (e) {
-          if (process.env.GSD_DEBUG) process.stderr.write(`gsd-session-init: CLAUDE.md write failed: ${e.message}\n`);
         }
       }
     } else {

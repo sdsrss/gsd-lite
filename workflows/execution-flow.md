@@ -43,6 +43,7 @@
   - **L0** — 无运行时语义变化 (docs/config/style)
   - **L1** — 普通编码任务 (默认)
   - **L2** — 高风险 (auth/payment/public API/DB migration/核心架构)
+  - **L3** — 最高风险 (安全敏感 / 破坏性 schema / 架构决策)。审查通过后**不自动 accepted**,而是进入 `awaiting_user` 人工确认门:reviewer 返回 `requires_human_confirmation: true` + `security_implications`,编排器持锁展示安全影响,用户显式确认 (`orchestrator-resume confirm_review: confirm`) 才 accepted;拒绝 (`reject`) 则返工。
 - 标注可并行任务组 `[PARALLEL]` (当前仅作未来升级标记)
 
 ## STEP 8 — 计划自审
@@ -157,6 +158,7 @@
 | `review_retry_exhausted` | phase 审查返工次数超限。向用户展示问题，等待用户干预 |
 | `research_stored` | researcher 结果已存储。继续循环 |
 | `awaiting_user` | task 被阻塞或方向漂移，需要用户输入。展示 blockers 列表，等待用户解除 |
+| `awaiting_human_confirmation` | L3 任务审查通过但需人工确认。展示 `security_implications` + `pending_tasks`，等待用户决定;确认 → `orchestrator-resume confirm_review:'confirm'`(accepted),拒绝 → `confirm_review:'reject'`(返工) |
 | `await_manual_intervention` | 上下文不足 / 项目暂停 / 计划阶段。根据场景执行: awaiting_clear 时执行 /clear + /resume; paused 时确认恢复; planning 时完成计划并 state-init |
 | `noop` | 工作流已完成 (completed 状态)，无需操作。展示完成信息和 PR 建议 |
 | `idle` | 当前 phase 无可运行 task。检查 task 状态和依赖关系，必要时向用户报告 |

@@ -5,7 +5,6 @@ import { unlink } from 'node:fs/promises';
 import {
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
-  RESULT_CONTRACTS,
   evaluatePreflight,
   readContextHealth,
   collectExpiredResearch,
@@ -107,7 +106,6 @@ async function resumeExecutingTask(state, basePath) {
       phase_id: phase.id,
       current_review: state.current_review,
       debug_target: getDebugTarget(phase, task, state.current_review),
-      result_contract: RESULT_CONTRACTS.debugger,
     };
   }
 
@@ -250,6 +248,35 @@ async function resumeExecutingTask(state, basePath) {
     };
   }
 
+  // R-08 (audit M7): a phase left with a permanently-failed task and no runnable
+  // work must surface the failure for a recovery decision rather than reporting
+  // 'idle' (which reads as "nothing to do" and silently strands the failure).
+  const failedTasks = (phase.todo || []).filter(t => t.lifecycle === 'failed');
+  if (failedTasks.length > 0) {
+    const persistError = await persist(basePath, {
+      current_task: null,
+      current_review: null,
+    });
+    if (persistError) return persistError;
+
+    return {
+      success: true,
+      action: 'await_recovery_decision',
+      workflow_mode: 'executing_task',
+      phase_id: phase.id,
+      failed_tasks: failedTasks.map(t => ({
+        id: t.id,
+        name: t.name,
+        phase_id: phase.id,
+        retry_count: t.retry_count || 0,
+        last_failure_summary: t.last_failure_summary || null,
+        debug_context: t.debug_context || null,
+      })),
+      recovery_options: ['retry_failed', 'skip_failed', 'replan'],
+      message: `Phase ${phase.id} has ${failedTasks.length} failed task(s) and no runnable work; a recovery decision is required.`,
+    };
+  }
+
   const persistError = await persist(basePath, {
     current_task: null,
     current_review: null,
@@ -265,7 +292,7 @@ async function resumeExecutingTask(state, basePath) {
   };
 }
 
-export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks } = {}) {
+export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks, confirm_review } = {}) {
   if (_depth >= MAX_RESUME_DEPTH) {
     return { error: true, message: `resumeWorkflow recursive depth limit exceeded (max ${MAX_RESUME_DEPTH})` };
   }
@@ -306,6 +333,52 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
     }
   }
 
+  // R-03: resolve a pending L3 human-confirmation hold (audit H3). 'confirm'
+  // accepts the held task(s); 'reject' sends them back for rework. Mirrors the
+  // unblock_tasks force-resolution idiom above.
+  if (confirm_review && _depth === 0
+      && state.workflow_mode === 'awaiting_user'
+      && state.current_review?.stage === 'human_confirmation') {
+    const phase = getCurrentPhase(state);
+    const pending = state.current_review.pending_tasks
+      || (state.current_review.scope_id != null ? [state.current_review.scope_id] : []);
+    if (confirm_review === 'confirm') {
+      const patches = pending
+        .filter((id) => getTaskById(phase, id)?.lifecycle === 'checkpointed')
+        .map((id) => ({ id, lifecycle: 'accepted' }));
+      const persistError = await persist(basePath, {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: phase ? [{ id: phase.id, todo: patches }] : [],
+      });
+      if (persistError) return persistError;
+      return resumeWorkflow({ basePath, _depth: _depth + 1 });
+    }
+    if (confirm_review === 'reject') {
+      const patches = pending
+        .filter((id) => {
+          const lc = getTaskById(phase, id)?.lifecycle;
+          return lc === 'checkpointed' || lc === 'accepted';
+        })
+        .map((id) => ({
+          id,
+          lifecycle: 'needs_revalidation',
+          retry_count: 0,
+          evidence_refs: [],
+          last_review_feedback: ['Human reviewer rejected L3 acceptance; rework required'],
+        }));
+      const persistError = await persist(basePath, {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: phase ? [{ id: phase.id, todo: patches }] : [],
+      });
+      if (persistError) return persistError;
+      return resumeWorkflow({ basePath, _depth: _depth + 1 });
+    }
+  }
+
   const preflight = await evaluatePreflight(state, basePath);
   let result;
 
@@ -335,6 +408,21 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
         result = await resumeAwaitingClear(state, basePath, _depth);
         break;
       case 'awaiting_user': {
+        if (state.current_review?.stage === 'human_confirmation') {
+          // R-03: L3 task held for explicit human sign-off. Surface the security
+          // implications; the user resolves via resume confirm_review: confirm|reject.
+          result = {
+            success: true,
+            action: 'awaiting_human_confirmation',
+            workflow_mode: 'awaiting_user',
+            phase_id: state.current_phase,
+            pending_tasks: state.current_review.pending_tasks || [],
+            security_implications: state.current_review.security_implications || [],
+            current_review: state.current_review,
+            message: 'L3 task(s) passed review but require explicit human confirmation before acceptance',
+          };
+          break;
+        }
         if (state.current_review?.stage === 'direction_drift') {
           const driftPhaseId = state.current_review.scope_id || state.current_phase;
           const driftPhase = state.phases?.find((phase) => phase.id === driftPhaseId) || null;
@@ -401,7 +489,6 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
             checkpoint_commit: task.checkpoint_commit || null,
             files_changed: task.files_changed || [],
           })),
-          result_contract: RESULT_CONTRACTS.reviewer,
         };
         break;
       }
@@ -430,7 +517,6 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
             checkpoint_commit: task.checkpoint_commit || null,
             files_changed: task.files_changed || [],
           } : null,
-          result_contract: RESULT_CONTRACTS.reviewer,
         };
         break;
       }

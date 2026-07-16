@@ -2,4 +2,4 @@
 
 export { ERROR_CODES, setLockPath } from './constants.js';
 export { init, read, update, phaseComplete, addEvidence, pruneEvidence, patchPlan, computePlanHashes } from './crud.js';
-export { selectRunnableTask, propagateInvalidation, buildExecutorContext, reclassifyReviewLevel, matchDecisionForBlocker, applyResearchRefresh, storeResearch } from './logic.js';
+export { selectRunnableTask, propagateInvalidation, propagateCrossPhaseInvalidation, buildExecutorContext, reclassifyReviewLevel, matchDecisionForBlocker, applyResearchRefresh, storeResearch } from './logic.js';

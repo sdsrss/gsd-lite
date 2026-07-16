@@ -255,6 +255,39 @@ describe('patchPlan — add_dependency', () => {
     assert.equal(result.error, true);
     assert.match(result.message, /already depends/);
   });
+
+  it('rejects a forward phase dependency via add_dependency (R-06)', async () => {
+    // Task 1.1 (phase 1) cannot depend on the later phase 2.
+    const result = await patchPlan({
+      operations: [{ op: 'add_dependency', task_id: '1.1', requires: { kind: 'phase', id: 2 } }],
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /forward\/self reference/);
+  });
+
+  it('accepts a backward phase dependency via add_dependency (R-06)', async () => {
+    // Task 2.1 (phase 2) already depends on phase 1; add the dep to a phase-2
+    // task freshly to confirm the backward direction is allowed.
+    await patchPlan({
+      operations: [{ op: 'add_task', phase_id: 2, task: { name: 'Task E' } }],
+      basePath: tempDir,
+    });
+    const result = await patchPlan({
+      operations: [{ op: 'add_dependency', task_id: '2.2', requires: { kind: 'phase', id: 1 } }],
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+  });
+
+  it('rejects a forward phase dependency on a newly added task (R-06)', async () => {
+    const result = await patchPlan({
+      operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Task X', requires: [{ kind: 'phase', id: 2 }] } }],
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /forward\/self reference/);
+  });
 });
 
 describe('patchPlan — general', () => {

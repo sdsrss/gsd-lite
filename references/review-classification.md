@@ -102,4 +102,4 @@ executor checkpointed
 | 有 critical issues | rework_tasks 标记为 `needs_revalidation`; phase_review.status = `rework_required` |
 | critical + `invalidates_downstream` | 触发 `propagateInvalidation`: 所有下游依赖 task -> `needs_revalidation` + 清空 evidence_refs |
 
-来源: `handleReviewerResult()` in `src/tools/orchestrator.js`, `reviewer.md` in `agents/`
+来源: `handleReviewerResult()` in `src/tools/orchestrator/reviewer.js`, `reviewer.md` in `agents/`

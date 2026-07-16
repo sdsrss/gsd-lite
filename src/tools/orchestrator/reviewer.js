@@ -7,6 +7,14 @@ import {
   persist,
 } from './helpers.js';
 
+/** Normalize reviewer-supplied security implications to a clean string[]. */
+function normalizeSecurityImplications(si) {
+  if (si == null) return [];
+  if (Array.isArray(si)) return si.filter((x) => typeof x === 'string' && x.length > 0);
+  if (typeof si === 'string' && si.length > 0) return [si];
+  return [];
+}
+
 export async function handleReviewerResult({ result, basePath = process.cwd() } = {}) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return { error: true, message: 'result must be an object' };
@@ -20,6 +28,10 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   // See executor.js for rationale.
   const state = await read({ basePath });
   if (state.error) return state;
+  // R-21 (audit L4): optimistic-lock the read→persist window. This handler runs
+  // exactly one persist per call (mutually-exclusive branches), so the single
+  // read version is the right expectation for whichever branch fires.
+  const expectedVersion = state._version;
 
   const phase = result.scope === 'phase'
     ? (state.phases || []).find((p) => p.id === Number(result.scope_id)) || null
@@ -74,6 +86,49 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   const qualityFailed = result.quality_passed === false;
   const needsRework = hasCritical || specFailed || qualityFailed;
 
+  // R-03: L3 human-confirmation gate (audit H3). When a task-scoped review passes
+  // and the reviewer flags requires_human_confirmation, hold the approved L3
+  // task(s) at checkpointed and route to awaiting_user with the security
+  // implications — explicit human sign-off (resume confirm_review) is required
+  // before they become accepted. Rework always takes precedence over the hold.
+  if (!needsRework && result.scope === 'task' && result.requires_human_confirmation === true) {
+    const heldTasks = (result.accepted_tasks || []).filter((taskId) => {
+      const task = getTaskById(phase, taskId);
+      return task && task.level === 'L3' && task.lifecycle === 'checkpointed';
+    });
+    if (heldTasks.length > 0) {
+      const securityImplications = normalizeSecurityImplications(result.security_implications);
+      const evidenceHold = {};
+      for (const ev of (result.evidence || [])) {
+        if (ev && typeof ev === 'object' && typeof ev.id === 'string' && typeof ev.scope === 'string') {
+          evidenceHold[ev.id] = ev;
+        }
+      }
+      const persistError = await persist(basePath, {
+        workflow_mode: 'awaiting_user',
+        current_task: null,
+        current_review: {
+          scope: 'task',
+          scope_id: heldTasks[0],
+          stage: 'human_confirmation',
+          pending_tasks: heldTasks,
+          security_implications: securityImplications,
+        },
+        ...(Object.keys(evidenceHold).length > 0 ? { evidence: evidenceHold } : {}),
+      }, { expectedVersion });
+      if (persistError) return persistError;
+      return {
+        success: true,
+        action: 'awaiting_human_confirmation',
+        workflow_mode: 'awaiting_user',
+        phase_id: phase.id,
+        pending_tasks: heldTasks,
+        security_implications: securityImplications,
+        message: `L3 task(s) ${heldTasks.join(', ')} passed review but require explicit human confirmation before acceptance.`,
+      };
+    }
+  }
+
   // Safety: if rework is needed but no tasks were targeted for rework,
   // fall back to marking all non-accepted checkpointed/accepted tasks as needs_revalidation
   // to prevent infinite review loops (no runnable tasks → trigger_review → same result).
@@ -88,6 +143,24 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
           last_review_feedback: ['Reviewer indicated rework needed but did not specify tasks; all completed tasks require revalidation'],
         });
       }
+    }
+  }
+
+  // R-07 (audit M3): a task can accrue both an accept and a rework patch — e.g.
+  // accepted_tasks lists X while a critical_issue also targets X and the safety
+  // net above marks every completed task for revalidation. The state merge is
+  // first-match, so the earlier accept patch would silently win over the rework.
+  // Dedupe by task id here with rework (needs_revalidation) always overriding an
+  // accept, so a flagged task can never stay accepted.
+  const patchIndexById = new Map();
+  const dedupedPatches = [];
+  for (const patch of taskPatches) {
+    const existingIdx = patchIndexById.get(patch.id);
+    if (existingIdx === undefined) {
+      patchIndexById.set(patch.id, dedupedPatches.length);
+      dedupedPatches.push(patch);
+    } else if (patch.lifecycle === 'needs_revalidation' && dedupedPatches[existingIdx].lifecycle === 'accepted') {
+      dedupedPatches[existingIdx] = patch;
     }
   }
 
@@ -111,7 +184,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
         lifecycle: phase.lifecycle === 'reviewing' ? 'active' : phase.lifecycle,
         phase_review: { status: 'rework_required', retry_count: nextRetryCount },
       }],
-    });
+    }, { expectedVersion });
     if (persistError) return persistError;
 
     return {
@@ -133,7 +206,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
       status: reviewStatus,
       retry_count: nextRetryCount,
     },
-    todo: taskPatches,
+    todo: dedupedPatches,
   };
 
   // Transition phase back to active when rework is needed
@@ -161,7 +234,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     current_review: null,
     phases: [phaseUpdates],
     ...(Object.keys(evidenceUpdates).length > 0 ? { evidence: evidenceUpdates } : {}),
-  }, { _propagation_tasks: propagationTasks });
+  }, { _propagation_tasks: propagationTasks, expectedVersion });
   if (persistError) return persistError;
 
   return {
@@ -170,8 +243,8 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     workflow_mode: workflowMode,
     phase_id: phase.id,
     review_status: reviewStatus,
-    accepted_count: taskPatches.filter(p => p.lifecycle === 'accepted').length,
-    rework_count: taskPatches.filter(p => p.lifecycle === 'needs_revalidation').length,
+    accepted_count: dedupedPatches.filter(p => p.lifecycle === 'accepted').length,
+    rework_count: dedupedPatches.filter(p => p.lifecycle === 'needs_revalidation').length,
     critical_count: result.critical_issues?.length || 0,
   };
 }

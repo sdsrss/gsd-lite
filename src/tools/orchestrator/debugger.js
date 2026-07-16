@@ -24,6 +24,12 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
   if (!phase || !task) {
     return { error: true, message: `Task ${result.task_id} not found` };
   }
+  // R-22 (audit L5): reject a result for a task outside the current phase.
+  if (phase.id !== state.current_phase) {
+    return { error: true, message: `Task ${result.task_id} is in phase ${phase.id}, not the current phase ${state.current_phase}; result rejected` };
+  }
+  // R-21 (audit L4): optimistic-lock the read→persist window (one persist per call).
+  const expectedVersion = state._version;
 
   const debug_context = {
     root_cause: result.root_cause,
@@ -60,7 +66,7 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
       current_task: null,
       current_review: null,
       phases: [phasePatch],
-    });
+    }, { expectedVersion });
     if (persistError) return persistError;
 
     return {
@@ -85,7 +91,7 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
         debug_context,
       }],
     }],
-  });
+  }, { expectedVersion });
   if (refreshed.error) return refreshed;
 
   const refreshedInfo = getPhaseAndTask(refreshed, task.id);

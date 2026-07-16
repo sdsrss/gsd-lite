@@ -135,7 +135,7 @@ stateDiagram-v2
 - `handleReviewerResult` 中: 有 critical -> `rework_required`; 无 critical -> `accepted`
 - 审查 accepted 且 scope 为 phase 时，同时设置 `phase_handoff.required_reviews_passed = true`
 
-来源: `PHASE_REVIEW_STATUS` in `src/schema.js`, `handleReviewerResult()` in `src/tools/orchestrator.js`
+来源: `PHASE_REVIEW_STATUS` in `src/schema.js`, `handleReviewerResult()` in `src/tools/orchestrator/reviewer.js`
 
 ---
 
@@ -226,4 +226,4 @@ stateDiagram-v2
 **Research 刷新后恢复**:
 `storeResearch()` 中: 如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()` 根据 `current_review` 状态推断恢复到 `reviewing_phase` / `reviewing_task` / `executing_task`。
 
-来源: `WORKFLOW_MODES` in `src/schema.js`, `resumeWorkflow()`, `evaluatePreflight()` in `src/tools/orchestrator.js`, `storeResearch()` in `src/tools/state/`
+来源: `WORKFLOW_MODES` in `src/schema.js`, `resumeWorkflow()` in `src/tools/orchestrator/resume.js`, `evaluatePreflight()` in `src/tools/orchestrator/helpers.js`, `storeResearch()` in `src/tools/state/`

@@ -29,7 +29,10 @@ jobs:
         run: npm run test:coverage
 
       - name: Security audit
-        run: npm audit --omit=dev
+        # R-16: gate on high+ only (see ci.yml for rationale). Transitive `hono`
+        # HTTP/serverless advisories are unreachable in a stdio-only MCP server;
+        # `overrides.hono` pins a patched version, so this reports 0 vulnerabilities.
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Verify version consistency
         run: |

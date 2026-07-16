@@ -2,7 +2,6 @@ import { read, reclassifyReviewLevel, selectRunnableTask } from '../state/index.
 import { validateExecutorResult } from '../../schema.js';
 import {
   MAX_DEBUG_RETRY,
-  RESULT_CONTRACTS,
   getPhaseAndTask,
   getBlockedTasks,
   buildDecisionEntries,
@@ -30,15 +29,28 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
   if (!phase || !task) {
     return { error: true, message: `Task ${result.task_id} not found` };
   }
+  // R-22 (audit L5): reject a result for a task outside the current phase — the
+  // orchestrator only dispatches current-phase tasks, so this is a stale or
+  // misrouted result that must not mutate an already-advanced/earlier phase.
+  if (phase.id !== state.current_phase) {
+    return { error: true, message: `Task ${result.task_id} is in phase ${phase.id}, not the current phase ${state.current_phase}; result rejected` };
+  }
+
+  // R-21 (audit L4): optimistic-lock the read→persist window. update() bumps
+  // _version by exactly 1 per write, so we advance expectedVersion after each of
+  // our own persists; a concurrent external writer changing state mid-handler
+  // then surfaces as VERSION_CONFLICT instead of silently clobbering.
+  let expectedVersion = state._version;
 
   // Auto-start parallel tasks: if a task is still pending (dispatched via parallel_available
   // but not explicitly started by orchestrator-resume), transition it to running first.
   if (task.lifecycle === 'pending') {
     const startError = await persist(basePath, {
       phases: [{ id: phase.id, todo: [{ id: task.id, lifecycle: 'running' }] }],
-    });
+    }, { expectedVersion });
     if (startError) return startError;
     task.lifecycle = 'running';
+    expectedVersion += 1;
   }
 
   // Build new decision entries — actual append happens atomically inside update()'s lock
@@ -84,7 +96,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       current_review,
       phases: [phasePatch],
       ...(Object.keys(evidenceUpdates).length > 0 ? { evidence: evidenceUpdates } : {}),
-    }, { _append_decisions: newDecisions });
+    }, { _append_decisions: newDecisions, expectedVersion });
     if (persistError) return persistError;
 
     return {
@@ -95,7 +107,6 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       review_level: reviewLevel,
       current_review,
       auto_accepted: autoAccept,
-      ...(current_review ? { result_contract: RESULT_CONTRACTS.reviewer } : {}),
     };
   }
 
@@ -127,7 +138,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
           evidence_refs: result.evidence || [],
         }],
       }],
-    }, { _append_decisions: newDecisions });
+    }, { _append_decisions: newDecisions, expectedVersion });
     if (persistError) return persistError;
 
     return {
@@ -183,6 +194,5 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
     task_id: task.id,
     retry_count,
     current_review,
-    result_contract: shouldDebug ? RESULT_CONTRACTS.debugger : RESULT_CONTRACTS.executor,
   };
 }
