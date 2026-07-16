@@ -115,6 +115,17 @@ async function evaluatePreflight(state, basePath) {
     return { override: null };
   }
 
+  // R-03 (audit H3): an active L3 human-confirmation hold must be resolved by an
+  // explicit user confirm/reject (handled before preflight in resume). No
+  // preflight hint (dirty-phase rollback, research expiry, drift, git/plan
+  // reconcile) may override it — an override persists current_review: null,
+  // silently clearing the hold and leaving the L3 task re-sweepable into a
+  // later phase review with no gate. Mirrors the skipDirectionDrift guard below.
+  if (state.workflow_mode === 'awaiting_user'
+      && state.current_review?.stage === 'human_confirmation') {
+    return { override: null };
+  }
+
   const hints = [];
 
   const currentGitHead = await getGitHead(basePath);

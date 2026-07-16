@@ -52,6 +52,18 @@ describe('validateStateUpdate', () => {
       assert.ok(result.errors.some(e => e.includes('not accepted')));
     });
 
+    it('rejects completed with a running task, matching full validation (R-02 parity)', () => {
+      const state = baseState();
+      state.workflow_mode = 'reviewing_phase';
+      state.phases[0].lifecycle = 'accepted';
+      state.phases[0].todo[0].lifecycle = 'running'; // contradictory shape the full validator also rejects
+      const incr = validateStateUpdate(state, { workflow_mode: 'completed' });
+      const full = validateState({ ...state, workflow_mode: 'completed' });
+      assert.equal(incr.valid, false);
+      assert.equal(full.valid, false, 'full validator must also reject');
+      assert.ok(incr.errors.some(e => /running task/.test(e)), 'fast path must catch the running-task invariant');
+    });
+
     it('rejects completed from executing_task (invalid transition)', () => {
       const state = baseState();
       state.phases[0].lifecycle = 'accepted';

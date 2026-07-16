@@ -184,11 +184,21 @@ export function validateStateUpdate(state, updates) {
             errors.push(`Invalid workflow_mode transition: '${currentMode}' → '${updates.workflow_mode}' (allowed: ${allowed.join(', ') || 'none (terminal state)'})`);
           }
         }
-        // Guard: 'completed' requires all phases accepted
+        // Guard: 'completed' requires all phases accepted (parity with full
+        // validateState). R-02: mirror BOTH completed invariants on the fast
+        // path — all phases accepted AND no running task — so the incremental
+        // path can never persist a state the full validator would reject.
         if (updates.workflow_mode === 'completed' && Array.isArray(state.phases)) {
           const unfinished = state.phases.filter(p => p.lifecycle !== 'accepted');
           if (unfinished.length > 0) {
             errors.push(`Cannot set workflow_mode to 'completed': ${unfinished.length} phase(s) not accepted (${unfinished.map(p => `${p.id}:${p.lifecycle}`).join(', ')})`);
+          }
+          for (const phase of state.phases) {
+            for (const task of (phase.todo || [])) {
+              if (task.lifecycle === 'running') {
+                errors.push(`Cannot set workflow_mode to 'completed': running task ${task.id} in phase ${phase.id}`);
+              }
+            }
           }
         }
         break;

@@ -67,8 +67,10 @@ export const LOCK_MAX_RETRIES = 240; // 12s total (> LOCK_STALE_MS)
  * release and stale-breaking are compare-and-delete: a process only ever removes
  * a lock it still owns, closing the steal race where A's finally-unlink deletes
  * B's freshly-acquired lock (R-01, audit H1).
- * Stale locks (older than staleMs) are broken only if their content is unchanged
- * across a re-read, so a lock re-acquired between observation and unlink survives.
+ * Stale locks (older than staleMs) are broken by atomically renaming the lock
+ * file aside (rename serializes concurrent breakers) and re-checking the moved
+ * file's own mtime, so a lock re-acquired between observation and reclaim is
+ * restored rather than stolen.
  * Falls through without locking on non-EEXIST errors (e.g., read-only fs).
  *
  * @param {string} lockPath
@@ -91,29 +93,38 @@ export async function withFileLock(lockPath, fn, opts = {}) {
       break;
     } catch (err) {
       if (err.code === 'EEXIST') {
+        let broke = false;
         try {
           const s = await stat(lockPath);
           if (Date.now() - s.mtimeMs > staleMs) {
-            // Compare-and-delete: break the stale lock only if it still holds the
-            // same content we observed. If another process re-acquired it between
-            // reads, the token differs and we back off instead of stealing it.
-            const observed = await readFile(lockPath, 'utf-8');
-            let current;
+            // Atomically claim the (apparently stale) lock by renaming it aside.
+            // rename() is atomic and serializes concurrent stale-breakers: only
+            // one can move THIS inode; losers get ENOENT and cleanly retry
+            // acquisition. After the move we re-check the moved file's OWN mtime —
+            // still stale ⇒ it was genuinely the old lock, delete it; fresh ⇒ a
+            // new owner slipped in before our rename, so restore it untouched.
+            // Closes the R-01 race where two waiters both delete-then-acquire and
+            // run fn() concurrently (audit H1).
+            const reclaimPath = `${lockPath}.reclaim-${token}`;
             try {
-              current = await readFile(lockPath, 'utf-8');
+              await rename(lockPath, reclaimPath);
             } catch {
-              continue; // lock vanished — retry acquisition immediately
+              continue; // another breaker moved/removed it first — retry
             }
-            const s2 = await stat(lockPath).catch(() => null);
-            if (current === observed && s2 && Date.now() - s2.mtimeMs > staleMs) {
-              try { await unlink(lockPath); } catch {}
+            const rs = await stat(reclaimPath).catch(() => null);
+            if (rs && Date.now() - rs.mtimeMs > staleMs) {
+              await unlink(reclaimPath).catch(() => {});
+            } else {
+              // Fresh lock slipped in — restore it for its rightful owner.
+              await rename(reclaimPath, lockPath).catch(() => { unlink(reclaimPath).catch(() => {}); });
             }
-            continue;
+            broke = true;
           }
         } catch {
           // stat failed — lock may have been released between checks
           continue;
         }
+        if (broke) continue; // retry acquisition immediately after breaking
         await new Promise(r => setTimeout(r, retryMs));
       } else {
         // Non-EEXIST error (e.g., read-only fs) — proceed without lock

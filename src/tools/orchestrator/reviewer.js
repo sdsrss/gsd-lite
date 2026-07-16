@@ -86,17 +86,28 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   const qualityFailed = result.quality_passed === false;
   const needsRework = hasCritical || specFailed || qualityFailed;
 
-  // R-03: L3 human-confirmation gate (audit H3). When a task-scoped review passes
-  // and the reviewer flags requires_human_confirmation, hold the approved L3
-  // task(s) at checkpointed and route to awaiting_user with the security
-  // implications — explicit human sign-off (resume confirm_review) is required
-  // before they become accepted. Rework always takes precedence over the hold.
-  if (!needsRework && result.scope === 'task' && result.requires_human_confirmation === true) {
+  // R-03: L3 human-confirmation gate (audit H3). L3 = security/architecture/
+  // breaking work. ANY L3 task a reviewer approves is held at checkpointed and
+  // routed to awaiting_user for explicit human sign-off (resume confirm_review)
+  // before it can become accepted. The gate is LEVEL-driven, not flag-driven:
+  // it fires for task- AND phase-scoped reviews, and regardless of whether the
+  // reviewer volunteered requires_human_confirmation — so "L3 never silently
+  // auto-accepts" is a code-enforced invariant, not a reviewer-prompt
+  // convention. This also closes the phase-scoped path, where the accept loop
+  // above would otherwise promote a checkpointed L3 task with no gate.
+  // requires_human_confirmation/security_implications remain as the channel for
+  // the reviewer to attach security context to the hold. Rework always takes
+  // precedence (this branch is gated on !needsRework).
+  if (!needsRework) {
     const heldTasks = (result.accepted_tasks || []).filter((taskId) => {
       const task = getTaskById(phase, taskId);
       return task && task.level === 'L3' && task.lifecycle === 'checkpointed';
     });
     if (heldTasks.length > 0) {
+      const heldSet = new Set(heldTasks);
+      // Non-L3 tasks in the same (phase-scoped) batch are accepted normally;
+      // only the L3 tasks are withheld for human confirmation.
+      const acceptPatches = taskPatches.filter((p) => !heldSet.has(p.id));
       const securityImplications = normalizeSecurityImplications(result.security_implications);
       const evidenceHold = {};
       for (const ev of (result.evidence || [])) {
@@ -114,6 +125,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
           pending_tasks: heldTasks,
           security_implications: securityImplications,
         },
+        ...(acceptPatches.length > 0 ? { phases: [{ id: phase.id, todo: acceptPatches }] } : {}),
         ...(Object.keys(evidenceHold).length > 0 ? { evidence: evidenceHold } : {}),
       }, { expectedVersion });
       if (persistError) return persistError;

@@ -272,6 +272,38 @@ try {
     assert.equal(waiterEntered, true);
   });
 
+  it('concurrent stale-breakers are mutually exclusive — never both enter fn (R-01 atomic reclaim)', async () => {
+    const lockPath = join(tempDir, 'reclaim-race.lock');
+    // A genuinely stale lock that every waiter will try to break at once.
+    await fsWriteFile(lockPath, 'dead-holder', { flag: 'w' });
+    const { utimes } = await import('node:fs/promises');
+    const past = new Date(Date.now() - 15000);
+    await utimes(lockPath, past, past);
+
+    // Under the old blind-unlink stale-break, a waiter could delete a lock a
+    // peer had just re-acquired and then acquire its own, running fn()
+    // concurrently. The rename-based atomic reclaim serializes breakers, so the
+    // critical section must never overlap.
+    let inside = 0;
+    let overlapped = false;
+    const critical = async () => {
+      inside += 1;
+      if (inside > 1) overlapped = true;
+      await new Promise(r => setTimeout(r, 40));
+      inside -= 1;
+      return 'done';
+    };
+    const opts = { staleMs: 10_000, retryMs: 8, maxRetries: 400 };
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => withFileLock(lockPath, critical, opts)),
+    );
+
+    assert.deepEqual(results, ['done', 'done', 'done', 'done'], 'all waiters complete');
+    assert.equal(overlapped, false, 'stale-breakers must never run fn() concurrently');
+    // Lock file is released (compare-and-delete on the last holder).
+    await assert.rejects(() => readFile(lockPath, 'utf-8'), /ENOENT/);
+  });
+
   it('default retry budget covers the stale threshold (R-09)', () => {
     // A waiter must be able to wait out the entire window before a held lock
     // ages into staleness — otherwise it falsely times out on legitimate holds.

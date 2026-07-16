@@ -59,9 +59,14 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
   if (result.outcome === 'checkpointed') {
     const reviewLevel = reclassifyReviewLevel(task, result);
     const isL0 = reviewLevel === 'L0';
-    const autoAccept = isL0 || task.review_required === false;
+    const isL3 = reviewLevel === 'L3';
+    // R-03/M-2 (audit H3): L3 = security/architecture/breaking work and must
+    // ALWAYS pass through review → the human-confirmation gate. review_required
+    // === false is an escape hatch for lower levels only; it can never let an L3
+    // task skip review and auto-accept.
+    const autoAccept = isL0 || (task.review_required === false && !isL3);
 
-    const current_review = !isL0 && (reviewLevel === 'L2' || reviewLevel === 'L3') && task.review_required !== false
+    const current_review = isL3 || (!isL0 && reviewLevel === 'L2' && task.review_required !== false)
       ? { scope: 'task', scope_id: task.id, stage: 'spec' }
       : null;
     const workflow_mode = current_review ? 'reviewing_task' : 'executing_task';
@@ -184,7 +189,7 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
         evidence_refs: result.evidence || [],
       }],
     }],
-  }, { _append_decisions: newDecisions });
+  }, { _append_decisions: newDecisions, expectedVersion });
   if (persistError) return persistError;
 
   return {

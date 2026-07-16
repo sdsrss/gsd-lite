@@ -2600,16 +2600,23 @@ describe('R-03: L3 human-confirmation gate', () => {
     assert.notEqual(state.current_review?.stage, 'human_confirmation');
   });
 
-  it('does not gate an L3 task when requires_human_confirmation is absent', async () => {
+  it('gates an L3 task even when requires_human_confirmation is absent (level-driven, not flag-driven)', async () => {
     await setupL3Review('l3-no-flag');
     const result = await handleReviewerResult({
       basePath: tempDir,
       result: passingL3Result({ requires_human_confirmation: false, security_implications: [] }),
     });
-    assert.equal(result.action, 'review_accepted');
+    // The gate is code-enforced on task level L3, NOT on the reviewer-volunteered
+    // flag — an L3 task can never silently auto-accept just because the reviewer
+    // omitted the flag. security_implications is simply empty on the hold.
+    assert.equal(result.action, 'awaiting_human_confirmation');
+    assert.deepEqual(result.pending_tasks, ['1.1']);
+    assert.deepEqual(result.security_implications, []);
 
     const state = await read({ basePath: tempDir });
-    assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
+    assert.equal(state.phases[0].todo[0].lifecycle, 'checkpointed');
+    assert.equal(state.workflow_mode, 'awaiting_user');
+    assert.equal(state.current_review.stage, 'human_confirmation');
   });
 
   it('does not gate a non-L3 task even if requires_human_confirmation is set', async () => {
@@ -2645,6 +2652,141 @@ describe('R-03: L3 human-confirmation gate', () => {
     assert.equal(result.action, 'rework_required');
     const state = await read({ basePath: tempDir });
     assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation');
+  });
+
+  // --- R-03 hardening (post-0.8.0 review): the gate must cover the phase-scoped
+  // accept path and survive a passive resume, not only the task-scoped happy path. ---
+
+  it('gates an L3 task approved via a PHASE-scoped review (no phase-scope bypass)', async () => {
+    // The phase-batch accept loop must not silently promote a checkpointed L3
+    // task. handleReviewerResult picks the phase from result.scope, so no
+    // reviewing_phase preamble is needed to exercise the accept path.
+    await init({
+      project: 'l3-phase-gate',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Secure task', level: 'L3' }] }],
+      basePath: tempDir,
+    });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase', scope_id: 1,
+        review_level: 'L3', spec_passed: true, quality_passed: true,
+        critical_issues: [], important_issues: [], minor_issues: [],
+        accepted_tasks: ['1.1'], rework_tasks: [], evidence: [],
+        // No requires_human_confirmation — the gate is level-driven, so a
+        // phase-scoped review must still hold the L3 task.
+      },
+    });
+
+    assert.equal(result.action, 'awaiting_human_confirmation');
+    assert.deepEqual(result.pending_tasks, ['1.1']);
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'checkpointed');
+    assert.equal(state.workflow_mode, 'awaiting_user');
+    assert.equal(state.current_review.stage, 'human_confirmation');
+  });
+
+  it('accepts non-L3 siblings while holding the L3 task in a mixed phase review', async () => {
+    await init({
+      project: 'l3-phase-mixed',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'Normal task', level: 'L1' },
+        { index: 2, name: 'Secure task', level: 'L3' },
+      ] }],
+      basePath: tempDir,
+    });
+    for (const id of ['1.1', '1.2']) {
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'checkpointed', checkpoint_commit: 'c' }] }] }, basePath: tempDir });
+    }
+
+    const result = await handleReviewerResult({
+      basePath: tempDir,
+      result: {
+        scope: 'phase', scope_id: 1,
+        review_level: 'L1', spec_passed: true, quality_passed: true,
+        critical_issues: [], important_issues: [], minor_issues: [],
+        accepted_tasks: ['1.1', '1.2'], rework_tasks: [], evidence: [],
+      },
+    });
+
+    assert.equal(result.action, 'awaiting_human_confirmation');
+    assert.deepEqual(result.pending_tasks, ['1.2']);
+    const state = await read({ basePath: tempDir });
+    const t11 = state.phases[0].todo.find(t => t.id === '1.1');
+    const t12 = state.phases[0].todo.find(t => t.id === '1.2');
+    assert.equal(t11.lifecycle, 'accepted', 'L1 sibling should accept normally');
+    assert.equal(t12.lifecycle, 'checkpointed', 'L3 task must be held, not accepted');
+  });
+
+  it('a passive resume does not clear the L3 hold even when an earlier phase is dirty', async () => {
+    // Regression (audit H3): preflight dirty-phase rollback previously persisted
+    // current_review: null, silently dropping an active human-confirmation hold.
+    await init({
+      project: 'l3-hold-preflight',
+      phases: [
+        { name: 'First', tasks: [{ index: 1, name: 'Early task', level: 'L1' }] },
+        { name: 'Second', tasks: [{ index: 1, name: 'Secure task', level: 'L3' }] },
+      ],
+      basePath: tempDir,
+    });
+    // On-disk recovery state: L3 task held at phase 2 while earlier phase 1 has
+    // an invalidated task (dirty phase, id < current_phase).
+    corruptStateOnDisk(tempDir, (s) => {
+      s.current_phase = 2;
+      s.workflow_mode = 'awaiting_user';
+      s.current_task = null;
+      s.current_review = {
+        scope: 'task', scope_id: '2.1', stage: 'human_confirmation',
+        pending_tasks: ['2.1'], security_implications: ['touches auth token signing'],
+      };
+      const p1 = s.phases.find(p => p.id === 1);
+      p1.lifecycle = 'active';
+      p1.todo[0].lifecycle = 'needs_revalidation';
+      const p2 = s.phases.find(p => p.id === 2);
+      p2.lifecycle = 'active';
+      p2.todo[0].lifecycle = 'checkpointed';
+      p2.todo[0].level = 'L3';
+    });
+
+    const resumed = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(resumed.action, 'awaiting_human_confirmation',
+      `passive resume must preserve the hold, not roll back to the dirty phase (got ${resumed.action})`);
+
+    const after = await read({ basePath: tempDir });
+    assert.equal(after.workflow_mode, 'awaiting_user');
+    assert.equal(after.current_review.stage, 'human_confirmation');
+    assert.equal(after.current_phase, 2, 'must not roll back to the dirty phase while the hold is unresolved');
+  });
+
+  it('an L3 task with review_required:false is still gated, not auto-accepted (M-2)', async () => {
+    // review_required:false is an escape hatch for LOWER levels only. An L3 task
+    // must still enter review → the human-confirmation gate; it can never go
+    // running → accepted in the executor and skip the gate entirely.
+    await init({
+      project: 'l3-review-not-required',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Secure task', level: 'L3', review_required: false }] }],
+      basePath: tempDir,
+    });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+
+    const result = await handleExecutorResult({
+      basePath: tempDir,
+      result: {
+        task_id: '1.1', outcome: 'checkpointed', summary: 'implemented securely',
+        checkpoint_commit: 'abc', files_changed: [], decisions: [], blockers: [],
+        contract_changed: false, evidence: [],
+      },
+    });
+    assert.equal(result.success, true);
+
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'checkpointed', 'L3 must not auto-accept');
+    assert.equal(state.workflow_mode, 'reviewing_task');
+    assert.equal(state.current_review.stage, 'spec');
   });
 });
 
