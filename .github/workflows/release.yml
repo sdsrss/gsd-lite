@@ -71,6 +71,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Preflight — signing key present before any publish
+        # R-11b: fail BEFORE `npm publish` if the signing secret is missing.
+        # Otherwise npm would get the new version but the later sign step aborts,
+        # leaving no signed GitHub Release — auto-update clients (which read GitHub
+        # Releases, not npm) would never see the update. Check first, publish after.
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::RELEASE_SIGNING_KEY secret is not set — refusing to publish an unsignable release"
+            exit 1
+          fi
+          echo "Signing key present"
+
       - name: Publish to npm (skip if version already exists)
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -86,9 +100,11 @@ jobs:
 
       - name: Pack deterministic tarball + compute SHA-256
         id: pack
-        # R-11: npm pack produces the exact bytes published to npm — deterministic,
-        # so the SHA-256 computed here is what every auto-update client downloads
-        # and verifies. Unlike GitHub's source tarball_url, these bytes are fixed.
+        # R-11: `npm pack` writes gsd-lite-<version>.tgz; this SAME file is attached
+        # as the GitHub Release asset and hashed here, so the `sha256:` in the body
+        # is guaranteed to be the hash of the exact bytes the client downloads
+        # (asset == hashed file). Unlike GitHub's source tarball_url, whose bytes
+        # carry no stable-checksum guarantee, this asset is fixed at publish time.
         run: |
           VERSION=$(node -p "require('./package.json').version")
           TARBALL="gsd-lite-${VERSION}.tgz"
@@ -121,6 +137,27 @@ jobs:
           test -n "$SIG" || { echo "::error::signing produced an empty signature"; exit 1; }
           echo "sig=$SIG" >> "$GITHUB_OUTPUT"
           echo "Signed checksum (Ed25519)"
+
+      - name: Verify signature against the embedded public key
+        # R-11b: assert the RELEASE_PUBLIC_KEY committed in the client actually
+        # pairs with the RELEASE_SIGNING_KEY secret, by running the exact client
+        # verification path (verifyReleaseSignature, default embedded key). If they
+        # ever diverge (wrong key pasted, secret rotated without updating the
+        # embedded PEM), every real update at/after MIN_SIGNED_VERSION would fail
+        # closed and auto-update would silently stop — this is the ONLY place that
+        # key relationship can be asserted. Fail the release before it ships.
+        env:
+          SHA: ${{ steps.pack.outputs.sha256 }}
+          SIG: ${{ steps.sign.outputs.sig }}
+        run: |
+          node -e '
+            const m = require("./hooks/gsd-auto-update.cjs");
+            if (!m.verifyReleaseSignature(process.env.SHA, process.env.SIG)) {
+              console.error("::error::Signature does not verify against the embedded RELEASE_PUBLIC_KEY — the signing secret and the committed public key have diverged. Clients would fail closed; fix the embedded key (or the secret) before releasing.");
+              process.exit(1);
+            }
+            console.log("Embedded public key pairs with the signing secret ✓");
+          '
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2

@@ -189,7 +189,9 @@ async function checkForUpdate(options = {}) {
           expectedSignature: latest.signature,
           // Releases at/after MIN_SIGNED_VERSION MUST verify — a stripped or
           // absent signature on such a release aborts the update (anti-downgrade).
-          requireSignature: compareVersions(latest.version, MIN_SIGNED_VERSION) >= 0,
+          // Gate on the core version so a `0.8.3-rc.1` prerelease of MIN can't be
+          // used to slip an unsigned "update" past a pre-MIN client.
+          requireSignature: requiresSignature(latest.version),
         });
 
         saveState({
@@ -369,14 +371,21 @@ async function fetchLatestRelease(token) {
     if (!downloadUrl) return null;
     // The published SHA-256 (a line `sha256: <64 hex>` in the release body) is the
     // hash of the asset; when present the updater enforces it before running
-    // install.js; when absent it proceeds (legacy releases).
-    const checksumMatch = typeof data.body === 'string'
-      ? data.body.match(/sha256[:=]\s*([a-f0-9]{64})/i)
-      : null;
+    // install.js; when absent it proceeds (legacy releases). Take the LAST match:
+    // on a workflow re-run action-gh-release appends a fresh integrity block, and
+    // only the last `sha256:`/`sig:` pair matches the (re-packed) current asset —
+    // an earlier stale hash would otherwise fail closed and break the update.
+    const bodyStr = typeof data.body === 'string' ? data.body : '';
+    const lastMatch = (re) => {
+      const all = [...bodyStr.matchAll(re)];
+      return all.length ? all[all.length - 1] : null;
+    };
+    const checksumMatch = lastMatch(/sha256[:=]\s*([a-f0-9]{64})/gi);
     // R-11b: the Ed25519 signature over the checksum (a line `sig: <base64>`).
-    const sigMatch = typeof data.body === 'string'
-      ? data.body.match(/\bsig[:=]\s*([A-Za-z0-9+/=]{80,})/i)
-      : null;
+    // 64-byte Ed25519 signature → 88 base64 chars; bound the length AND anchor to
+    // end-of-line (multiline) so an over-long blob is rejected outright rather than
+    // silently truncated to a wrong-length capture.
+    const sigMatch = lastMatch(/\bsig[:=]\s*([A-Za-z0-9+/=]{80,120})\s*$/gim);
     return {
       version: data.tag_name.replace(/^v/, ''),
       tarballUrl: downloadUrl,
@@ -394,6 +403,19 @@ async function fetchLatestRelease(token) {
 // ── Version Comparison (semver) ────────────────────────────
 // Reuse shared comparator; callers only check sign (> 0, < 0, === 0)
 const compareVersions = semverSortComparator;
+
+// A release requires a valid signature when its RELEASE CORE (major.minor.patch,
+// ignoring any prerelease/build suffix) is at or above MIN_SIGNED_VERSION.
+// Gating on the core — not the full semver — closes an anti-downgrade gap:
+// `0.8.3-rc.1` sorts BELOW `0.8.3`, so a raw `compareVersions(latest, MIN) >= 0`
+// gate would treat an unsigned `0.8.3-rc.1` as legacy-OK. Since that prerelease
+// is still a valid "update" for any pre-MIN client, a MITM forging the GitHub
+// API JSON could present it with no `sig:` and bypass verification. The core of
+// any 0.8.3 prerelease is 0.8.3, so it is correctly treated as signed-era.
+function requiresSignature(version) {
+  const core = String(version).replace(/^v/, '').split('-')[0].split('+')[0];
+  return compareVersions(core, MIN_SIGNED_VERSION) >= 0;
+}
 
 function getCurrentVersion(mode = getInstallMode()) {
   const candidates = mode === 'manual'
@@ -770,6 +792,7 @@ module.exports = {
   fetchLatestRelease,
   getCurrentVersion,
   compareVersions,
+  requiresSignature,
   getInstallMode,
   isDevMode,
   isOrphan,

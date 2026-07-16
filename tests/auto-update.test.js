@@ -553,6 +553,23 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
     });
   });
 
+  it('requiresSignature gates on the prerelease-stripped core, blocking a prerelease-strip downgrade (R-11b)', async () => {
+    await withRealModule(async (mod) => {
+      // A prerelease of MIN (e.g. 0.8.3-rc.1) sorts BELOW 0.8.3 per semver, so a
+      // raw `compareVersions(latest, MIN) >= 0` gate would leave it UNSIGNED-OK.
+      // Since 0.8.3-rc.1 is still a valid "update" for any pre-0.8.3 client, a
+      // MITM forging the API JSON could present an unsigned 0.8.3-rc.1 and bypass
+      // verification. Gating on the core (0.8.3) closes that window.
+      assert.equal(mod.requiresSignature('0.8.3'), true, 'MIN itself requires a signature');
+      assert.equal(mod.requiresSignature('0.8.3-rc.1'), true, 'a prerelease of MIN still requires a signature');
+      assert.equal(mod.requiresSignature('0.8.3-0'), true, 'any prerelease tag of MIN requires a signature');
+      assert.equal(mod.requiresSignature('v0.8.3-rc.1'), true, 'a v-prefixed prerelease of MIN requires a signature');
+      assert.equal(mod.requiresSignature('0.9.0-rc.1'), true, 'a prerelease above MIN requires a signature');
+      assert.equal(mod.requiresSignature('0.8.2'), false, 'a pre-signing version does not');
+      assert.equal(mod.requiresSignature('0.8.2-rc.9'), false, 'a prerelease below MIN does not');
+    });
+  });
+
   it('installs a legitimate tarball whose checksum matches, running install.js', async () => {
     await withRealModule(async (mod, root, marker) => {
       const { bytes, sha256 } = await buildFixtureTarball(root);
@@ -698,6 +715,53 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
         const latest = await mod.fetchLatestRelease(null);
         assert.equal(latest.checksum, hash);
         assert.equal(latest.signature, sig);
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
+  it('fetchLatestRelease takes the LAST integrity block when a re-run appended a second (R-11b)', async () => {
+    await withRealModule(async (mod) => {
+      // action-gh-release appends on a workflow re-run, so a stale first block can
+      // precede the fresh one that matches the re-packed asset. The client must
+      // enforce the LAST pair, or the stale hash fails closed and breaks updates.
+      const staleHash = 'a'.repeat(64);
+      const staleSig = 'A'.repeat(88);
+      const freshHash = 'b'.repeat(64);
+      const freshSig = 'B'.repeat(88);
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({
+          tag_name: 'v9.9.9', tarball_url: TARBALL_URL, html_url: 'x', assets: [],
+          body: `notes\n\nsha256: ${staleHash}\nsig: ${staleSig}\n\n---\nsha256: ${freshHash}\nsig: ${freshSig}\n`,
+        }),
+      });
+      try {
+        const latest = await mod.fetchLatestRelease(null);
+        assert.equal(latest.checksum, freshHash, 'must use the fresh (last) checksum');
+        assert.equal(latest.signature, freshSig, 'must use the fresh (last) signature');
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
+  it('fetchLatestRelease rejects an over-long signature blob (bounded sig regex, R-11b)', async () => {
+    await withRealModule(async (mod) => {
+      const hash = 'c'.repeat(64);
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({
+        ok: true, status: 200,
+        json: async () => ({
+          tag_name: 'v9.9.9', tarball_url: TARBALL_URL, html_url: 'x', assets: [],
+          body: `sha256: ${hash}\nsig: ${'A'.repeat(500)}\n`,
+        }),
+      });
+      try {
+        const latest = await mod.fetchLatestRelease(null);
+        assert.equal(latest.signature, null, 'a 500-char blob exceeds the Ed25519 bound and is not captured');
       } finally {
         globalThis.fetch = realFetch;
       }
