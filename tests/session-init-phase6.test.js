@@ -283,3 +283,46 @@ describe('session init Phase 6: status block splicing is stable', () => {
     assert.ok(first.includes('tail'), 'trailing user content preserved');
   });
 });
+
+// Regression: removing a stale block from a CLAUDE.md with no GSD project used
+// to reflow the whole file (collapsing every run of 3+ newlines anywhere and
+// trimming the tail). It now touches only the splice point — including when the
+// block sat at EOF, where head's own trailing blank line would otherwise
+// survive as a gratuitous extra one.
+describe('session init Phase 6: stale block removal touches only the splice point', () => {
+  const cleanupRun = async (claudeMd) => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-init6-clean-'));
+    try {
+      const home = join(root, 'home');
+      const projectDir = join(root, 'project');       // deliberately NO .gsd
+      await mkdir(join(home, '.claude'), { recursive: true });
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(join(projectDir, 'CLAUDE.md'), claudeMd);
+      const pluginRoot = join(root, 'plugin');
+      await mkdir(join(pluginRoot, 'hooks', 'lib'), { recursive: true });
+      cpSync(join(HOOKS_DIR, 'gsd-session-init.cjs'), join(pluginRoot, 'hooks', 'gsd-session-init.cjs'));
+      cpSync(join(HOOKS_DIR, 'lib', 'gsd-finder.cjs'), join(pluginRoot, 'hooks', 'lib', 'gsd-finder.cjs'));
+      runSessionInit(projectDir, pluginRoot, home);
+      runSessionInit(projectDir, pluginRoot, home); // idempotent
+      return readFileSync(join(projectDir, 'CLAUDE.md'), 'utf8');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  it('removes a block at EOF without leaving an extra blank line', async () => {
+    const out = await cleanupRun(`# Doc\n\nintro\n\n${BEGIN_MARKER}\nstale\n${END_MARKER}\n`);
+    assert.equal(out, '# Doc\n\nintro\n');
+  });
+
+  it('keeps the user\'s own blank runs and the separator around the block', async () => {
+    const out = await cleanupRun(`# Title\n\n\n\nSpaced above.\n\n${BEGIN_MARKER}\nstale\n${END_MARKER}\n\nTrailing.\n`);
+    assert.equal(out, '# Title\n\n\n\nSpaced above.\n\nTrailing.\n',
+      'blank runs elsewhere in the file are the user\'s formatting');
+  });
+
+  it('removes a block at the very start of the file', async () => {
+    const out = await cleanupRun(`${BEGIN_MARKER}\nstale\n${END_MARKER}\n\nRest.\n`);
+    assert.equal(out, 'Rest.\n');
+  });
+});

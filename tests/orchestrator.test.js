@@ -3052,3 +3052,34 @@ describe('orchestrator reports no-op requests instead of silently succeeding', (
     assert.equal(result.task_id, '1.1');
   });
 });
+
+// Regression: `unblock_tasks` is declared as an array of task IDs. A non-array
+// failed Array.isArray and was dropped with no error — the same silent no-op
+// this release fixes for state-read's `fields`. A current_phase that resolves
+// to no phase was skipped just as quietly.
+describe('resumeWorkflow validates unblock_tasks', () => {
+  let tempDir;
+  beforeEach(async () => { tempDir = await mkdtemp(join(tmpdir(), 'gsd-unb-')); });
+  afterEach(async () => { await rm(tempDir, { recursive: true, force: true }); });
+
+  for (const [label, value] of [
+    ['a string', '1.1'],
+    ['an object', { id: '1.1' }],
+    ['a number', 11],
+  ]) {
+    it(`rejects unblock_tasks given as ${label}`, async () => {
+      await init({ project: 'unb', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], basePath: tempDir });
+      const result = await resumeWorkflow({ basePath: tempDir, unblock_tasks: value });
+      assert.equal(result.error, true, 'must not silently ignore the request');
+      assert.match(result.message, /unblock_tasks must be an array/);
+    });
+  }
+
+  it('still resumes normally when unblock_tasks is omitted or empty', async () => {
+    await init({ project: 'unb', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], basePath: tempDir });
+    const omitted = await resumeWorkflow({ basePath: tempDir });
+    assert.ok(!omitted.error, `omitted should resume: ${omitted.message}`);
+    const empty = await resumeWorkflow({ basePath: tempDir, unblock_tasks: [] });
+    assert.ok(!empty.error, `empty array should resume: ${empty.message}`);
+  });
+});

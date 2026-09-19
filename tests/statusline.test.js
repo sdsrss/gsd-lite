@@ -1,18 +1,32 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const HOOK_PATH = join(import.meta.dirname, '..', 'hooks', 'gsd-statusline.cjs');
 
+// The hook writes a context bridge file per session id into os.tmpdir(). Nothing
+// removed them, so every run of this suite left orphans behind; record each id
+// runHook uses and clear them when the file is done.
+const bridgeSessions = new Set();
+function clearBridgeFiles() {
+  for (const id of bridgeSessions) {
+    try { rmSync(join(tmpdir(), `gsd-ctx-${id}.json`), { force: true }); } catch { /* best effort */ }
+  }
+  bridgeSessions.clear();
+}
+after(clearBridgeFiles);
+
 /**
  * Helper: run the statusline hook with given JSON input and optional cwd override.
  * Returns { stdout, stderr, status }.
  */
 function runHook(inputData, opts = {}) {
+  const sessionId = String(inputData?.session_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  if (sessionId) bridgeSessions.add(sessionId);
   const input = JSON.stringify(inputData);
   try {
     const stdout = execFileSync(process.execPath, [HOOK_PATH], {

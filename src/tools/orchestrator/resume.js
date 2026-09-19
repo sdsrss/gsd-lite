@@ -308,10 +308,20 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
     if (gsdDir) await unlink(join(gsdDir, '.session-end')).catch(() => {});
   } catch {}
 
+  // `unblock_tasks` is declared as an array of task IDs. A non-array used to
+  // fail Array.isArray and be dropped with no error at all — the same silent
+  // no-op this release fixes for state-read's `fields`.
+  if (unblock_tasks !== undefined && unblock_tasks !== null && !Array.isArray(unblock_tasks)) {
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `unblock_tasks must be an array of task IDs (got ${typeof unblock_tasks})` };
+  }
+
   // Force-unblock specified tasks before normal resume flow
   if (Array.isArray(unblock_tasks) && unblock_tasks.length > 0 && _depth === 0) {
     const phase = getCurrentPhase(state);
-    if (phase) {
+    if (!phase) {
+      return { error: true, code: ERROR_CODES.NOT_FOUND, message: `No task was unblocked — current phase ${state.current_phase} not found` };
+    }
+    {
       const patches = [];
       // Track what could not be unblocked. Silently skipping a typo'd or
       // already-running task id made `/gsd:resume --unblock 9.9` look like it
@@ -347,6 +357,10 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
         if (persistError) return persistError;
         // Re-read state after unblock and continue (recursive call adds its own summary)
         const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
+        // The unblock itself persisted; if the resume that follows it failed,
+        // return that error unadorned rather than mixing success-shaped keys
+        // into an error object.
+        if (resumed.error) return resumed;
         return {
           ...resumed,
           unblocked: patches.map(p => p.id),
