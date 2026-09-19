@@ -1,4 +1,4 @@
-import { read, selectRunnableTask } from '../state/index.js';
+import { ERROR_CODES, read, selectRunnableTask } from '../state/index.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
 import { join } from 'node:path';
 import { unlink } from 'node:fs/promises';
@@ -313,11 +313,29 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
     const phase = getCurrentPhase(state);
     if (phase) {
       const patches = [];
+      // Track what could not be unblocked. Silently skipping a typo'd or
+      // already-running task id made `/gsd:resume --unblock 9.9` look like it
+      // worked — the caller got a plain dispatch result with no hint that its
+      // request was a no-op.
+      const skipped = [];
       for (const taskId of unblock_tasks) {
         const task = (phase.todo || []).find(t => t.id === taskId);
-        if (task?.lifecycle === 'blocked') {
+        if (!task) {
+          skipped.push({ id: taskId, reason: `not found in phase ${phase.id}` });
+        } else if (task.lifecycle !== 'blocked') {
+          skipped.push({ id: taskId, reason: `not blocked (lifecycle: ${task.lifecycle})` });
+        } else {
           patches.push({ id: taskId, lifecycle: 'pending', blocked_reason: null, unblock_condition: null });
         }
+      }
+      if (patches.length === 0 && skipped.length > 0) {
+        // Nothing was changed, so failing here is safe and tells the caller why.
+        return {
+          error: true,
+          code: ERROR_CODES.NOT_FOUND,
+          message: `No task was unblocked — ${skipped.map(s => `${s.id}: ${s.reason}`).join('; ')}`,
+          unblock_skipped: skipped,
+        };
       }
       if (patches.length > 0) {
         const persistError = await persist(basePath, {
@@ -328,7 +346,12 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
         });
         if (persistError) return persistError;
         // Re-read state after unblock and continue (recursive call adds its own summary)
-        return resumeWorkflow({ basePath, _depth: _depth + 1 });
+        const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
+        return {
+          ...resumed,
+          unblocked: patches.map(p => p.id),
+          ...(skipped.length > 0 ? { unblock_skipped: skipped } : {}),
+        };
       }
     }
   }

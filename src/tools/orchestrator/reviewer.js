@@ -40,6 +40,24 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     return { error: true, message: `Phase not found for scope_id ${result.scope_id}` };
   }
 
+  // Individual unknown task ids are tolerated and skipped (I-16) — a reviewer
+  // batch may legitimately name a task that has since moved on. But when a
+  // reviewer names tasks and NONE of them exist in this phase, the result
+  // cannot touch a single task: it used to return action:'review_accepted' and
+  // stamp phase_review accepted anyway, recording a review that reviewed
+  // nothing while the real tasks stayed checkpointed. Reject that outright,
+  // the way the executor and debugger handlers reject an unknown task_id.
+  const namedTaskIds = [...new Set([
+    ...(result.accepted_tasks || []),
+    ...(result.rework_tasks || []),
+  ])];
+  if (namedTaskIds.length > 0 && namedTaskIds.every((taskId) => !getTaskById(phase, taskId))) {
+    return {
+      error: true,
+      message: `None of the reviewed task(s) ${namedTaskIds.join(', ')} exist in phase ${phase.id}; review result rejected`,
+    };
+  }
+
   const taskPatches = [];
 
   // Accept tasks
