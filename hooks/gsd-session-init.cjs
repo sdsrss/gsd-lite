@@ -412,7 +412,9 @@ setTimeout(() => process.exit(0), 4000).unref();
           // are the user's own formatting and must survive untouched.
           const head = content.substring(0, beginIdx).replace(/\n{3,}$/, '\n\n');
           const tail = content.substring(endIdx + END_MARKER.length).replace(/^\n+/, '');
-          let newContent = head + tail;
+          // With the block at EOF there is no tail to separate from, so head's
+          // own trailing blank line would survive as a gratuitous extra one.
+          let newContent = tail === '' ? head.replace(/\n{2,}$/, '\n') : head + tail;
           if (!newContent.endsWith('\n')) newContent += '\n';
           if (newContent !== content) {
             const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;

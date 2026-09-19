@@ -135,6 +135,9 @@ describe('Driven plugin E2E: /plugin install → MCP tools → statusLine', { ti
   after(async () => {
     if (projectDir) await rm(projectDir, { recursive: true, force: true });
     if (home) await rm(home, { recursive: true, force: true });
+    // STEP 5 ran the real statusLine hook, which writes a context bridge file
+    // into os.tmpdir() keyed by session id — outside both temp dirs above.
+    await rm(join(tmpdir(), 'gsd-ctx-e2e-driven-session.json'), { force: true });
   });
 
   // ── STEP 1: plugin install ────────────────────────────────
