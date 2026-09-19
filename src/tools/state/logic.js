@@ -2,10 +2,9 @@
 
 import { dirname, join } from 'node:path';
 import { writeFile, rename, unlink, open } from 'node:fs/promises';
-import { ensureDir, readJson, writeJson, getStatePath, fsyncDir } from '../../utils.js';
+import { ensureDir, writeJson, getStatePath, fsyncDir } from '../../utils.js';
 import {
   TASK_LIFECYCLE,
-  migrateState,
   validateResearchArtifacts,
   validateResearchDecisionIndex,
   validateResearcherResult,
@@ -16,6 +15,7 @@ import {
   RESEARCH_FILES,
   DEFAULT_MAX_RETRY,
   ensureLockPathFromStatePath,
+  loadState,
   withStateLock,
   inferWorkflowModeAfterResearch,
   normalizeResearchArtifacts,
@@ -495,12 +495,10 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
   ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
-    const current = await readJson(statePath);
-    if (!current.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: current.error };
-    }
+    const loaded = await loadState(statePath);
+    if (loaded.error) return loaded.error;
 
-    const state = migrateState(current.data);
+    const state = loaded.state;
     const gsdDir = dirname(statePath);
     const researchDir = join(gsdDir, 'research');
     await ensureDir(researchDir);
