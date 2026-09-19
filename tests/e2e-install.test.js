@@ -361,9 +361,14 @@ describe('Layer A: plugin install E2E', () => {
     assert.ok(settings.statusLine.command.includes('gsd-statusline'));
   });
 
-  it('still registers all 3 hook types in settings.json', async () => {
+  it('registers no hooks in settings.json — the plugin hooks.json serves them', async () => {
     const settings = await readSettings(claudeDir);
-    assertSettingsHooks(settings);
+    for (const identifier of ['gsd-session-init', 'gsd-context-monitor', 'gsd-session-stop']) {
+      const found = Object.values(settings.hooks || {}).flat()
+        .find(e => e?.hooks?.some(h => h.command?.includes(identifier)));
+      assert.equal(found, undefined,
+        `${identifier} in settings.json would run alongside the plugin's own copy`);
+    }
   });
 
   it('installs all files to correct locations', async () => {
@@ -550,7 +555,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
 
     const required = [
       'install.js', 'uninstall.js', 'cli.js', 'launcher.js',
-      'package.json', '.mcp.json',
+      'package.json',
       'src/server.js',
       'hooks/gsd-statusline.cjs', 'hooks/gsd-session-init.cjs',
       'hooks/lib/gsd-finder.cjs',

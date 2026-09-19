@@ -30,7 +30,6 @@
   ],
   "files": [
     ".claude-plugin/",
-    ".mcp.json",
     "src/",
     "commands/",
     "agents/",

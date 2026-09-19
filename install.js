@@ -20,7 +20,14 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const HOOK_FILES = ['gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-context-monitor.cjs', 'gsd-statusline.cjs', 'gsd-session-stop.cjs'];
 
 // Hook registration config: hookType → { file identifier, matcher, timeout? }
-const HOOK_REGISTRY = [
+//
+// Plugin installs do NOT use this: the plugin system loads hooks/hooks.json out
+// of the plugin cache instead, and a settings.json copy alongside it would fire
+// every hook twice. hooks/hooks.json must therefore declare the same three
+// hooks with the same matchers and timeouts — tests/plugin-hooks.test.js pins
+// that, and the plugin branch below deregisters any settings.json entry an
+// earlier npx/manual install left behind.
+export const HOOK_REGISTRY = [
   { hookType: 'SessionStart', identifier: 'gsd-session-init', matcher: 'startup|clear|compact', timeout: 5 },
   { hookType: 'PostToolUse', identifier: 'gsd-context-monitor', matcher: '*' },
   { hookType: 'Stop', identifier: 'gsd-session-stop', matcher: '*', timeout: 3 },
@@ -99,6 +106,31 @@ function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
     return true;
   }
   return false;
+}
+
+/**
+ * Drop a previously registered GSD hook entry from settings.json.
+ *
+ * Used only on the plugin path, where hooks/hooks.json in the plugin cache is
+ * the live registration: an entry left here by an earlier npx/manual install
+ * would run the same hook a second time on every event.
+ *
+ * Returns true only when an entry was actually removed, so the caller reports
+ * what happened rather than inferring it from having reached this line.
+ */
+function unregisterHookEntry(hooks, { hookType, identifier }) {
+  const entries = hooks[hookType];
+  if (typeof entries === 'string') {
+    if (!entries.includes(identifier)) return false;
+    delete hooks[hookType];
+    return true;
+  }
+  if (!Array.isArray(entries)) return false;
+  const kept = entries.filter(e => !e.hooks?.some(h => h.command?.includes(identifier)));
+  if (kept.length === entries.length) return false;
+  if (kept.length === 0) delete hooks[hookType];
+  else hooks[hookType] = kept;
+  return true;
 }
 
 /**
@@ -353,20 +385,35 @@ export function main() {
     const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
     let statusLineRegistered = registerStatusLine(settings, statuslinePath);
 
-    // Always register hooks in settings.json regardless of install method.
-    // The plugin system's hooks.json auto-loading is unreliable — settings.json
-    // is the only reliable hook registration path (consistent with claude-mem-lite).
+    // Hooks are registered in exactly one place, chosen by install method.
+    // Plugin installs are served by hooks/hooks.json inside the plugin cache, so
+    // writing them here too would fire every hook twice per event; npx/manual
+    // installs have no plugin cache, so settings.json is the only route. Either
+    // way, deregister the other path's leftovers — a user who moves between
+    // install methods otherwise accumulates one live copy and one stale one.
     let hooksRegistered = false;
+    let hooksUnregistered = 0;
     if (!settings.hooks) settings.hooks = {};
     for (const config of HOOK_REGISTRY) {
-      if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
+      if (isPluginInstall) {
+        if (unregisterHookEntry(settings.hooks, config)) hooksUnregistered += 1;
+      } else if (registerHookEntry(settings.hooks, config)) {
+        hooksRegistered = true;
+      }
+    }
+    if (hooksUnregistered > 0) {
+      log(`  ✓ Removed ${hooksUnregistered} settings.json hook entr${hooksUnregistered === 1 ? 'y' : 'ies'} (plugin hooks.json handles registration)`);
     }
 
     const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;
     writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n');
     renameSync(tmpSettings, settingsPath);
-    if (statusLineRegistered || hooksRegistered) {
-      log('  ✓ GSD-Lite hooks registered in settings.json');
+    // Say which of the two actually landed. "hooks registered" printed after a
+    // plugin install — where hooksRegistered is false by design — would be the
+    // installer asserting work it did not do.
+    const wrote = [hooksRegistered && 'hooks', statusLineRegistered && 'statusLine'].filter(Boolean);
+    if (wrote.length > 0) {
+      log(`  ✓ GSD-Lite ${wrote.join(' + ')} registered in settings.json`);
     }
 
     // Record install mode so SessionStart's Phase 0 orphan-cleanup can
