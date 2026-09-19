@@ -114,7 +114,19 @@ function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
  */
 function readSettingsOrExit(settingsPath) {
   if (!existsSync(settingsPath)) return {};
-  const raw = readFileSync(settingsPath, 'utf-8');
+
+  let raw;
+  try {
+    raw = readFileSync(settingsPath, 'utf-8');
+  } catch (err) {
+    // EACCES (root-owned file, restrictive umask) or EISDIR. Unreadable is the
+    // same situation as unparseable: we cannot know what is in there, so we must
+    // not write over it — and the user deserves the guidance, not a stack trace.
+    log(`Error: ${settingsPath} could not be read — ${err.message}`);
+    log('  Installing would rewrite that file and discard everything in it.');
+    log('  Fix its permissions (or move it aside) and run the installer again.');
+    process.exit(1);
+  }
   if (raw.trim() === '') return {};
 
   let parsed;
@@ -167,8 +179,15 @@ export function main() {
   // the install here, with nothing copied and nothing half-registered. This runs
   // above the DRY_RUN branches on purpose — `--dry-run` predicts the real run,
   // and a real run would fail here, so the dry run reports it too.
+  //
+  // The parsed result is deliberately discarded. Everything between here and the
+  // write below takes real time (file copies, and `npm ci` when node_modules is
+  // absent), and settings.json is live: a running Claude Code session or another
+  // plugin's installer can write it in that window. Holding this copy and
+  // renaming it over the file at the end would discard their write — the exact
+  // harm this function exists to prevent. Re-read immediately before writing.
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
-  const settings = readSettingsOrExit(settingsPath);
+  readSettingsOrExit(settingsPath);
 
   log('Installing files...');
 
@@ -306,6 +325,11 @@ export function main() {
   //    When installed as a plugin, the plugin system handles MCP via .mcp.json,
   //    so we skip manual MCP registration to avoid name collisions.
   if (!DRY_RUN) {
+    // Fresh read: this is the copy that gets written back, so it has to reflect
+    // whatever landed in the file while the install was running. A parse failure
+    // that appeared in the meantime aborts here rather than clobbering.
+    const settings = readSettingsOrExit(settingsPath);
+
     if (!settings.mcpServers) settings.mcpServers = {};
     // Remove legacy "gsd-lite" server entry from older versions
     delete settings.mcpServers['gsd-lite'];

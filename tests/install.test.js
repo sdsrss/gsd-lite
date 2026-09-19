@@ -196,6 +196,38 @@ describe('install and uninstall scripts', () => {
     }
   });
 
+  it('does not claim a clean uninstall when deregistration failed', async () => {
+    // The hook files are deleted before settings.json is touched, so a failure
+    // there leaves entries pointing at paths that no longer exist — firing, and
+    // failing, every session. Reporting success there is the same defect the
+    // wrong-directory guard fixed, one branch over.
+    const { home, claudeDir } = await makeClaudeHome('gsd-uninstall-badsettings-');
+    try {
+      runScript('install.js', home);
+      const settingsPath = join(claudeDir, 'settings.json');
+      // Corrupt it the way a hand-edit would, after GSD is already registered.
+      const corrupted = `${await readFile(settingsPath, 'utf-8')}trailing garbage`;
+      await writeFile(settingsPath, corrupted);
+
+      let output = '';
+      try {
+        output = execFileSync('node', ['uninstall.js'], {
+          cwd: process.cwd(),
+          env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir },
+          encoding: 'utf-8',
+        });
+      } catch (err) {
+        output = `${err.stdout || ''}${err.stderr || ''}`;
+      }
+
+      assert.doesNotMatch(output, /✓ GSD-Lite uninstalled/, 'deregistration failed, so the uninstall is not clean');
+      assert.match(output, /settings\.json/, 'name the file the user has to fix');
+      assert.equal(await readFile(settingsPath, 'utf-8'), corrupted, 'and do not rewrite it');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('does not claim to have uninstalled anything when GSD was never installed', async () => {
     const { home } = await makeClaudeHome('gsd-uninstall-absent-');
     try {
@@ -233,6 +265,11 @@ describe('install and uninstall scripts', () => {
       await writeFile(join(runtimeDir, 'update-state.json'), '{"lastCheck":"2026-01-01T00:00:00Z"}\n');
       // A stale top-level file the reset step is supposed to clear.
       await writeFile(join(claudeDir, 'gsd', 'stale-from-old-version.js'), '// stale\n');
+      // Residue an older installer stranded. Seeding it is what makes the
+      // empty-filter assertion below able to fail: without it the assertion only
+      // proves the rewritten reset step does not create one, which it
+      // structurally cannot, so the sweep loop would be untested.
+      await mkdir(join(claudeDir, '.gsd-runtime-backup-12345'), { recursive: true });
 
       runScript('install.js', home);
 
@@ -268,6 +305,7 @@ describe('install and uninstall scripts', () => {
       const statePath = join(runtimeDir, 'update-state.json');
       await writeFile(statePath, '{"lastCheck":"2026-01-01T00:00:00Z"}\n');
       await chmod(statePath, 0o000);
+      await mkdir(join(claudeDir, '.gsd-runtime-backup-67890'), { recursive: true });
 
       runScript('install.js', home);
 
