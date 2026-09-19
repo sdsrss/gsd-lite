@@ -1512,8 +1512,13 @@ describe('createInitialState — requires validation', () => {
     assert.match(result.message, /forward\/self reference/);
   });
 
-  it('rejects non-positive-integer task index (malformed IDs)', () => {
-    for (const index of [0, -1, 1.5, 'x']) {
+  // Number.isInteger(2**53) is true, so an "integer" guard alone lets through an
+  // id whose numeric part cannot be incremented: Math.max(...) + 1 stops
+  // advancing there, and state-patch add_task can never derive another index for
+  // that phase. createInitialState is the path that can mint such an id at birth,
+  // so it has to refuse the same values add_task refuses.
+  it('rejects a task index that is not a positive safe integer (malformed or un-incrementable IDs)', () => {
+    for (const index of [0, -1, 1.5, 'x', Number.MAX_SAFE_INTEGER + 1, 1e21]) {
       const result = createInitialState({
         project: 'test',
         phases: [{ name: 'P1', tasks: [{ name: 'A', index }] }],
@@ -1521,6 +1526,16 @@ describe('createInitialState — requires validation', () => {
       assert.equal(result.error, true, `index ${JSON.stringify(index)} should be rejected`);
       assert.match(result.message, /index must be a positive integer/);
     }
+  });
+
+  it('accepts the largest index it can still increment', () => {
+    // The boundary the guard above sits on — one below it must still work, or
+    // the guard is off by one and rejects legitimate plans.
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [{ name: 'A', index: Number.MAX_SAFE_INTEGER }] }],
+    });
+    assert.equal(result.error, undefined, result.message);
   });
 
   it('rejects cross-phase TASK dependency (would deadlock — selectRunnableTask resolves task deps per-phase)', () => {
