@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { init, read, patchPlan, setLockPath } from '../src/tools/state/index.js';
+import { selectRunnableTask } from '../src/tools/state/logic.js';
 
 let tempDir;
 
@@ -287,6 +288,88 @@ describe('patchPlan — add_dependency', () => {
     });
     assert.equal(result.error, true);
     assert.match(result.message, /forward\/self reference/);
+  });
+});
+
+// There are three plan-authoring paths that accept a `requires` array:
+// createInitialState (schema.js), add_dependency and add_task (crud.js). The
+// first two validate shape / gate / target; add_task used to validate only
+// phase-kind deps, so a malformed task-kind dep reached state.json unchecked.
+// That is not cosmetic: selectRunnableTask silently treats a dep it cannot
+// resolve as satisfied, so the ordering the caller asked for just disappears.
+//
+// This gate covers task-kind `requires` entries on add_task. It does NOT cover
+// deps written into state.json by hand or by a future fourth path — those still
+// reach selectRunnableTask unvalidated.
+describe('patchPlan — add_task dependency validation parity', () => {
+  beforeEach(setup);
+  afterEach(() => rm(tempDir, { recursive: true, force: true }));
+
+  const BAD_DEPS = [
+    ['dangling task id', { kind: 'task', id: '9.9' }, /not found/],
+    ['cross-phase task dep', { kind: 'task', id: '1.1' }, /cross-phase/, 2],
+    ['out-of-set gate', { kind: 'task', id: '1.1', gate: 'bogus' }, /gate/],
+    ['non-object entry', '1.1', /object/],
+    ['unknown kind', { kind: 'wat', id: '1.1' }, /kind/],
+  ];
+
+  for (const [label, dep, pattern, phaseId = 1] of BAD_DEPS) {
+    it(`rejects ${label}`, async () => {
+      const result = await patchPlan({
+        operations: [{ op: 'add_task', phase_id: phaseId, task: { name: 'Bad dep', requires: [dep] } }],
+        basePath: tempDir,
+      });
+      assert.equal(result.error, true, `add_task accepted a ${label}`);
+      assert.match(result.message, pattern);
+
+      // Nothing was persisted — the patch is all-or-nothing.
+      const state = await read({ basePath: tempDir });
+      assert.ok(
+        !state.phases.some(p => p.todo.some(t => t.name === 'Bad dep')),
+        'rejected add_task must not persist the task',
+      );
+    });
+  }
+
+  it('still accepts a well-formed same-phase task dependency', async () => {
+    const result = await patchPlan({
+      operations: [{
+        op: 'add_task',
+        phase_id: 1,
+        task: { name: 'Good dep', requires: [{ kind: 'task', id: '1.1', gate: 'checkpoint' }] },
+      }],
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true, result.message);
+    const state = await read({ basePath: tempDir });
+    const added = state.phases[0].todo.find(t => t.name === 'Good dep');
+    assert.deepEqual(added.requires, [{ kind: 'task', id: '1.1', gate: 'checkpoint' }]);
+  });
+
+  // The behavioural consequence, not just the error message: an unresolvable dep
+  // makes selectRunnableTask offer the dependent task for parallel dispatch
+  // alongside the very prerequisite it declared.
+  it('no task reachable through add_task can silently lose its declared ordering', async () => {
+    for (const [, dep, , phaseId = 1] of BAD_DEPS) {
+      await patchPlan({
+        operations: [{ op: 'add_task', phase_id: phaseId, task: { name: 'Bad dep', requires: [dep] } }],
+        basePath: tempDir,
+      });
+    }
+    const state = await read({ basePath: tempDir });
+    const phase = state.phases[0];
+    const selection = selectRunnableTask(phase, state);
+    const offered = [selection.task, ...(selection.parallel_available || [])].filter(Boolean);
+    const prereq = phase.todo.find(t => t.id === '1.1');
+
+    assert.equal(prereq.lifecycle, 'pending', 'precondition: 1.1 has not run yet');
+    for (const task of offered) {
+      const declaresPrereq = (task.requires || []).some(d => String(d?.id ?? d) === '1.1');
+      assert.ok(
+        !declaresPrereq,
+        `task ${task.id} declares a dependency on 1.1 yet was offered as runnable while 1.1 is ${prereq.lifecycle}`,
+      );
+    }
   });
 });
 

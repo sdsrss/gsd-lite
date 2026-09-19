@@ -829,6 +829,49 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
   }, statePath);
 }
 
+const VALID_GATES = ['checkpoint', 'accepted', 'phase_complete'];
+
+/**
+ * Validate one `requires` entry for a task owned by `ownerPhase`.
+ *
+ * Three paths author a plan: createInitialState (schema.js), add_dependency and
+ * add_task. All three must enforce the same rules, because selectRunnableTask
+ * treats a dep it cannot resolve — unknown kind, out-of-set gate, non-object
+ * entry — as *satisfied*, so anything that slips through silently drops the
+ * ordering the caller asked for instead of failing loudly.
+ *
+ * Returns an error message string, or null when the entry is valid.
+ */
+function _validateRequiresEntry(state, ownerPhase, dep) {
+  if (!dep || typeof dep !== 'object' || Array.isArray(dep)) {
+    return `requires entry must be an object {kind: "task"|"phase", id: "..."} (got ${JSON.stringify(dep)})`;
+  }
+  if (!['task', 'phase'].includes(dep.kind)) {
+    return `requires.kind must be "task" or "phase" (got ${JSON.stringify(dep.kind)})`;
+  }
+  if (dep.gate && !VALID_GATES.includes(dep.gate)) {
+    return `requires.gate must be one of ${VALID_GATES.join(', ')} (got ${JSON.stringify(dep.gate)})`;
+  }
+  if (dep.kind === 'task') {
+    // Task deps must be same-phase to match selectRunnableTask's per-phase resolution.
+    if (!ownerPhase.todo?.some(t => t.id === dep.id)) {
+      return `Dependency target task ${dep.id} not found in same phase (cross-phase task dependencies are not supported)`;
+    }
+    return null;
+  }
+  const depPhaseId = Number(dep.id);
+  if (!state.phases.some(p => p.id === depPhaseId)) {
+    return `Dependency target phase ${dep.id} not found`;
+  }
+  // R-06 (audit M1): forbid forward/self phase references — a task may only
+  // depend on earlier phases. Keeps the phase dependency graph a backward-only
+  // DAG (no cycles, no runtime deadlock).
+  if (depPhaseId >= ownerPhase.id) {
+    return `phase dependency {kind:"phase", id:${dep.id}} is a forward/self reference — a task in phase ${ownerPhase.id} may only depend on earlier phases (${ownerPhase.id > 1 ? `1-${ownerPhase.id - 1}` : 'none available'})`;
+  }
+  return null;
+}
+
 function _applyPatchOp(state, op) {
   switch (op.op) {
     case 'add_task': {
@@ -848,18 +891,16 @@ function _applyPatchOp(state, op) {
       // Cannot add tasks to accepted phases
       if (phase.lifecycle === 'accepted') return { error: true, message: `Cannot add tasks to accepted phase ${phase_id}` };
 
-      // R-06 (audit M1): reject forward/self phase dependencies on the new task —
-      // a task may only depend on earlier phases (see createInitialState).
+      // Every requires entry goes through the same rules add_dependency and
+      // createInitialState enforce. Validating only phase-kind deps here let a
+      // malformed task-kind dep reach state.json, where selectRunnableTask reads
+      // it as satisfied and drops the ordering silently.
+      if (task.requires !== undefined && task.requires !== null && !Array.isArray(task.requires)) {
+        return { error: true, message: `task.requires must be an array (got ${JSON.stringify(task.requires)})` };
+      }
       for (const dep of (task.requires || [])) {
-        if (dep && dep.kind === 'phase') {
-          const depPhaseId = Number(dep.id);
-          if (!Number.isFinite(depPhaseId) || !state.phases.some(p => p.id === depPhaseId)) {
-            return { error: true, message: `requires references non-existent phase "${dep.id}"` };
-          }
-          if (depPhaseId >= phase_id) {
-            return { error: true, message: `phase dependency {kind:"phase", id:${dep.id}} is a forward/self reference — a task in phase ${phase_id} may only depend on earlier phases (${phase_id > 1 ? `1-${phase_id - 1}` : 'none available'})` };
-          }
-        }
+        const depError = _validateRequiresEntry(state, phase, dep);
+        if (depError) return { error: true, message: depError };
       }
 
       // Compute next task index
@@ -1002,31 +1043,8 @@ function _applyPatchOp(state, op) {
       const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));
       if (!phase) return { error: true, message: `Task ${task_id} not found` };
 
-      if (!['task', 'phase'].includes(requires.kind)) {
-        return { error: true, message: `requires.kind must be "task" or "phase"` };
-      }
-
-      const validGates = ['checkpoint', 'accepted', 'phase_complete'];
-      if (requires.gate && !validGates.includes(requires.gate)) {
-        return { error: true, message: `requires.gate must be one of ${validGates.join(', ')}` };
-      }
-
-      // Validate target exists (task deps must be same-phase to match selectRunnableTask resolution)
-      if (requires.kind === 'task') {
-        const targetInSamePhase = phase.todo?.some(t => t.id === requires.id);
-        if (!targetInSamePhase) return { error: true, message: `Dependency target task ${requires.id} not found in same phase (cross-phase task dependencies are not supported)` };
-      } else {
-        const phaseId = Number(requires.id);
-        if (!state.phases.some(p => p.id === phaseId)) {
-          return { error: true, message: `Dependency target phase ${requires.id} not found` };
-        }
-        // R-06 (audit M1): forbid forward/self phase references — a task may only
-        // depend on earlier phases (owning phase = phase.id). Keeps the phase
-        // dependency graph a backward-only DAG (no cycles, no runtime deadlock).
-        if (phaseId >= phase.id) {
-          return { error: true, message: `Phase dependency ${requires.id} is a forward/self reference — task ${task_id} in phase ${phase.id} may only depend on earlier phases (${phase.id > 1 ? `1-${phase.id - 1}` : 'none available'})` };
-        }
-      }
+      const depError = _validateRequiresEntry(state, phase, requires);
+      if (depError) return { error: true, message: depError };
 
       const task = phase.todo.find(t => t.id === task_id);
       // Check for duplicate dependency
