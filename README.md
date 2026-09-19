@@ -291,7 +291,7 @@ gsd-lite/
 │   ├── gsd-session-stop.cjs   # Graceful shutdown with crash markers
 │   ├── gsd-statusline.cjs     # StatusLine display (composite-aware)
 │   └── lib/                   # Shared hook utilities (gsd-finder, composite statusline, semver)
-├── tests/                  # 1041 tests (unit + simulation + E2E integration)
+├── tests/                  # unit + simulation + E2E integration tests
 ├── cli.js                  # Install/uninstall CLI entry
 ├── install.js              # Installation script (plugin-aware, idempotent)
 └── uninstall.js            # Uninstall script
@@ -300,7 +300,7 @@ gsd-lite/
 ## Testing
 
 ```bash
-npm test                    # Run all 1041 tests
+npm test                    # Run the full test suite
 npm run test:coverage       # Tests + coverage report (whole-package ~91% lines / ~82% branches; c8 gate: 80% lines / 75% branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file
@@ -315,9 +315,10 @@ node --test tests/file.js   # Run a single test file
 
 ## Documentation
 
-- [Design Document v3.5](docs/gsd-lite-design.md) — Full architecture and protocol spec
-- [Engineering Tasks](docs/gsd-lite-engineering-tasks.md) — 38 implementation tasks (5 phases, all complete)
-- [Calibration Notes](docs/calibration-notes.md) — Context threshold and TTL calibration
+- [`references/`](references/) — the 8 reference docs listed above. They ship with the package, and agents read them at runtime.
+- [`workflows/`](workflows/) — the 6 workflow specs listed above, same deal.
+
+Design notes (architecture spec, engineering task breakdown, calibration notes) live in a gitignored `docs/` directory: they are the author's working papers and are not part of a clone or the npm tarball.
 
 ## Requirements
 
