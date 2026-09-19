@@ -80,10 +80,15 @@ export async function init({ project, phases, research, force = false, basePath 
         return { error: true, code: ERROR_CODES.STATE_EXISTS, message: 'state.json already exists; pass force: true to reinitialize' };
       } catch {} // File doesn't exist, proceed
     } else {
-      // H-8: Backup existing state before force overwrite
+      // H-8: Backup existing state before force overwrite.
+      // Only back up a state that is actually usable. Forcing is the documented
+      // escape from a CORRUPT state.json, so backing the corrupt file up here
+      // would overwrite — and destroy — the last good .bak the user was told to
+      // recover from. A state being discarded for being unreadable is not worth
+      // the backup slot.
       try {
         const existing = await readJson(statePath);
-        if (existing.ok) {
+        if (existing.ok && isPlainObject(existing.data) && Array.isArray(existing.data.phases)) {
           await writeJson(join(gsdDir, 'state.json.bak'), existing.data);
         }
       } catch {} // No existing state to backup

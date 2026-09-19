@@ -88,8 +88,11 @@ export function withStateLock(fn, statePath) {
 
 export const DEFAULT_MAX_RETRY = 3;
 
+// Order matters, and so does the warning: `/gsd:start force: true` backs the
+// CURRENT state up over .gsd/state.json.bak, so reaching for it first would
+// destroy the very backup the first option points at.
 const RECOVERY_HINT =
-  'Restore .gsd/state.json from git or .gsd/state.json.bak, or re-run /gsd:start with force: true.';
+  'Recover it from git or .gsd/state.json.bak first; re-initialising with /gsd:start force: true discards the current state.';
 
 export const CORRUPT_STATE_MESSAGE =
   `state.json is corrupt: expected a JSON object with a "phases" array. ${RECOVERY_HINT}`;
@@ -109,7 +112,7 @@ export async function loadState(statePath) {
     // permission denied, truncated write) means the file is there but unusable —
     // reporting that as NO_PROJECT_DIR sends the user to /gsd:start, which then
     // refuses with STATE_EXISTS.
-    if (result.error?.includes('ENOENT')) {
+    if (result.code === 'ENOENT') {
       return { error: { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (state.json missing). Run /gsd:start or /gsd:prd to begin.' } };
     }
     return { error: { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `state.json is unreadable: ${result.error}. ${RECOVERY_HINT}` } };
