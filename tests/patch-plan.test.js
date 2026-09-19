@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -370,6 +370,76 @@ describe('patchPlan — add_task dependency validation parity', () => {
         `task ${task.id} declares a dependency on 1.1 yet was offered as runnable while 1.1 is ${prereq.lifecycle}`,
       );
     }
+  });
+});
+
+// add_task derives the next id as Math.max(existing indices) + 1. Two inputs
+// poison that arithmetic permanently: an index at Number.MAX_SAFE_INTEGER (which
+// Number.isInteger accepts) makes +1 stop advancing, and a task id without a dot
+// makes parseInt return NaN, which Math.max then propagates forever. Either way
+// every later auto-indexed add_task on that phase fails with "already exists"
+// and the phase can never take another task.
+//
+// Covers add_task's own derivation. A task id written into state.json by another
+// path is still only defended against here, not rejected at its source.
+describe('patchPlan — add_task index derivation cannot wedge a phase', () => {
+  beforeEach(setup);
+  afterEach(() => rm(tempDir, { recursive: true, force: true }));
+
+  it('keeps accepting tasks after one is added at MAX_SAFE_INTEGER', async () => {
+    const far = await patchPlan({
+      operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Far', index: Number.MAX_SAFE_INTEGER } }],
+      basePath: tempDir,
+    });
+    assert.equal(far.success, true, far.message);
+
+    const next = await patchPlan({
+      operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Next' } }],
+      basePath: tempDir,
+    });
+    // Either derive a usable index, or refuse with an explanation — but never
+    // hand back an unsafe id that wedges every subsequent add.
+    if (next.success) {
+      const state = await read({ basePath: tempDir });
+      const added = state.phases[0].todo.find(t => t.name === 'Next');
+      const index = Number(added.id.split('.')[1]);
+      assert.ok(Number.isSafeInteger(index), `derived unsafe task index in id ${added.id}`);
+      const again = await patchPlan({
+        operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Again' } }],
+        basePath: tempDir,
+      });
+      assert.equal(again.success, true, `phase wedged after two adds: ${again.message}`);
+    } else {
+      assert.match(next.message, /index/i, 'a refusal must say what the caller should do');
+      assert.doesNotMatch(next.message, /already exists/i, '"already exists" does not describe an index overflow');
+    }
+  });
+
+  it('never derives an id from a task id that has no numeric index', async () => {
+    // Simulates a task id that reached state.json without add_task's shape.
+    const state = await read({ basePath: tempDir });
+    state.phases[0].todo.push({
+      id: 'weird', name: 'no-dot', lifecycle: 'pending', level: 'L1', requires: [],
+      retry_count: 0, review_required: true, verification_required: true,
+      checkpoint_commit: null, research_basis: [], evidence_refs: [],
+    });
+    await writeFile(join(tempDir, '.gsd', 'state.json'), JSON.stringify(state, null, 2));
+
+    const result = await patchPlan({
+      operations: [{ op: 'add_task', phase_id: 1, task: { name: 'After weird' } }],
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true, result.message);
+
+    const after = await read({ basePath: tempDir });
+    const ids = after.phases[0].todo.map(t => t.id);
+    assert.ok(!ids.some(id => id.includes('NaN')), `persisted a NaN task id: ${ids.join(', ')}`);
+
+    const again = await patchPlan({
+      operations: [{ op: 'add_task', phase_id: 1, task: { name: 'And another' } }],
+      basePath: tempDir,
+    });
+    assert.equal(again.success, true, `phase wedged by a dotless id: ${again.message}`);
   });
 });
 
