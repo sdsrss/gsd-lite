@@ -16,7 +16,7 @@ async function makeClaudeHome(prefix) {
 function runScript(script, home, extraEnv = {}) {
   execFileSync('node', [script], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home, ...extraEnv },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), ...extraEnv },
     encoding: 'utf-8',
   });
 }

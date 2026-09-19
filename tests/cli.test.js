@@ -8,7 +8,11 @@ import { join } from 'node:path';
 function runCli(args, home) {
   return execFileSync('node', ['cli.js', ...args], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home },
+    // CLAUDE_CONFIG_DIR must be pinned alongside HOME: install.js and the hooks
+    // read `process.env.CLAUDE_CONFIG_DIR || homedir()/.claude`, and the env var
+    // wins. Inheriting a real one from the developer's shell sends this suite's
+    // writes into their LIVE Claude config instead of the temp HOME.
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
     encoding: 'utf-8',
   });
 }
@@ -60,7 +64,7 @@ describe('cli', () => {
     const home = await mkdtemp(join(tmpdir(), 'gsd-cli-bad-'));
     try {
       const r = spawnSync('node', ['cli.js', 'bogus-command'], {
-        cwd: process.cwd(), env: { ...process.env, HOME: home }, encoding: 'utf-8',
+        cwd: process.cwd(), env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') }, encoding: 'utf-8',
       });
       assert.equal(r.status, 1);
       assert.match(r.stderr, /Unknown command: bogus-command/);
@@ -74,7 +78,7 @@ describe('cli', () => {
     const home = await mkdtemp(join(tmpdir(), 'gsd-cli-upd-'));
     try {
       const r = spawnSync('node', ['cli.js', 'update'], {
-        cwd: process.cwd(), env: { ...process.env, HOME: home }, encoding: 'utf-8', timeout: 20000,
+        cwd: process.cwd(), env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') }, encoding: 'utf-8', timeout: 20000,
       });
       assert.equal(r.status, 0, `update should exit 0: ${r.stderr}`);
       assert.match(r.stdout, /Checking for updates/);
@@ -86,7 +90,7 @@ describe('cli', () => {
   it('serve starts the MCP stdio server (spawn + terminate)', async () => {
     const home = await mkdtemp(join(tmpdir(), 'gsd-cli-serve-'));
     const child = spawn('node', ['cli.js', 'serve'], {
-      cwd: process.cwd(), env: { ...process.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: process.cwd(), env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     try {
       const state = await new Promise((resolve) => {
