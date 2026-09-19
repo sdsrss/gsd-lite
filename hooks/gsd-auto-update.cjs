@@ -117,6 +117,10 @@ async function checkForUpdate(options = {}) {
             updateAvailable: true,
             from: getCurrentVersionImpl(installMode),
             to: state.latestVersion,
+            // Nothing was fetched and nothing was installed — this is last
+            // check's answer, replayed. Labelled so a caller does not report it
+            // as an install that failed.
+            action: 'cached',
             installMode,
           };
         }
@@ -786,8 +790,34 @@ function syncPluginCache(extractedDir, verbose = false) {
   }
 }
 
+/**
+ * The one line a CLI should add on top of checkForUpdate's own verbose output.
+ *
+ * checkForUpdate returns null from six different outcomes — orphan state, dev
+ * mode, throttled, fetch failure, 403 rate limit, and genuinely up to date — so
+ * null carries no verdict and the caller must not invent one. In verbose mode
+ * checkForUpdate has already printed which of the six it was; anything this
+ * function added would at best repeat it and at worst contradict it.
+ *
+ * Returns null when there is nothing to add.
+ */
+function describeUpdateOutcome(result) {
+  if (!result) return null;
+  if (result.updated) return `\n✓ Updated: v${result.from} → v${result.to}`;
+  if (!result.updateAvailable) return null;
+  if (result.action === 'plugin_update') {
+    return `\n! Update available: v${result.to}. Run /plugin update gsd`;
+  }
+  if (result.action === 'cached') {
+    return `\n! Update available: v${result.to} (from an earlier check — this run was throttled).`
+      + '\n  Run `gsd update --force` to check again now.';
+  }
+  return `\n! Update available v${result.to} but the install did not complete. Try manually.`;
+}
+
 module.exports = {
   checkForUpdate,
+  describeUpdateOutcome,
   downloadAndInstall,
   fetchLatestRelease,
   getCurrentVersion,
