@@ -136,6 +136,58 @@ describe('install and uninstall scripts', () => {
     }
   });
 
+  // Every removal in uninstall.js is existsSync-gated and every JSON edit sits in
+  // a bare catch, so pointing it at the wrong directory removes nothing, says
+  // nothing, and then prints the success line. A typo'd CLAUDE_CONFIG_DIR, or an
+  // unset one under sudo/systemd/CI where HOME differs, leaves a fully live
+  // install behind while telling the user it is gone.
+  it('refuses to uninstall from a directory that does not exist, leaving a real install intact', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-uninstall-wrongdir-');
+    try {
+      runScript('install.js', home);
+      assert.ok(existsSync(join(claudeDir, 'gsd')), 'precondition: GSD is installed');
+
+      let status = 0;
+      let output = '';
+      try {
+        // Same shape as a typo: .cluade instead of .claude
+        runScript('uninstall.js', home, { CLAUDE_CONFIG_DIR: join(home, '.cluade') });
+      } catch (err) {
+        status = err.status ?? 1;
+        output = `${err.stdout || ''}${err.stderr || ''}`;
+      }
+
+      assert.notEqual(status, 0, 'uninstalling from a missing directory must not report success');
+      assert.doesNotMatch(output, /✓ GSD-Lite uninstalled/, 'must not claim it uninstalled anything');
+      assert.ok(existsSync(join(claudeDir, 'gsd')), 'the real install must be untouched');
+      const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
+      assert.ok(settings.mcpServers?.gsd, 'the real registration must be untouched');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not claim to have uninstalled anything when GSD was never installed', async () => {
+    const { home } = await makeClaudeHome('gsd-uninstall-absent-');
+    try {
+      // ~/.claude exists but holds no GSD files — a no-op, not a removal.
+      let output = '';
+      try {
+        output = execFileSync('node', ['uninstall.js'], {
+          cwd: process.cwd(),
+          env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
+          encoding: 'utf-8',
+        });
+      } catch (err) {
+        output = `${err.stdout || ''}${err.stderr || ''}`;
+      }
+      assert.doesNotMatch(output, /✓ GSD-Lite uninstalled/, 'nothing was removed, so nothing was uninstalled');
+      assert.match(output, /nothing|not installed|no GSD/i, 'say that there was nothing to remove');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('registers GSD in composite statusLine registry when composite is active', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-composite-');
     try {
