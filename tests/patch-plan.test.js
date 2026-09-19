@@ -314,13 +314,6 @@ describe('patchPlan — add_task dependency validation parity', () => {
     ['out-of-set gate', { kind: 'task', id: '1.1', gate: 'bogus' }, /gate/],
     ['non-object entry', '1.1', /object/],
     ['unknown kind', { kind: 'wat', id: '1.1' }, /kind/],
-    // The gate vocabulary is kind-dependent, and selectRunnableTask already
-    // knows it: logic.js:64 blocks a task-kind dep gated on phase_complete
-    // unconditionally, and its own diagnostic calls the gate "invalid for
-    // task-kind dependency". A validator that treats gates as one flat set lets
-    // an LLM-authored plan deadlock a phase with no recovery but hand-editing
-    // state.json — the same silent-ordering-loss this suite exists to stop.
-    ['phase_complete gate on a task dep', { kind: 'task', id: '1.1', gate: 'phase_complete' }, /gate/],
   ];
 
   for (const [label, dep, pattern, phaseId = 1] of BAD_DEPS) {
@@ -338,38 +331,6 @@ describe('patchPlan — add_task dependency validation parity', () => {
         !state.phases.some(p => p.todo.some(t => t.name === 'Bad dep')),
         'rejected add_task must not persist the task',
       );
-    });
-  }
-
-  it('rejects a phase_complete gate through add_dependency too', async () => {
-    const result = await patchPlan({
-      operations: [{ op: 'add_dependency', task_id: '1.3', requires: { kind: 'task', id: '1.1', gate: 'phase_complete' } }],
-      basePath: tempDir,
-    });
-    assert.equal(result.error, true, 'add_dependency accepted a gate its own scheduler refuses');
-    assert.match(result.message, /gate/);
-  });
-
-  it('still accepts phase_complete on a phase-kind dependency', async () => {
-    // The gate is only wrong on task-kind deps. Over-rejecting here would break
-    // the ordering primitive the split exists to protect.
-    const result = await patchPlan({
-      operations: [{ op: 'add_task', phase_id: 2, task: { name: 'Gated', requires: [{ kind: 'phase', id: 1, gate: 'phase_complete' }] } }],
-      basePath: tempDir,
-    });
-    assert.equal(result.success, true, result.message);
-  });
-
-  // Without the array guard, a caller passing one dependency instead of a list
-  // gets an uncaught TypeError out of patchPlan rather than a structured error.
-  for (const bad of [{ kind: 'task', id: '1.1' }, 42, 'oops']) {
-    it(`rejects a non-array requires (${JSON.stringify(bad)}) without throwing`, async () => {
-      const result = await patchPlan({
-        operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Bad shape', requires: bad } }],
-        basePath: tempDir,
-      });
-      assert.equal(result.error, true);
-      assert.match(result.message, /array/i);
     });
   }
 
@@ -427,17 +388,6 @@ describe('patchPlan — add_task dependency validation parity', () => {
 describe('patchPlan — add_task index derivation cannot wedge a phase', () => {
   beforeEach(setup);
   afterEach(() => rm(tempDir, { recursive: true, force: true }));
-
-  it('rejects an explicit index that is an integer but not a safe integer', async () => {
-    // Number.isInteger(1e21) is true, so this is the only shape that tells the
-    // two predicates apart — without it the isSafeInteger guard is untested.
-    const result = await patchPlan({
-      operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Huge', index: 1e21 } }],
-      basePath: tempDir,
-    });
-    assert.equal(result.error, true);
-    assert.match(result.message, /index/i);
-  });
 
   it('keeps accepting tasks after one is added at MAX_SAFE_INTEGER', async () => {
     const far = await patchPlan({

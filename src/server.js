@@ -80,7 +80,7 @@ const TOOLS = [
                     name: { type: 'string', description: 'Task name (required)' },
                     index: { type: 'number', description: 'Task index within phase (default: auto)' },
                     level: { type: 'string', description: 'Complexity level: L0/L1/L2/L3 (default: L1)' },
-                    requires: { type: 'array', description: 'Dependencies: [{kind: "task"|"phase", id: "1.1", gate?: ...}] (default: []). Gates are kind-dependent: a task-kind dep takes "checkpoint" or "accepted"; a phase-kind dep takes "accepted" or "phase_complete". A task-kind dep gated on "phase_complete" can never become runnable and is rejected.' },
+                    requires: { type: 'array', description: 'Dependencies: [{kind: "task"|"phase", id: "1.1", gate?: "checkpoint"|"accepted"|"phase_complete"}] (default: [])' },
                     review_required: { type: 'boolean', description: 'Whether review is needed (default: true)' },
                     verification_required: { type: 'boolean', description: 'Whether verification is needed (default: true)' },
                   },
