@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 // Driven plugin E2E: unlike e2e-install.test.js (which asserts the
 // installed FILE TREE), this test simulates a real user's plugin session —
 // it populates the plugin cache the way `/plugin install gsd@gsd` does, boots
-// the MCP server through the true `.mcp.json` entry point (launcher.js), drives
+// the MCP server through the true plugin.json entry point (launcher.js), drives
 // real slash-command flows over JSON-RPC (/gsd:status → health, /gsd:start →
 // state-init), and renders the statusLine hook from the resulting live state.
 // It verifies the plugin is USABLE end-to-end, not merely present on disk.
@@ -24,7 +24,7 @@ const PROJECT_ROOT = resolve(import.meta.dirname, '..');
 const CACHE_ITEMS = [
   'commands', 'agents', 'workflows', 'references', 'hooks', 'src',
   '.claude-plugin', 'launcher.js', 'install.js', 'uninstall.js',
-  '.mcp.json', 'package.json', 'package-lock.json', 'node_modules',
+  'package.json', 'package-lock.json', 'node_modules',
 ];
 
 const HOOK_FILES = [
@@ -103,7 +103,7 @@ describe('Driven plugin E2E: /plugin install → MCP tools → statusLine', { ti
     installOutput = execFileSync('node', [join(cacheRoot, 'install.js')], { cwd: cacheRoot, env, encoding: 'utf8' });
     settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf8'));
 
-    // STEP 3+4 — boot the MCP server via launcher.js (the .mcp.json entry) and
+    // STEP 3+4 — boot the MCP server via launcher.js (the plugin.json entry) and
     // drive a realistic session: initialize → tools/list → /gsd:status → /gsd:start.
     projectDir = await mkdtemp(join(tmpdir(), 'gsd-driven-project-'));
     ({ responses: mcp } = await driveMcp('node', [join(cacheRoot, 'launcher.js')], [
@@ -148,28 +148,39 @@ describe('Driven plugin E2E: /plugin install → MCP tools → statusLine', { ti
     assert.deepEqual(cmds, ['doctor', 'prd', 'resume', 'start', 'status', 'stop'], 'all 6 slash commands present in cache');
   });
 
-  it('cache plugin.json identifies the plugin and .mcp.json boots via launcher.js', async () => {
+  it('cache plugin.json identifies the plugin and boots the server via launcher.js', async () => {
     const pj = JSON.parse(await readFile(join(cacheRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
     assert.equal(pj.name, 'gsd');
     assert.equal(pj.version, version);
-    const mcpJson = JSON.parse(await readFile(join(cacheRoot, '.mcp.json'), 'utf8'));
-    assert.ok((mcpJson.mcpServers?.gsd?.args || []).some(a => a.includes('launcher.js')),
-      '.mcp.json should launch the MCP server via launcher.js');
+    assert.ok((pj.mcpServers?.gsd?.args || []).some(a => a.includes('launcher.js')),
+      'plugin.json should launch the MCP server via launcher.js');
+    assert.ok(!existsSync(join(cacheRoot, '.mcp.json')),
+      'a .mcp.json beside plugin.json would declare the same server twice');
   });
 
   // ── STEP 2: plugin-mode wiring ────────────────────────────
   it('plugin mode does NOT create a duplicate manual MCP entry or user-scope commands', () => {
-    assert.equal(settings.mcpServers?.gsd, undefined, 'plugin mode: MCP served by .mcp.json, not settings.json');
+    assert.equal(settings.mcpServers?.gsd, undefined, 'plugin mode: MCP served by plugin.json, not settings.json');
     assert.ok(!existsSync(join(claudeDir, 'commands', 'gsd')), 'plugin mode: no user-scope commands/gsd copy');
     assert.ok(installOutput.includes('installed successfully'), 'installer reports success');
   });
 
-  it('wires statusLine + all 3 hook types and copies all 5 hook scripts', () => {
+  it('wires statusLine only, leaving all 3 hook types to the plugin hooks.json', () => {
+    // statusLine is a top-level settings.json key that a plugin cannot write,
+    // so install.js still owns it. The three hooks are the opposite case: the
+    // plugin system loads them from the cache, so registering them here as well
+    // would run each one twice per event.
     assert.ok(settings.statusLine?.command?.includes('gsd-statusline'), 'statusLine registered');
     const hasHook = (t, id) => settings.hooks?.[t]?.some(e => e.hooks?.some(h => h.command?.includes(id)));
-    assert.ok(hasHook('SessionStart', 'gsd-session-init'), 'SessionStart hook wired');
-    assert.ok(hasHook('PostToolUse', 'gsd-context-monitor'), 'PostToolUse hook wired');
-    assert.ok(hasHook('Stop', 'gsd-session-stop'), 'Stop hook wired');
+    assert.ok(!hasHook('SessionStart', 'gsd-session-init'), 'SessionStart not duplicated in settings.json');
+    assert.ok(!hasHook('PostToolUse', 'gsd-context-monitor'), 'PostToolUse not duplicated in settings.json');
+    assert.ok(!hasHook('Stop', 'gsd-session-stop'), 'Stop not duplicated in settings.json');
+
+    const cacheHooks = JSON.parse(readFileSync(join(cacheRoot, 'hooks', 'hooks.json'), 'utf8'));
+    for (const [type, id] of [['SessionStart', 'gsd-session-init'], ['PostToolUse', 'gsd-context-monitor'], ['Stop', 'gsd-session-stop']]) {
+      assert.ok(cacheHooks.hooks?.[type]?.some(e => e.hooks?.some(h => h.command?.includes(id))),
+        `${type} served from the plugin cache hooks.json`);
+    }
     for (const h of HOOK_FILES) {
       assert.ok(existsSync(join(claudeDir, 'hooks', h)), `hook script ${h} copied`);
     }

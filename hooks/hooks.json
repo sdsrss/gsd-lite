@@ -1,4 +1,40 @@
 {
-  "description": "GSD-Lite hooks — authoritative registration is in settings.json via install.js. This file cleared to prevent double execution if the plugin system also loads it.",
-  "hooks": {}
+  "description": "GSD-Lite hooks for plugin installs. The plugin system loads this file from the plugin cache; npx/manual installs get the same three hooks written into settings.json by install.js, which deregisters them when it detects a plugin install so nothing fires twice. Keep the matchers and timeouts here in sync with HOOK_REGISTRY in install.js — tests/plugin-hooks.test.js asserts they agree.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-session-init.cjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-context-monitor.cjs\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gsd-session-stop.cjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
 }

@@ -4,7 +4,7 @@
 //    install.js-written state behind, run inline cleanup and exit.
 // 1. Cleans up stale temp files (throttled to once/day).
 // 2. Auto-registers statusLine in settings.json if not already configured.
-// 3. Self-heals .mcp.json if missing.
+// 3. (removed — the MCP server is declared inline in plugin.json)
 // 4. Shows notification if a previous background update completed or found a new version.
 // 5. Spawns background auto-update (detached, non-blocking).
 // 6. Injects GSD project progress into stdout + CLAUDE.md (if active project found).
@@ -325,37 +325,14 @@ setTimeout(() => process.exit(0), 4000).unref();
     }
   } catch { /* silent */ }
 
-  // ── Phase 3: Self-heal .mcp.json in plugin directories ──
-  // If .mcp.json is missing (e.g. git operations deleted it), regenerate it
-  // so the plugin system can register the GSD MCP server.
-  try {
-    const pluginsPath = path.join(claudeDir, 'plugins', 'installed_plugins.json');
-    if (fs.existsSync(pluginsPath)) {
-      const plugins = JSON.parse(fs.readFileSync(pluginsPath, 'utf8'));
-      const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
-      if (gsdEntry) {
-        const mcpContent = JSON.stringify({
-          mcpServers: {
-            // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional — Claude plugin system substitutes this at runtime
-            gsd: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/launcher.js'] },
-          },
-        }, null, 2) + '\n';
-        // Check marketplace dir
-        const marketplaceDir = path.join(claudeDir, 'plugins', 'marketplaces', 'gsd');
-        const marketplaceMcp = path.join(marketplaceDir, '.mcp.json');
-        if (fs.existsSync(marketplaceDir) && !fs.existsSync(marketplaceMcp)) {
-          fs.writeFileSync(marketplaceMcp, mcpContent);
-        }
-        // Check plugin cache dir
-        if (gsdEntry.installPath) {
-          const cacheMcp = path.join(gsdEntry.installPath, '.mcp.json');
-          if (fs.existsSync(gsdEntry.installPath) && !fs.existsSync(cacheMcp)) {
-            fs.writeFileSync(cacheMcp, mcpContent);
-          }
-        }
-      }
-    }
-  } catch { /* silent */ }
+  // ── Phase 3: removed ──
+  // This used to regenerate a missing .mcp.json in the marketplace and cache
+  // directories. The MCP server is now declared inline in plugin.json instead,
+  // for the reason in that file: a .mcp.json at the repo root is also read as
+  // project-scope MCP config by anyone who opens the repo, and ${CLAUDE_PLUGIN_ROOT}
+  // does not expand there. Writing one back now would declare the server twice.
+  // plugin.json cannot go missing on its own — without it the plugin does not
+  // load at all — so there is nothing left here to self-heal.
 
   // ── Phase 4: Show notification from previous background auto-update ──
   try {
