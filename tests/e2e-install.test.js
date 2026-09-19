@@ -21,7 +21,11 @@ async function makeClaudeHome(prefix) {
 function runInstall(home, extraEnv = {}) {
   execFileSync('node', [join(PROJECT_ROOT, 'install.js')], {
     cwd: PROJECT_ROOT,
-    env: { ...process.env, HOME: home, ...extraEnv },
+    // CLAUDE_CONFIG_DIR must be pinned alongside HOME: install.js and the hooks
+    // read `process.env.CLAUDE_CONFIG_DIR || homedir()/.claude`, and the env var
+    // wins. Inheriting a real one from the developer's shell sends this suite's
+    // writes into their LIVE Claude config instead of the temp HOME.
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), ...extraEnv },
     encoding: 'utf-8',
   });
 }
@@ -29,7 +33,7 @@ function runInstall(home, extraEnv = {}) {
 function runUninstall(home, extraEnv = {}) {
   execFileSync('node', [join(PROJECT_ROOT, 'uninstall.js')], {
     cwd: PROJECT_ROOT,
-    env: { ...process.env, HOME: home, ...extraEnv },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), ...extraEnv },
     encoding: 'utf-8',
   });
 }
@@ -168,7 +172,7 @@ async function assertCleanUninstall(claudeDir) {
 async function assertMcpServerStarts(serverPath) {
   const child = spawn('node', [serverPath], {
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, HOME: tmpdir() },
+    env: { ...process.env, HOME: tmpdir(), CLAUDE_CONFIG_DIR: join(tmpdir(), '.claude-gsd-e2e-probe') },
   });
 
   const initRequest = JSON.stringify({
@@ -304,7 +308,7 @@ describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () =>
     // Run install.js from the npx-sim dir (no node_modules present)
     execFileSync('node', [join(npxSimDir, 'install.js')], {
       cwd: npxSimDir,
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
       encoding: 'utf-8',
       timeout: 55000,
     });
@@ -571,7 +575,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
   it('gsd install works from npm-installed package', () => {
     const gsdBin = join(npmPrefix, 'bin', 'gsd');
     execFileSync('node', [gsdBin, 'install'], {
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
       encoding: 'utf-8',
       timeout: 30000,
     });
@@ -591,7 +595,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
   it('gsd uninstall cleans everything', async () => {
     const gsdBin = join(npmPrefix, 'bin', 'gsd');
     execFileSync('node', [gsdBin, 'uninstall'], {
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
       encoding: 'utf-8',
       timeout: 30000,
     });
@@ -622,6 +626,7 @@ describe('Layer B: npx from tarball E2E', { timeout: 120000 }, () => {
         env: {
           ...process.env,
           HOME: home,
+          CLAUDE_CONFIG_DIR: join(home, '.claude'),
           npm_config_cache: npxCache,
         },
         encoding: 'utf-8',

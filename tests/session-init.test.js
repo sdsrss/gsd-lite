@@ -36,7 +36,7 @@ describe('session init update notifications', () => {
       }) + '\n');
 
       const output = execFileSync(process.execPath, [join(pluginRoot, 'hooks', 'gsd-session-init.cjs')], {
-        env: { ...process.env, HOME: home, PLUGIN_AUTO_UPDATE: '1' },
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), PLUGIN_AUTO_UPDATE: '1' },
         encoding: 'utf8',
         timeout: 5000,
       });
@@ -99,7 +99,7 @@ describe('session init CLAUDE.md injection sanitization (C2)', () => {
 
       execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
         cwd: projectDir,
-        env: { ...process.env, HOME: home, PLUGIN_AUTO_UPDATE: '1' },
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), PLUGIN_AUTO_UPDATE: '1' },
         encoding: 'utf8',
         timeout: 5000,
       });
@@ -142,7 +142,7 @@ describe('session init settings.json parse error handling (H5)', () => {
 
       // Should not throw, but should NOT overwrite corrupted file with empty object
       execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
-        env: { ...process.env, HOME: home, PLUGIN_AUTO_UPDATE: '1' },
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), PLUGIN_AUTO_UPDATE: '1' },
         encoding: 'utf8',
         timeout: 5000,
       });
@@ -171,7 +171,7 @@ describe('session init settings.json parse error handling (H5)', () => {
 
       // No settings.json exists — ENOENT case
       execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
-        env: { ...process.env, HOME: home, PLUGIN_AUTO_UPDATE: '1' },
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), PLUGIN_AUTO_UPDATE: '1' },
         encoding: 'utf8',
         timeout: 5000,
       });

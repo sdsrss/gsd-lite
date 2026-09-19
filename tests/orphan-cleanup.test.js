@@ -27,7 +27,7 @@ async function makeClaudeHome(prefix) {
 function runInstall(home, extraEnv = {}) {
   execFileSync('node', [join(REPO_ROOT, 'install.js')], {
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: home, ...extraEnv },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), ...extraEnv },
     encoding: 'utf-8',
   });
 }
@@ -80,7 +80,7 @@ async function seedInstalledState(claudeDir, { mode = 'plugin', withCompositeReg
 
 function runSessionInit(home) {
   return execFileSync(process.execPath, [join(home, '.claude', 'hooks', 'gsd-session-init.cjs')], {
-    env: { ...process.env, HOME: home, PLUGIN_AUTO_UPDATE: '1' },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), PLUGIN_AUTO_UPDATE: '1' },
     encoding: 'utf8',
     timeout: 5000,
   });
@@ -241,6 +241,10 @@ describe('gsd-auto-update.cjs — isOrphan guard', () => {
   it('isOrphan returns true when plugin marker + no installed_plugins entry', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-orphan-auto-update-');
     const prevHome = process.env.HOME;
+    // Pin CLAUDE_CONFIG_DIR too: the module under test resolves
+    // `CLAUDE_CONFIG_DIR || homedir()/.claude` and the env var wins, so a real
+    // one inherited from the developer's shell overrides this fixture's HOME.
+    const prevConfigDir = process.env.CLAUDE_CONFIG_DIR;
     const prevAuto = process.env.PLUGIN_AUTO_UPDATE;
     try {
       await mkdir(join(claudeDir, 'gsd'), { recursive: true });
@@ -251,6 +255,7 @@ describe('gsd-auto-update.cjs — isOrphan guard', () => {
         JSON.stringify({ plugins: {} }) + '\n',
       );
       process.env.HOME = home;
+      process.env.CLAUDE_CONFIG_DIR = claudeDir;
       delete process.env.PLUGIN_AUTO_UPDATE;
       // Load fresh — clear module cache so claudeDir captures correctly
       delete require.cache[require.resolve(AUTO_UPDATE)];
@@ -265,6 +270,7 @@ describe('gsd-auto-update.cjs — isOrphan guard', () => {
       assert.equal(result, null, 'checkForUpdate must short-circuit on orphan');
     } finally {
       if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+      if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
       if (prevAuto === undefined) delete process.env.PLUGIN_AUTO_UPDATE; else process.env.PLUGIN_AUTO_UPDATE = prevAuto;
       delete require.cache[require.resolve(AUTO_UPDATE)];
       delete require.cache[require.resolve(join(LIB_DIR, 'semver-sort.cjs'))];
@@ -275,11 +281,16 @@ describe('gsd-auto-update.cjs — isOrphan guard', () => {
   it('isOrphan returns false when marker = manual', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-orphan-manual-marker-');
     const prevHome = process.env.HOME;
+    // Pin CLAUDE_CONFIG_DIR too: the module under test resolves
+    // `CLAUDE_CONFIG_DIR || homedir()/.claude` and the env var wins, so a real
+    // one inherited from the developer's shell overrides this fixture's HOME.
+    const prevConfigDir = process.env.CLAUDE_CONFIG_DIR;
     const prevAuto = process.env.PLUGIN_AUTO_UPDATE;
     try {
       await mkdir(join(claudeDir, 'gsd'), { recursive: true });
       await writeFile(join(claudeDir, 'gsd', '.install-mode'), 'manual\n');
       process.env.HOME = home;
+      process.env.CLAUDE_CONFIG_DIR = claudeDir;
       delete process.env.PLUGIN_AUTO_UPDATE;
       delete require.cache[require.resolve(AUTO_UPDATE)];
       delete require.cache[require.resolve(join(LIB_DIR, 'semver-sort.cjs'))];
@@ -287,6 +298,7 @@ describe('gsd-auto-update.cjs — isOrphan guard', () => {
       assert.equal(mod.isOrphan(), false);
     } finally {
       if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+      if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
       if (prevAuto === undefined) delete process.env.PLUGIN_AUTO_UPDATE; else process.env.PLUGIN_AUTO_UPDATE = prevAuto;
       delete require.cache[require.resolve(AUTO_UPDATE)];
       delete require.cache[require.resolve(join(LIB_DIR, 'semver-sort.cjs'))];
