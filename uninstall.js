@@ -40,8 +40,7 @@ export function main() {
 
   // Without this, a wrong CLAUDE_CONFIG_DIR — a typo, or an unset one under
   // sudo/systemd/CI where HOME differs — removes nothing, reports success, and
-  // leaves a live install whose hooks keep firing every session. install.js has
-  // guarded this since the start; the uninstaller never did.
+  // leaves a live install whose hooks keep firing every session.
   if (!existsSync(CLAUDE_DIR)) {
     log(`Error: ${CLAUDE_DIR} not found, so there is nothing to uninstall there.`);
     log('  If your Claude Code config lives elsewhere, set CLAUDE_CONFIG_DIR and run this again.');

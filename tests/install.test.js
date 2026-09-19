@@ -122,6 +122,35 @@ describe('install and uninstall scripts', () => {
     });
   }
 
+  it('reports the bad settings.json under --dry-run too, without touching it', async () => {
+    // A dry run predicts the real run. The real run refuses here, so the dry run
+    // has to say so rather than printing a plan that would never execute.
+    const { home, claudeDir } = await makeClaudeHome('gsd-install-dryrun-badjson-');
+    const settingsPath = join(claudeDir, 'settings.json');
+    const body = '{\n  "model": "claude-opus-5",\n}\n';
+    try {
+      await writeFile(settingsPath, body);
+      let status = 0;
+      let output = '';
+      try {
+        execFileSync('node', ['install.js', '--dry-run'], {
+          cwd: process.cwd(),
+          env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir },
+          encoding: 'utf-8',
+        });
+      } catch (err) {
+        status = err.status ?? 1;
+        output = `${err.stdout || ''}${err.stderr || ''}`;
+      }
+      assert.notEqual(status, 0, '--dry-run must surface the blocker, not report a clean plan');
+      assert.match(output, /settings\.json/);
+      assert.equal(await readFile(settingsPath, 'utf-8'), body, 'dry run must never write');
+      assert.ok(!existsSync(join(claudeDir, 'gsd')), 'dry run must not install anything');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('still installs cleanly over an empty settings.json', async () => {
     // An empty (or whitespace-only) file carries no user settings, so there is
     // nothing to lose — this must stay a normal install, not a refusal.

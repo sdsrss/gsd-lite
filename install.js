@@ -164,9 +164,11 @@ export function main() {
   }
 
   // Check settings.json before touching anything: a file we cannot parse stops
-  // the install here, with nothing copied and nothing half-registered.
+  // the install here, with nothing copied and nothing half-registered. This runs
+  // above the DRY_RUN branches on purpose — `--dry-run` predicts the real run,
+  // and a real run would fail here, so the dry run reports it too.
   const settingsPath = join(CLAUDE_DIR, 'settings.json');
-  const existingSettings = readSettingsOrExit(settingsPath);
+  const settings = readSettingsOrExit(settingsPath);
 
   log('Installing files...');
 
@@ -177,24 +179,21 @@ export function main() {
     log('  ✓ Removed legacy gsd-lite runtime');
   }
 
-  // Reset the managed runtime directory to avoid stale files on reinstall, while
-  // keeping runtime/ (update-state.json, update-notification.json).
-  //
-  // This used to copy runtime/ out to ~/.claude/.gsd-runtime-backup-<pid>, wipe
-  // the whole directory, and copy back. A read failure while staging discarded
-  // the handle but not the directory already created on disk, so the wipe went
-  // ahead with nothing to restore from: the state this step promises to keep was
-  // lost, and an orphan staging dir was left in the user's config directory —
-  // one per failed attempt, since the name carries the pid.
-  //
-  // Removing the managed entries in place cannot lose runtime/, because it never
-  // moves it.
+  // Reset the managed runtime directory to clear stale files on reinstall, while
+  // keeping runtime/ (update-state.json, update-notification.json). Removing the
+  // managed entries in place is what makes that safe: runtime/ is never moved,
+  // so no failure between here and the end can lose it.
   if (!DRY_RUN && existsSync(RUNTIME_DIR)) {
     for (const entry of readdirSync(RUNTIME_DIR)) {
       if (entry === 'runtime') continue;
       rmSync(join(RUNTIME_DIR, entry), { recursive: true, force: true });
     }
-    // Sweep staging dirs stranded by earlier versions of this step.
+  }
+
+  // Sweep staging dirs stranded by earlier versions of the step above. Kept out
+  // of that block deliberately: the failure it cleans up after could leave
+  // ~/.claude/gsd missing entirely, which is exactly when the block does not run.
+  if (!DRY_RUN) {
     for (const entry of readdirSync(CLAUDE_DIR)) {
       if (entry.startsWith('.gsd-runtime-backup-')) {
         rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
@@ -307,8 +306,6 @@ export function main() {
   //    When installed as a plugin, the plugin system handles MCP via .mcp.json,
   //    so we skip manual MCP registration to avoid name collisions.
   if (!DRY_RUN) {
-    const settings = existingSettings;
-
     if (!settings.mcpServers) settings.mcpServers = {};
     // Remove legacy "gsd-lite" server entry from older versions
     delete settings.mcpServers['gsd-lite'];
