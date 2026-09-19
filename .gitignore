@@ -80,3 +80,6 @@ docs/
 evidence-archive.json
 
 .code-graph/
+
+# Maintenance-loop round state — local working notes, not part of the package
+.converge/
