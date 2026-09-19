@@ -237,7 +237,7 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
   2. 根据 action 分派:
 
      ▸ 各非终止 action 的具体处理见 `workflows/execution-flow.md` STEP 11 的**权威 Action 处理表**(单一真相源，覆盖编排器全部可返回 action:dispatch_executor / dispatch_reviewer / dispatch_debugger / dispatch_researcher / retry_executor / complete_phase / trigger_review / rework_required / review_accepted / continue_execution / replan_required / reconcile_workspace / rollback_to_dirty_phase / research_stored);9 步循环语义见 `references/execution-loop.md`。
-       派发子代理统一用 Agent tool(subagent_type: gsd:executor|reviewer|researcher|debugger)+ 对应 `orchestrator-handle-*-result` 回传;`complete_phase` 先 Bash 跑 lint/typecheck/test 再带 `verification`+`direction_ok` 调 `phase-complete`(见处理表)。每步完成回到步骤 1。
+       派发子代理统一用 Agent tool;subagent_type 取 `gsd:executor` / `gsd:reviewer` / `gsd:researcher` / `gsd:debugger`(插件安装),npx/手动安装下 agent 注册为无前缀的 `executor` / `reviewer` / `researcher` / `debugger` — 以当前会话 agent 列表中实际存在的名字为准+ 对应 `orchestrator-handle-*-result` 回传;`complete_phase` 先 Bash 跑 lint/typecheck/test 再带 `verification`+`direction_ok` 调 `phase-complete`(见处理表)。每步完成回到步骤 1。
 
   3. 终止条件 — 遇到以下 action 时退出循环 (与处理表一致):
 

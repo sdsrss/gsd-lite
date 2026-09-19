@@ -34,7 +34,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 
 ### Context Protection & Monitoring
 - **Subagent isolation** — Each task runs in its own agent context, preventing cross-contamination
-- **Real-time context health monitoring** — StatusLine tracks context usage and project phase; composite StatusLine support coexists with other plugins
+- **Real-time context health monitoring** — StatusLine tracks context usage and project phase; composite StatusLine support coexists with other plugins (StatusLine needs the `npx gsd-lite install` step — see Installation)
 - **Session lifecycle hooks** — Stop hook writes crash marker; SessionStart injects project status into CLAUDE.md; resume detects non-graceful exits
 - **Evidence-based verification** — Every claim backed by command output, not assertions
 - **Research with TTL** — Research artifacts include volatility ratings and expiration dates
@@ -126,7 +126,14 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 /plugin install gsd
 ```
 
-Automatically registers all commands, agents, workflows, MCP server, hooks, and auto-update. Run these commands inside a Claude Code session.
+Registers the commands, agents, workflows, MCP server, session hooks, and update
+checks. Run these commands inside a Claude Code session, then restart it.
+
+One thing the plugin system cannot do for us: `statusLine` is a top-level
+`settings.json` setting, and a plugin may not write there — so the progress
+StatusLine stays off on a plugin-only install. Add it with `npx gsd-lite install`
+(safe to run alongside the plugin; it detects the plugin and skips everything the
+plugin already serves), and `npx gsd-lite uninstall` takes it back out.
 
 ### Method 2: npx
 
