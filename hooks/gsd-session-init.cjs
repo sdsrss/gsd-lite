@@ -82,6 +82,24 @@ function atomicWriteJson(filePath, value) {
   fs.renameSync(tmp, filePath);
 }
 
+/**
+ * Atomically rewrite a text file, writing *through* a symlink rather than over
+ * it. A project CLAUDE.md is often a link into a dotfiles or shared-team repo:
+ * readFileSync follows it, but renaming onto the link path replaces the link
+ * with a regular file, so the project silently forks a private copy and stops
+ * tracking the shared source. Resolving first keeps the link and updates its
+ * target, which is what editing a symlinked file normally does.
+ */
+function atomicWriteThroughLink(filePath, content) {
+  let target = filePath;
+  try {
+    target = fs.realpathSync(filePath);
+  } catch { /* file does not exist yet — write at the given path */ }
+  const tmp = target + `.gsd-tmp-${process.pid}`;
+  fs.writeFileSync(tmp, content);
+  fs.renameSync(tmp, target);
+}
+
 function cleanupOrphan() {
   // 1. Composite statusLine registry — call removeProvider BEFORE deleting
   //    the lib file it lives in.
@@ -391,9 +409,7 @@ setTimeout(() => process.exit(0), 4000).unref();
 
             // Only write if content changed
             if (newContent !== content) {
-              const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;
-              fs.writeFileSync(tmpClaude, newContent);
-              fs.renameSync(tmpClaude, claudeMdPath);
+              atomicWriteThroughLink(claudeMdPath, newContent);
             }
           } catch (e) {
             if (process.env.GSD_DEBUG) process.stderr.write(`gsd-session-init: CLAUDE.md write failed: ${e.message}\n`);
@@ -417,9 +433,7 @@ setTimeout(() => process.exit(0), 4000).unref();
           let newContent = tail === '' ? head.replace(/\n{2,}$/, '\n') : head + tail;
           if (!newContent.endsWith('\n')) newContent += '\n';
           if (newContent !== content) {
-            const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;
-            fs.writeFileSync(tmpClaude, newContent);
-            fs.renameSync(tmpClaude, claudeMdPath);
+            atomicWriteThroughLink(claudeMdPath, newContent);
           }
         }
       } catch { /* no CLAUDE.md or no block to clean — skip */ }
