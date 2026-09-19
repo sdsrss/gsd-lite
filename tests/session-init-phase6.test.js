@@ -225,3 +225,61 @@ describe('session init Phase 6: progress injection + CLAUDE.md', () => {
     }
   });
 });
+
+// ── Regression: CLAUDE.md status-block splicing ──
+// The block is located by a BEGIN…END pair that contains no further BEGIN.
+// Matching the markers independently ("first BEGIN, first END anywhere")
+// mis-splices any CLAUDE.md that also carries a stray marker — a hand-edit
+// that deleted a BEGIN and orphaned its END, or a file that mentions a marker
+// in prose. The head and tail slices then overlap (duplicating text on every
+// session, so the file grows without bound) or span unrelated content
+// (deleting it).
+describe('session init Phase 6: status block splicing is stable', () => {
+  const runs = async (initialClaudeMd, times = 3) => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-init6-splice-'));
+    try {
+      const { pluginRoot, projectDir, home } = await setupEnv(root, {}, initialClaudeMd);
+      const snapshots = [];
+      for (let i = 0; i < times; i++) {
+        runSessionInit(projectDir, pluginRoot, home);
+        snapshots.push(readFileSync(join(projectDir, 'CLAUDE.md'), 'utf8'));
+      }
+      return snapshots;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  it('converges after the first run on a clean file', async () => {
+    const [first, second, third] = await runs('# My Project\n\nInstructions.\n');
+    assert.equal(first, second, 'second session must not change the file');
+    assert.equal(second, third, 'third session must not change the file');
+    assert.equal(first.split(BEGIN_MARKER).length - 1, 1, 'exactly one status block');
+  });
+
+  it('does not grow the file when an orphan END precedes the block', async () => {
+    const initial = `# Doc\n\nnotes\n${END_MARKER}\n\nmore notes\n`;
+    const [first, second, third] = await runs(initial);
+    assert.equal(second, third, 'file must stop changing once the block exists');
+    assert.ok(second.length <= first.length + 1, `file grew across sessions: ${first.length} → ${second.length}`);
+    assert.ok(second.includes('more notes'), 'user content preserved');
+    assert.equal(second.split(BEGIN_MARKER).length - 1, 1, 'no duplicated status block');
+  });
+
+  it('keeps user text when a marker appears in prose before the block', async () => {
+    const initial = `# Doc\n\nEND first: ${END_MARKER}\nmiddle text\nBEGIN later: ${BEGIN_MARKER}\ntail text\n`;
+    const [, second, third] = await runs(initial);
+    assert.equal(second, third, 'file must stop changing once the block exists');
+    assert.ok(second.includes('middle text'), 'prose before the block preserved');
+    assert.ok(second.includes('tail text'), 'prose after the stray marker preserved');
+    assert.ok(second.includes('Mode: executing_task'), 'status block still written');
+  });
+
+  it('updates the block in place rather than appending a second one', async () => {
+    const initial = `# Doc\n\n${BEGIN_MARKER}\nstale status\n${END_MARKER}\n\ntail\n`;
+    const [first] = await runs(initial, 1);
+    assert.equal(first.split(BEGIN_MARKER).length - 1, 1, 'still exactly one block');
+    assert.ok(!first.includes('stale status'), 'stale block replaced');
+    assert.ok(first.includes('tail'), 'trailing user content preserved');
+  });
+});

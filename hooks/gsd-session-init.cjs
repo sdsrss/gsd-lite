@@ -49,6 +49,33 @@ function isOrphan() {
   } catch { return false; }
 }
 
+const BEGIN_MARKER = '<!-- GSD-STATUS-BEGIN -->';
+const END_MARKER = '<!-- GSD-STATUS-END -->';
+
+/**
+ * Locate the injected status block in a CLAUDE.md.
+ *
+ * Returns the first BEGIN…END pair that contains no further BEGIN, so the
+ * markers behave like a properly nested pair rather than "first BEGIN, first
+ * END anywhere". Matching them independently mis-splices any file that also
+ * mentions a marker in prose or carries an orphan left by a hand-edit: the
+ * head and tail slices then overlap (duplicating text on every session) or
+ * span unrelated content (deleting it).
+ *
+ * @returns {{begin: number, end: number}} -1/-1 when no complete block exists.
+ */
+function findStatusBlock(content) {
+  let begin = content.indexOf(BEGIN_MARKER);
+  while (begin !== -1) {
+    const end = content.indexOf(END_MARKER, begin + BEGIN_MARKER.length);
+    if (end === -1) break; // unterminated — treat as absent, append a fresh block
+    const nextBegin = content.indexOf(BEGIN_MARKER, begin + BEGIN_MARKER.length);
+    if (nextBegin === -1 || nextBegin > end) return { begin, end };
+    begin = nextBegin; // a nested BEGIN means the outer one never opened a block
+  }
+  return { begin: -1, end: -1 };
+}
+
 function atomicWriteJson(filePath, value) {
   const tmp = filePath + `.gsd-orphan-${process.pid}-${Date.now()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
@@ -325,8 +352,6 @@ setTimeout(() => process.exit(0), 4000).unref();
         // Write status block to CLAUDE.md
         const projectRoot = path.dirname(gsdDir);
         const claudeMdPath = path.join(projectRoot, 'CLAUDE.md');
-        const BEGIN_MARKER = '<!-- GSD-STATUS-BEGIN -->';
-        const END_MARKER = '<!-- GSD-STATUS-END -->';
 
         const statusBlock = [
           BEGIN_MARKER,
@@ -352,8 +377,7 @@ setTimeout(() => process.exit(0), 4000).unref();
               content = fs.readFileSync(claudeMdPath, 'utf8');
             } catch { /* file doesn't exist yet — will create */ }
 
-            const beginIdx = content.indexOf(BEGIN_MARKER);
-            const endIdx = content.indexOf(END_MARKER);
+            const { begin: beginIdx, end: endIdx } = findStatusBlock(content);
 
             let newContent;
             if (beginIdx !== -1 && endIdx !== -1) {
@@ -380,16 +404,16 @@ setTimeout(() => process.exit(0), 4000).unref();
       // No active GSD project — clean up stale CLAUDE.md block if it exists
       try {
         const claudeMdPath = path.join(cwd, 'CLAUDE.md');
-        const BEGIN_MARKER = '<!-- GSD-STATUS-BEGIN -->';
-        const END_MARKER = '<!-- GSD-STATUS-END -->';
         const content = fs.readFileSync(claudeMdPath, 'utf8');
-        const beginIdx = content.indexOf(BEGIN_MARKER);
-        const endIdx = content.indexOf(END_MARKER);
+        const { begin: beginIdx, end: endIdx } = findStatusBlock(content);
         if (beginIdx !== -1 && endIdx !== -1) {
-          // Remove the block and any trailing newline
-          let newContent = content.substring(0, beginIdx) + content.substring(endIdx + END_MARKER.length);
-          // Clean up extra blank lines left behind
-          newContent = newContent.replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+          // Remove the block, collapsing only the blank lines the removal itself
+          // left behind at the splice point — blank runs elsewhere in the file
+          // are the user's own formatting and must survive untouched.
+          const head = content.substring(0, beginIdx).replace(/\n{3,}$/, '\n\n');
+          const tail = content.substring(endIdx + END_MARKER.length).replace(/^\n+/, '');
+          let newContent = head + tail;
+          if (!newContent.endsWith('\n')) newContent += '\n';
           if (newContent !== content) {
             const tmpClaude = claudeMdPath + `.gsd-tmp-${process.pid}`;
             fs.writeFileSync(tmpClaude, newContent);
