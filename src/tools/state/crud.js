@@ -12,6 +12,7 @@ import {
   validateTransition,
   createInitialState,
   detectCycles,
+  gatesForKind,
 } from '../../schema.js';
 import {
   ERROR_CODES,
@@ -829,7 +830,8 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
   }, statePath);
 }
 
-const VALID_GATES = ['checkpoint', 'accepted', 'phase_complete'];
+// Gate vocabulary lives in schema.js — it is kind-dependent, and all three
+// authoring paths have to agree on it.
 
 /**
  * Validate one `requires` entry for a task owned by `ownerPhase`.
@@ -849,8 +851,9 @@ function _validateRequiresEntry(state, ownerPhase, dep) {
   if (!['task', 'phase'].includes(dep.kind)) {
     return `requires.kind must be "task" or "phase" (got ${JSON.stringify(dep.kind)})`;
   }
-  if (dep.gate && !VALID_GATES.includes(dep.gate)) {
-    return `requires.gate must be one of ${VALID_GATES.join(', ')} (got ${JSON.stringify(dep.gate)})`;
+  const validGates = gatesForKind(dep.kind);
+  if (dep.gate && !validGates.includes(dep.gate)) {
+    return `requires.gate must be one of ${validGates.join(', ')} for a ${dep.kind}-kind dependency (got ${JSON.stringify(dep.gate)})`;
   }
   if (dep.kind === 'task') {
     // Task deps must be same-phase to match selectRunnableTask's per-phase resolution.

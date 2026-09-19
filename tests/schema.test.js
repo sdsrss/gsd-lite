@@ -1528,6 +1528,31 @@ describe('createInitialState — requires validation', () => {
     }
   });
 
+  it('rejects a phase_complete gate on a task-kind dependency', () => {
+    // selectRunnableTask blocks such a dep unconditionally (logic.js:64), so a
+    // plan created with one is born deadlocked.
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [
+        { name: 'A' },
+        { name: 'B', requires: [{ kind: 'task', id: '1.1', gate: 'phase_complete' }] },
+      ] }],
+    });
+    assert.equal(result.error, true, 'createInitialState accepted a gate its own scheduler refuses');
+    assert.match(result.message, /gate/);
+  });
+
+  it('still accepts phase_complete on a phase-kind dependency', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [
+        { name: 'P1', tasks: [{ name: 'A' }] },
+        { name: 'P2', tasks: [{ name: 'B', requires: [{ kind: 'phase', id: 1, gate: 'phase_complete' }] }] },
+      ],
+    });
+    assert.equal(result.error, undefined, result.message);
+  });
+
   it('accepts the largest index it can still increment', () => {
     // The boundary the guard above sits on — one below it must still work, or
     // the guard is off by one and rejects legitimate plans.
@@ -1564,8 +1589,13 @@ describe('createInitialState — requires validation', () => {
     assert.match(result.message, /gate must be one of/);
   });
 
-  it('accepts valid gate values', () => {
-    for (const gate of ['checkpoint', 'accepted', 'phase_complete']) {
+  // This used to loop all three gates over a task-kind dep and assert each was
+  // accepted, which encoded the defect: selectRunnableTask blocks a task-kind dep
+  // gated on phase_complete unconditionally and its diagnostic calls the gate
+  // "invalid for task-kind dependency", so a plan authored that way is born
+  // deadlocked. The gate vocabulary is per kind; the test now is too.
+  it('accepts every gate valid for a task-kind dependency', () => {
+    for (const gate of ['checkpoint', 'accepted']) {
       const result = createInitialState({
         project: 'test',
         phases: [{ name: 'P1', tasks: [
@@ -1573,7 +1603,20 @@ describe('createInitialState — requires validation', () => {
           { name: 'B', requires: [{ kind: 'task', id: '1.1', gate }] },
         ] }],
       });
-      assert.equal(result.error, undefined, `gate "${gate}" should be accepted`);
+      assert.equal(result.error, undefined, `gate "${gate}" should be accepted on a task dep`);
+    }
+  });
+
+  it('accepts every gate valid for a phase-kind dependency', () => {
+    for (const gate of ['accepted', 'phase_complete']) {
+      const result = createInitialState({
+        project: 'test',
+        phases: [
+          { name: 'P1', tasks: [{ name: 'A' }] },
+          { name: 'P2', tasks: [{ name: 'B', requires: [{ kind: 'phase', id: 1, gate }] }] },
+        ],
+      });
+      assert.equal(result.error, undefined, `gate "${gate}" should be accepted on a phase dep`);
     }
   });
 });
