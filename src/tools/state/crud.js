@@ -11,7 +11,6 @@ import {
   validateStateUpdate,
   validateTransition,
   createInitialState,
-  migrateState,
   detectCycles,
 } from '../../schema.js';
 import {
@@ -19,16 +18,10 @@ import {
   MAX_EVIDENCE_ENTRIES,
   MAX_ARCHIVE_ENTRIES,
   ensureLockPathFromStatePath,
+  loadState,
   withStateLock,
 } from './constants.js';
 import { propagateInvalidation, propagateCrossPhaseInvalidation } from './logic.js';
-
-function friendlyReadError(rawError) {
-  if (rawError?.includes('ENOENT')) {
-    return 'No GSD project found (state.json missing). Run /gsd:start or /gsd:prd to begin.';
-  }
-  return rawError;
-}
 
 /**
  * Compute SHA-256 content hashes for an array of file paths.
@@ -154,16 +147,20 @@ export async function init({ project, phases, research, force = false, basePath 
  * Read state.json, optionally filtering to specific fields.
  */
 export async function read({ fields, basePath = process.cwd(), validate = false } = {}) {
+  // `fields` is declared as an array of names. A non-array used to fall through
+  // the filter silently and return the ENTIRE state — on a large plan that is
+  // hundreds of KB of JSON handed back for a request that asked for one field.
+  if (fields !== undefined && fields !== null && !Array.isArray(fields)) {
+    return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `fields must be an array of field names (got ${typeof fields})` };
+  }
   const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
   }
 
-  const result = await readJson(statePath);
-  if (!result.ok) {
-    return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
-  }
-  const state = migrateState(result.data);
+  const loaded = await loadState(statePath);
+  if (loaded.error) return loaded.error;
+  const state = loaded.state;
 
   // H-7: Optional semantic validation on read
   if (validate) {
@@ -212,11 +209,9 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
   ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
-    const result = await readJson(statePath);
-    if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
-    }
-    const state = migrateState(result.data);
+    const loaded = await loadState(statePath);
+    if (loaded.error) return loaded.error;
+    const state = loaded.state;
 
     // Optimistic concurrency: check version if caller provided expectedVersion
     if (expectedVersion !== undefined && expectedVersion !== null) {
@@ -225,7 +220,10 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
         return {
           error: true,
           code: ERROR_CODES.VERSION_CONFLICT,
-          message: `State was modified by another session (expected version ${expectedVersion}, found ${onDiskVersion})`,
+          // Parallel task dispatch makes this reachable in normal operation, so
+          // the message has to name the recovery — the write was rejected, not
+          // applied, and the caller's result is lost unless it resubmits.
+          message: `State was modified by another session (expected version ${expectedVersion}, found ${onDiskVersion}). Nothing was written — re-read state and resubmit this result.`,
         };
       }
     }
@@ -452,11 +450,9 @@ export async function phaseComplete({
   ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
-    const result = await readJson(statePath);
-    if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
-    }
-    const state = migrateState(result.data);
+    const loaded = await loadState(statePath);
+    if (loaded.error) return loaded.error;
+    const state = loaded.state;
 
     const phase = state.phases.find((p) => p.id === phase_id);
     if (!phase) {
@@ -646,11 +642,9 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
   ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
-    const result = await readJson(statePath);
-    if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
-    }
-    const state = migrateState(result.data);
+    const loaded = await loadState(statePath);
+    if (loaded.error) return loaded.error;
+    const state = loaded.state;
 
     if (!state.evidence) {
       state.evidence = {};
@@ -737,11 +731,9 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
   ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
-    const result = await readJson(statePath);
-    if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
-    }
-    const state = migrateState(result.data);
+    const loaded = await loadState(statePath);
+    if (loaded.error) return loaded.error;
+    const state = loaded.state;
 
     const gsdDir = dirname(statePath);
     const archived = await _pruneEvidenceFromState(state, currentPhase, gsdDir);
@@ -777,11 +769,9 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
   ensureLockPathFromStatePath(statePath);
 
   return withStateLock(async () => {
-    const result = await readJson(statePath);
-    if (!result.ok) {
-      return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: friendlyReadError(result.error) };
-    }
-    const state = migrateState(result.data);
+    const loaded = await loadState(statePath);
+    if (loaded.error) return loaded.error;
+    const state = loaded.state;
 
     // Guard: only allow patching in non-terminal states
     if (state.workflow_mode === 'completed' || state.workflow_mode === 'failed') {

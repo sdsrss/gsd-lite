@@ -1,7 +1,8 @@
 // State constants and lock infrastructure
 
 import { join, dirname } from 'node:path';
-import { withFileLock } from '../../utils.js';
+import { isPlainObject, readJson, withFileLock } from '../../utils.js';
+import { migrateState } from '../../schema.js';
 
 export const RESEARCH_FILES = ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md'];
 export const MAX_EVIDENCE_ENTRIES = 200;
@@ -86,6 +87,38 @@ export function withStateLock(fn, statePath) {
 }
 
 export const DEFAULT_MAX_RETRY = 3;
+
+const RECOVERY_HINT =
+  'Restore .gsd/state.json from git or .gsd/state.json.bak, or re-run /gsd:start with force: true.';
+
+export const CORRUPT_STATE_MESSAGE =
+  `state.json is corrupt: expected a JSON object with a "phases" array. ${RECOVERY_HINT}`;
+
+/**
+ * Read + migrate state.json, rejecting a file that parses as JSON but is not a
+ * usable state object. Without this guard `null`, an array, a scalar, or a
+ * `phases` value that is not an array flows straight into callers and crashes
+ * them with a raw TypeError ("Cannot read properties of null", "state.phases?.find
+ * is not a function") instead of a structured, actionable error.
+ * @returns {Promise<{state: object} | {error: object}>}
+ */
+export async function loadState(statePath) {
+  const result = await readJson(statePath);
+  if (!result.ok) {
+    // A missing file means "no project yet"; anything else (parse error,
+    // permission denied, truncated write) means the file is there but unusable —
+    // reporting that as NO_PROJECT_DIR sends the user to /gsd:start, which then
+    // refuses with STATE_EXISTS.
+    if (result.error?.includes('ENOENT')) {
+      return { error: { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (state.json missing). Run /gsd:start or /gsd:prd to begin.' } };
+    }
+    return { error: { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `state.json is unreadable: ${result.error}. ${RECOVERY_HINT}` } };
+  }
+  if (!isPlainObject(result.data) || !Array.isArray(result.data.phases)) {
+    return { error: { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: CORRUPT_STATE_MESSAGE } };
+  }
+  return { state: migrateState(result.data) };
+}
 
 export function inferWorkflowModeAfterResearch(state) {
   if (state.current_review?.scope === 'phase') return 'reviewing_phase';

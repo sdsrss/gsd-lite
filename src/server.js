@@ -299,6 +299,12 @@ async function dispatchToolCall(name, args) {
         server: 'gsd',
         version: PKG_VERSION,
         state_exists: !stateResult.error,
+        // A state.json that exists but is unreadable/corrupt must not look like
+        // "no project yet" — that sends the user to /gsd:start, which then
+        // refuses with STATE_EXISTS. Surface the real reason instead.
+        ...(stateResult.error && stateResult.code !== 'NO_PROJECT_DIR'
+          ? { state_error: stateResult.message }
+          : {}),
         ...(stateResult.error ? {} : {
           project: stateResult.project,
           workflow_mode: stateResult.workflow_mode,
