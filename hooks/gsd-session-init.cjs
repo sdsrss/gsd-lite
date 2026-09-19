@@ -14,6 +14,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 const settingsPath = path.join(claudeDir, 'settings.json');
@@ -76,10 +77,40 @@ function findStatusBlock(content) {
   return { begin: -1, end: -1 };
 }
 
+/**
+ * Write a file atomically, refusing every way a repository can redirect it.
+ *
+ * The temp file is opened 'wx' — O_CREAT|O_EXCL — so if anything already exists
+ * at that path the open fails instead of following it. This is the part that
+ * matters: the old `<path>.gsd-tmp-<pid>` name was guessable, and a cloned repo
+ * could pre-create it as a symlink. writeFileSync follows symlinks, so the write
+ * went wherever the link pointed and the rename then installed that path as the
+ * file we meant to update. A random suffix alone only narrows the window;
+ * O_EXCL closes it, and the two together mean an attacker can neither guess the
+ * name nor win by planting one.
+ *
+ * Every write in this hook goes through here. The CLAUDE.md paths add a
+ * containment check on top (see atomicWriteThroughLink).
+ */
+function atomicWrite(filePath, content) {
+  const tmp = `${filePath}.gsd-tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'wx', 0o600);
+    fs.writeFileSync(fd, content);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+    throw err;
+  }
+}
+
 function atomicWriteJson(filePath, value) {
-  const tmp = filePath + `.gsd-orphan-${process.pid}-${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
-  fs.renameSync(tmp, filePath);
+  atomicWrite(filePath, JSON.stringify(value, null, 2) + '\n');
 }
 
 /**
@@ -116,9 +147,7 @@ function atomicWriteThroughLink(filePath, content, root) {
     return false;
   }
 
-  const tmp = target + `.gsd-tmp-${process.pid}`;
-  fs.writeFileSync(tmp, content);
-  fs.renameSync(tmp, target);
+  atomicWrite(target, content);
   return true;
 }
 
@@ -283,9 +312,7 @@ setTimeout(() => process.exit(0), 4000).unref();
             type: 'command',
             command: `node ${JSON.stringify(stableStatuslinePath)}`
           };
-          const tmpPath = settingsPath + `.gsd-tmp-${process.pid}`;
-          fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
-          fs.renameSync(tmpPath, settingsPath);
+          atomicWrite(settingsPath, JSON.stringify(settings, null, 2) + '\n');
         } else if (current.includes('statusline-composite')) {
           // Composite system (e.g., code-graph) — register as provider
           try {
@@ -379,36 +406,62 @@ setTimeout(() => process.exit(0), 4000).unref();
           }
         } catch { /* skip */ }
 
-        // Every field below comes verbatim from the repo's own .gsd/state.json,
-        // and this block lands in CLAUDE.md, which Claude Code loads as
-        // instructions. Strip control characters as well as comment markers:
-        // without the newline strip a cloned repo can put arbitrary lines of its
-        // own into that file.
-        const safeName = (s) => String(s || '')
-          .replace(/\p{Cc}/gu, ' ')
+        // Everything rendered below comes verbatim from the repo's own
+        // .gsd/state.json and .gsd/.session-end. The status block lands in
+        // CLAUDE.md and this hook's stdout reaches the model as
+        // additionalContext, so both are places a cloned repo would like to put
+        // a line of its own.
+        //
+        // Wrapping fields one call at a time is how three of them stayed raw
+        // through two rounds of this fix. Sanitize once, up front, into `safe`,
+        // and render only from `safe` — a field that is not in this object
+        // cannot reach the template, and adding one to the template without
+        // adding it here is a visible mistake rather than a silent hole.
+        //
+        // Strips: control characters (\p{Cc}), format/bidi controls (\p{Cf}),
+        // the U+2028/U+2029 line separators that \p{Cc} does not cover, and the
+        // HTML comment markers that delimit the block itself.
+        const safeName = (s) => String(s ?? '')
+          .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ')
           .replace(/<!--|-->/g, '')
           .slice(0, 200);
+        const safeNum = (n) => (Number.isFinite(Number(n)) ? Number(n) : '?');
+
+        const safe = {
+          project: safeName(progress.project),
+          currentPhase: safeNum(progress.currentPhase),
+          totalPhases: safeNum(progress.totalPhases),
+          phaseName: safeName(progress.phaseName),
+          currentTask: safeName(progress.currentTask) || 'none',
+          taskName: safeName(progress.taskName),
+          workflowMode: safeName(progress.workflowMode),
+          acceptedTasks: safeNum(progress.acceptedTasks),
+          totalTasks: safeNum(progress.totalTasks),
+          shortHead: safeName(progress.gitHead ? String(progress.gitHead).substring(0, 7) : 'n/a'),
+          endedAt: sessionEndInfo ? safeName(sessionEndInfo.ended_at) : null,
+          modeWas: sessionEndInfo ? safeName(sessionEndInfo.workflow_mode_was) : null,
+        };
 
         // Stdout: only output session-end warning (crash recovery), skip routine progress
         // Routine progress is handled by CLAUDE.md injection below — avoids noise
-        const shortHead = progress.gitHead ? progress.gitHead.substring(0, 7) : 'n/a';
         if (sessionEndInfo) {
-          console.log(`⚠️ GSD: Previous session ended unexpectedly at ${sessionEndInfo.ended_at} (was: ${safeName(sessionEndInfo.workflow_mode_was)}). Run /gsd:resume to recover.`);
+          console.log(`⚠️ GSD: Previous session ended unexpectedly at ${safe.endedAt} (was: ${safe.modeWas}). Run /gsd:resume to recover.`);
         }
 
         // Write status block to CLAUDE.md
         const projectRoot = path.dirname(gsdDir);
         const claudeMdPath = path.join(projectRoot, 'CLAUDE.md');
 
+        // Renders from `safe` only — never from `progress` or `sessionEndInfo`.
         const statusBlock = [
           BEGIN_MARKER,
-          `### GSD Project: ${safeName(progress.project)}`,
-          `- Phase: ${progress.currentPhase || '?'}/${progress.totalPhases} (${safeName(progress.phaseName)})`,
-          `- Task: ${progress.currentTask || 'none'}${progress.taskName ? ` (${safeName(progress.taskName)})` : ''}`,
-          `- Mode: ${safeName(progress.workflowMode)}`,
-          `- Progress: ${progress.acceptedTasks}/${progress.totalTasks} tasks done`,
-          `- Last checkpoint: ${safeName(shortHead)}`,
-          sessionEndInfo ? `- ⚠️ Previous session ended unexpectedly (${safeName(sessionEndInfo.ended_at)})` : null,
+          `### GSD Project: ${safe.project}`,
+          `- Phase: ${safe.currentPhase}/${safe.totalPhases} (${safe.phaseName})`,
+          `- Task: ${safe.currentTask}${safe.taskName ? ` (${safe.taskName})` : ''}`,
+          `- Mode: ${safe.workflowMode}`,
+          `- Progress: ${safe.acceptedTasks}/${safe.totalTasks} tasks done`,
+          `- Last checkpoint: ${safe.shortHead}`,
+          sessionEndInfo ? `- ⚠️ Previous session ended unexpectedly (${safe.endedAt})` : null,
           END_MARKER,
         ].filter(Boolean).join('\n');
 
