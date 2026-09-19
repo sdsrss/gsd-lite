@@ -2964,3 +2964,91 @@ describe('R-22: result handlers reject tasks outside current_phase', () => {
     assert.match(res.message, /not the current phase/);
   });
 });
+
+// ── Regression: a request that changes nothing must not report success ──
+describe('orchestrator reports no-op requests instead of silently succeeding', () => {
+  let tempDir;
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-noop-'));
+  });
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const reviewResult = (over) => ({
+    scope: 'task', review_level: 'L1', spec_passed: true, quality_passed: true,
+    critical_issues: [], important_issues: [], minor_issues: [],
+    accepted_tasks: [], rework_tasks: [], evidence: [], ...over,
+  });
+
+  async function checkpointedProject() {
+    await init({ project: 'noop', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc' }] }] }, basePath: tempDir });
+  }
+
+  // Before: returned action:'review_accepted' and stamped phase_review accepted
+  // while every named task was unknown — a review that reviewed nothing.
+  it('rejects a review whose named tasks all fail to resolve', async () => {
+    await checkpointedProject();
+    const result = await handleReviewerResult({
+      result: reviewResult({ scope_id: '9.9', accepted_tasks: ['9.9'] }),
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /9\.9/);
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'checkpointed', 'task must be untouched');
+    assert.equal(state.phases[0].phase_review.status, 'pending', 'phase review must not be stamped');
+  });
+
+  it('still accepts a batch that resolves at least one task (I-16 unchanged)', async () => {
+    await checkpointedProject();
+    const result = await handleReviewerResult({
+      result: reviewResult({ scope: 'phase', scope_id: 1, review_level: 'L1-batch', accepted_tasks: ['1.1', '9.9'] }),
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'accepted');
+  });
+
+  it('still accepts a phase review that names no tasks at all', async () => {
+    await checkpointedProject();
+    const result = await handleReviewerResult({
+      result: reviewResult({ scope: 'phase', scope_id: 1, review_level: 'L1-batch' }),
+      basePath: tempDir,
+    });
+    assert.equal(result.success, true);
+  });
+
+  // Before: unknown / already-running ids were skipped silently, so
+  // `/gsd:resume --unblock <typo>` returned an ordinary dispatch result with no
+  // hint that the caller's request had no effect.
+  it('reports when unblock_tasks matches nothing', async () => {
+    await init({ project: 'noop', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }, { index: 2, name: 'B' }] }], basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'blocked', blocked_reason: 'needs key' }] }] }, basePath: tempDir });
+
+    const missing = await resumeWorkflow({ basePath: tempDir, unblock_tasks: ['9.9'] });
+    assert.equal(missing.error, true);
+    assert.match(missing.message, /not found/);
+
+    const notBlocked = await resumeWorkflow({ basePath: tempDir, unblock_tasks: ['1.2'] });
+    assert.equal(notBlocked.error, true);
+    assert.match(notBlocked.message, /not blocked/);
+  });
+
+  it('unblocks what it can and names what it skipped', async () => {
+    await init({ project: 'noop', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }, { index: 2, name: 'B' }] }], basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'blocked', blocked_reason: 'needs key' }] }] }, basePath: tempDir });
+
+    const result = await resumeWorkflow({ basePath: tempDir, unblock_tasks: ['1.1', '9.9'] });
+    assert.ok(!result.error, `expected success, got ${result.message}`);
+    assert.deepEqual(result.unblocked, ['1.1']);
+    assert.equal(result.unblock_skipped?.[0]?.id, '9.9');
+    // resume dispatches the freed task in the same call, so it lands on running
+    const state = await read({ basePath: tempDir });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'running', 'blocked task released and dispatched');
+    assert.equal(result.task_id, '1.1');
+  });
+});
