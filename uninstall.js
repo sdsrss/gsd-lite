@@ -12,6 +12,16 @@ const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 
 function log(msg) { console.log(msg); }
 
+// Every removal below is existsSync-gated and every registry edit sits in a bare
+// catch, so "did anything happen?" is not observable from control flow alone.
+// Count it, and let the closing line say what actually happened rather than
+// asserting success unconditionally.
+let removedCount = 0;
+function logRemoved(msg) {
+  removedCount += 1;
+  log(`  ✓ ${msg}`);
+}
+
 function atomicWriteSync(filePath, content) {
   const tmp = filePath + `.${process.pid}-${Date.now()}.tmp`;
   writeFileSync(tmp, content);
@@ -21,12 +31,22 @@ function atomicWriteSync(filePath, content) {
 function removeDir(path, label) {
   if (existsSync(path)) {
     rmSync(path, { recursive: true, force: true });
-    log(`  ✓ Removed ${label}`);
+    logRemoved(`Removed ${label}`);
   }
 }
 
 export function main() {
   log('GSD-Lite Uninstaller\n');
+
+  // Without this, a wrong CLAUDE_CONFIG_DIR — a typo, or an unset one under
+  // sudo/systemd/CI where HOME differs — removes nothing, reports success, and
+  // leaves a live install whose hooks keep firing every session. install.js has
+  // guarded this since the start; the uninstaller never did.
+  if (!existsSync(CLAUDE_DIR)) {
+    log(`Error: ${CLAUDE_DIR} not found, so there is nothing to uninstall there.`);
+    log('  If your Claude Code config lives elsewhere, set CLAUDE_CONFIG_DIR and run this again.');
+    process.exit(1);
+  }
 
   // Clean up GSD entry from composite statusLine registry before removing files
   try {
@@ -34,7 +54,7 @@ export function main() {
     const compositeLib = join(CLAUDE_DIR, 'hooks', 'lib', 'statusline-composite.cjs');
     if (existsSync(compositeLib)) {
       const { removeProvider } = _require(compositeLib);
-      if (removeProvider()) log('  ✓ Removed GSD from composite statusLine registry');
+      if (removeProvider()) logRemoved('Removed GSD from composite statusLine registry');
     }
   } catch { /* best effort */ }
 
@@ -53,7 +73,7 @@ export function main() {
     const hookFile = join(CLAUDE_DIR, 'hooks', name);
     if (existsSync(hookFile)) {
       rmSync(hookFile);
-      log(`  ✓ Removed hooks/${name}`);
+      logRemoved(`Removed hooks/${name}`);
     }
   }
   // Remove hook library dependencies
@@ -64,7 +84,7 @@ export function main() {
       const fullPath = join(hookLibDir, libFile);
       if (existsSync(fullPath)) {
         rmSync(fullPath);
-        log(`  ✓ Removed hooks/lib/${libFile}`);
+        logRemoved(`Removed hooks/lib/${libFile}`);
       }
     }
   }
@@ -84,7 +104,7 @@ export function main() {
       if (key in data) {
         delete data[key];
         atomicWriteSync(filePath, JSON.stringify(data, null, 2) + '\n');
-        log(`  ✓ Removed '${key}' from ${label}`);
+        logRemoved(`Removed '${key}' from ${label}`);
       }
     } catch {}
   }
@@ -94,7 +114,7 @@ export function main() {
       if (data[parentKey] && key in data[parentKey]) {
         delete data[parentKey][key];
         atomicWriteSync(filePath, JSON.stringify(data, null, 2) + '\n');
-        log(`  ✓ Removed '${key}' from ${label}`);
+        logRemoved(`Removed '${key}' from ${label}`);
       }
     } catch {}
   }
@@ -163,10 +183,14 @@ export function main() {
     }
     if (changed) {
       atomicWriteSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-      log('  ✓ MCP server + hooks + plugin entries deregistered from settings.json');
+      logRemoved('MCP server + hooks + plugin entries deregistered from settings.json');
     }
   } catch {}
 
+  if (removedCount === 0) {
+    log(`\nNothing to remove — no GSD-Lite files or registrations found in ${CLAUDE_DIR}.`);
+    return;
+  }
   log('\n✓ GSD-Lite uninstalled.');
 }
 
