@@ -83,6 +83,59 @@ describe('install and uninstall scripts', () => {
     }
   });
 
+  // settings.json is the user's file: model, permissions (including deny rules),
+  // env, enabledPlugins, and every other plugin's hook registrations live there.
+  // Registering GSD rewrites it wholesale, so an unparseable file must stop the
+  // install — parsing it as `{}` and writing that back silently deletes all of it.
+  for (const [label, body] of [
+    ['a trailing comma', '{\n  "model": "claude-opus-5",\n  "permissions": { "deny": ["Bash(rm:*)"] },\n}\n'],
+    ['a truncated write', '{\n  "model": "claude-opus-5",\n  "permissions": { "deny": ['],
+    ['a JSON non-object', '"just a string"\n'],
+  ]) {
+    it(`refuses to install over a settings.json with ${label}, leaving it byte-identical`, async () => {
+      const { home, claudeDir } = await makeClaudeHome('gsd-install-badjson-');
+      const settingsPath = join(claudeDir, 'settings.json');
+      try {
+        await writeFile(settingsPath, body);
+
+        let status = 0;
+        let stderr = '';
+        let stdout = '';
+        try {
+          runScript('install.js', home);
+        } catch (err) {
+          status = err.status ?? 1;
+          stderr = err.stderr || '';
+          stdout = err.stdout || '';
+        }
+
+        assert.notEqual(status, 0, 'installer must exit non-zero rather than report success');
+        assert.match(`${stdout}${stderr}`, /settings\.json/, 'must name the offending file');
+        assert.equal(
+          await readFile(settingsPath, 'utf-8'),
+          body,
+          'installer must not rewrite a settings.json it could not parse',
+        );
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('still installs cleanly over an empty settings.json', async () => {
+    // An empty (or whitespace-only) file carries no user settings, so there is
+    // nothing to lose — this must stay a normal install, not a refusal.
+    const { home, claudeDir } = await makeClaudeHome('gsd-install-emptyjson-');
+    try {
+      await writeFile(join(claudeDir, 'settings.json'), '  \n');
+      runScript('install.js', home);
+      const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
+      assert.ok(settings.mcpServers.gsd, 'GSD should be registered');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('registers GSD in composite statusLine registry when composite is active', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-composite-');
     try {

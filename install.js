@@ -101,6 +101,40 @@ function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
   return false;
 }
 
+/**
+ * Read ~/.claude/settings.json, or abort.
+ *
+ * Registering GSD rewrites this file wholesale, so a parse failure cannot be
+ * shrugged off: continuing with `{}` serializes an empty object over the user's
+ * model, permissions (deny rules included), env, enabledPlugins, and every other
+ * plugin's hook registrations, and the installer still exits 0 saying it
+ * succeeded. A file we cannot read is a file we must not overwrite.
+ *
+ * Missing or whitespace-only is not a failure — there are no settings to lose.
+ */
+function readSettingsOrExit(settingsPath) {
+  if (!existsSync(settingsPath)) return {};
+  const raw = readFileSync(settingsPath, 'utf-8');
+  if (raw.trim() === '') return {};
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    log(`Error: ${settingsPath} is not valid JSON — ${err.message}`);
+    log('  Installing would rewrite that file and discard everything in it:');
+    log('  your model, permissions, env, and other plugins\' hook registrations.');
+    log('  Fix the JSON (or move the file aside) and run the installer again.');
+    process.exit(1);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    log(`Error: ${settingsPath} does not contain a JSON object.`);
+    log('  Refusing to overwrite it. Fix the file and run the installer again.');
+    process.exit(1);
+  }
+  return parsed;
+}
+
 function copyDir(src, dest, label) {
   if (DRY_RUN) {
     log(`  [dry-run] Would copy ${src} → ${dest}`);
@@ -128,6 +162,11 @@ export function main() {
     log(`Error: ${CLAUDE_DIR} not found. Is Claude Code installed?`);
     process.exit(1);
   }
+
+  // Check settings.json before touching anything: a file we cannot parse stops
+  // the install here, with nothing copied and nothing half-registered.
+  const settingsPath = join(CLAUDE_DIR, 'settings.json');
+  const existingSettings = readSettingsOrExit(settingsPath);
 
   log('Installing files...');
 
@@ -262,16 +301,8 @@ export function main() {
   // 8. Register MCP server + hooks in settings.json
   //    When installed as a plugin, the plugin system handles MCP via .mcp.json,
   //    so we skip manual MCP registration to avoid name collisions.
-  const settingsPath = join(CLAUDE_DIR, 'settings.json');
   if (!DRY_RUN) {
-    let settings = {};
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    } catch (err) {
-      if (err.code !== 'ENOENT') {
-        log(`  ! Warning: Could not parse ${settingsPath}: ${err.message}`);
-      }
-    }
+    const settings = existingSettings;
 
     if (!settings.mcpServers) settings.mcpServers = {};
     // Remove legacy "gsd-lite" server entry from older versions
