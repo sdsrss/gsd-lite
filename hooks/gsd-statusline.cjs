@@ -20,7 +20,12 @@ process.stdin.on('end', () => {
     const cwd = data.workspace?.current_dir || process.cwd();
     const session = String(data.session_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
     if (!session) process.exit(0); // Reject empty session ID to avoid bridge file collision
-    const remaining = data.context_window?.remaining_percentage;
+    // Must be a real number: a non-numeric value propagates through the
+    // arithmetic below as NaN, which renders an empty bar labelled "NaN%" and —
+    // because every `used < N` comparison is false for NaN — dresses it in the
+    // blinking-red critical style. Treat it as absent instead.
+    const rawRemaining = data.context_window?.remaining_percentage;
+    const remaining = Number.isFinite(rawRemaining) ? rawRemaining : null;
 
     // Current GSD task from state.json
     let task = '';

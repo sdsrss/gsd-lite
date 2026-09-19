@@ -233,3 +233,57 @@ describe('gsd-statusline ancestor traversal', () => {
       'Should not have ellipsis for short names');
   });
 });
+
+// ── Regression: a non-numeric context percentage must not render "NaN%" ──
+// remaining_percentage flowed into the arithmetic unchecked. A non-numeric
+// value produced NaN, which renders an empty bar labelled "NaN%" and, because
+// every `used < N` comparison is false for NaN, painted it in the blinking-red
+// critical style — a false context-exhaustion alarm on every prompt.
+describe('statusline: non-numeric context percentage', () => {
+  for (const [label, value] of [
+    ['a string', 'lots'],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['an object', {}],
+  ]) {
+    it(`omits the context bar when remaining_percentage is ${label}`, async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-nan-'));
+      try {
+        const gsdDir = join(dir, '.gsd');
+        await mkdir(gsdDir, { recursive: true });
+        await writeFile(join(gsdDir, 'state.json'), JSON.stringify({
+          project: 'p', current_phase: 1, current_task: '1.1',
+          phases: [{ id: 1, todo: [{ id: '1.1', name: 'Task', lifecycle: 'running' }] }],
+        }));
+        const { stdout: out } = runHook({
+          session_id: 'nan-test',
+          workspace: { current_dir: dir },
+          model: { display_name: 'Opus' },
+          context_window: { remaining_percentage: value },
+        });
+        assert.ok(!out.includes('NaN'), `statusline rendered NaN: ${JSON.stringify(out)}`);
+        assert.ok(!out.includes('💀'), 'must not raise a false critical-context alarm');
+        assert.ok(out.includes('Opus'), 'the rest of the line still renders');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('still renders the bar for a valid percentage', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-nan-'));
+    try {
+      await mkdir(join(dir, '.gsd'), { recursive: true });
+      await writeFile(join(dir, '.gsd', 'state.json'), JSON.stringify({ project: 'p', phases: [] }));
+      const { stdout: out } = runHook({
+        session_id: 'ok-test',
+        workspace: { current_dir: dir },
+        model: { display_name: 'Opus' },
+        context_window: { remaining_percentage: 90 },
+      });
+      assert.match(out, /\d+%/, 'a numeric percentage still renders');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
