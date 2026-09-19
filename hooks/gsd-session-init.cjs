@@ -84,20 +84,42 @@ function atomicWriteJson(filePath, value) {
 
 /**
  * Atomically rewrite a text file, writing *through* a symlink rather than over
- * it. A project CLAUDE.md is often a link into a dotfiles or shared-team repo:
- * readFileSync follows it, but renaming onto the link path replaces the link
- * with a regular file, so the project silently forks a private copy and stops
- * tracking the shared source. Resolving first keeps the link and updates its
- * target, which is what editing a symlinked file normally does.
+ * it — but never outside `root`.
+ *
+ * Two failure modes pull in opposite directions. Renaming a temp file onto the
+ * link path REPLACES the link with a regular file, so a dotfiles or shared-team
+ * CLAUDE.md silently forks a private copy. Following the link wherever it points
+ * turns "open a cloned repo" into an arbitrary-file write: a repo shipping
+ * `CLAUDE.md -> ~/.bashrc` would get this hook to append lines to a shell rc,
+ * with no action from the user beyond opening the project.
+ *
+ * So resolve the link, then write only if the target is still inside `root`. A
+ * link pointing outside is left entirely alone — the status block is a
+ * convenience, and GSD_NO_CLAUDEMD_STATUS=1 already exists for people who do not
+ * want it. Returns true when it wrote, false when it declined.
  */
-function atomicWriteThroughLink(filePath, content) {
+function atomicWriteThroughLink(filePath, content, root) {
   let target = filePath;
   try {
     target = fs.realpathSync(filePath);
   } catch { /* file does not exist yet — write at the given path */ }
+
+  // Resolve the root too, so a symlinked project directory compares like for like.
+  let resolvedRoot = root;
+  try { resolvedRoot = fs.realpathSync(root); } catch { /* use as given */ }
+
+  const rel = path.relative(resolvedRoot, target);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    if (process.env.GSD_DEBUG) {
+      process.stderr.write(`gsd-session-init: not writing ${filePath} — it resolves outside ${resolvedRoot}\n`);
+    }
+    return false;
+  }
+
   const tmp = target + `.gsd-tmp-${process.pid}`;
   fs.writeFileSync(tmp, content);
   fs.renameSync(tmp, target);
+  return true;
 }
 
 function cleanupOrphan() {
@@ -357,8 +379,15 @@ setTimeout(() => process.exit(0), 4000).unref();
           }
         } catch { /* skip */ }
 
-        // Sanitize user-controlled strings to prevent HTML/markdown injection
-        const safeName = (s) => String(s || '').replace(/<!--|-->/g, '').slice(0, 200);
+        // Every field below comes verbatim from the repo's own .gsd/state.json,
+        // and this block lands in CLAUDE.md, which Claude Code loads as
+        // instructions. Strip control characters as well as comment markers:
+        // without the newline strip a cloned repo can put arbitrary lines of its
+        // own into that file.
+        const safeName = (s) => String(s || '')
+          .replace(/\p{Cc}/gu, ' ')
+          .replace(/<!--|-->/g, '')
+          .slice(0, 200);
 
         // Stdout: only output session-end warning (crash recovery), skip routine progress
         // Routine progress is handled by CLAUDE.md injection below — avoids noise
@@ -409,7 +438,7 @@ setTimeout(() => process.exit(0), 4000).unref();
 
             // Only write if content changed
             if (newContent !== content) {
-              atomicWriteThroughLink(claudeMdPath, newContent);
+              atomicWriteThroughLink(claudeMdPath, newContent, projectRoot);
             }
           } catch (e) {
             if (process.env.GSD_DEBUG) process.stderr.write(`gsd-session-init: CLAUDE.md write failed: ${e.message}\n`);
@@ -433,7 +462,7 @@ setTimeout(() => process.exit(0), 4000).unref();
           let newContent = tail === '' ? head.replace(/\n{2,}$/, '\n') : head + tail;
           if (!newContent.endsWith('\n')) newContent += '\n';
           if (newContent !== content) {
-            atomicWriteThroughLink(claudeMdPath, newContent);
+            atomicWriteThroughLink(claudeMdPath, newContent, cwd);
           }
         }
       } catch { /* no CLAUDE.md or no block to clean — skip */ }
