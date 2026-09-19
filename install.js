@@ -177,23 +177,28 @@ export function main() {
     log('  ✓ Removed legacy gsd-lite runtime');
   }
 
-  // Reset managed runtime directory to avoid stale files on reinstall
-  // Preserve runtime/ subdirectory (update-state.json, update-notification.json)
+  // Reset the managed runtime directory to avoid stale files on reinstall, while
+  // keeping runtime/ (update-state.json, update-notification.json).
+  //
+  // This used to copy runtime/ out to ~/.claude/.gsd-runtime-backup-<pid>, wipe
+  // the whole directory, and copy back. A read failure while staging discarded
+  // the handle but not the directory already created on disk, so the wipe went
+  // ahead with nothing to restore from: the state this step promises to keep was
+  // lost, and an orphan staging dir was left in the user's config directory —
+  // one per failed attempt, since the name carries the pid.
+  //
+  // Removing the managed entries in place cannot lose runtime/, because it never
+  // moves it.
   if (!DRY_RUN && existsSync(RUNTIME_DIR)) {
-    const runtimeSubdir = join(RUNTIME_DIR, 'runtime');
-    const preserveRuntime = existsSync(runtimeSubdir);
-    let runtimeBackup;
-    if (preserveRuntime) {
-      runtimeBackup = join(RUNTIME_DIR, '..', `.gsd-runtime-backup-${process.pid}`);
-      try { cpSync(runtimeSubdir, runtimeBackup, { recursive: true }); } catch { runtimeBackup = null; }
+    for (const entry of readdirSync(RUNTIME_DIR)) {
+      if (entry === 'runtime') continue;
+      rmSync(join(RUNTIME_DIR, entry), { recursive: true, force: true });
     }
-    rmSync(RUNTIME_DIR, { recursive: true, force: true });
-    if (runtimeBackup) {
-      try {
-        mkdirSync(join(RUNTIME_DIR, 'runtime'), { recursive: true });
-        cpSync(runtimeBackup, join(RUNTIME_DIR, 'runtime'), { recursive: true });
-        rmSync(runtimeBackup, { recursive: true, force: true });
-      } catch { /* best effort */ }
+    // Sweep staging dirs stranded by earlier versions of this step.
+    for (const entry of readdirSync(CLAUDE_DIR)) {
+      if (entry.startsWith('.gsd-runtime-backup-')) {
+        rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
+      }
     }
   }
 

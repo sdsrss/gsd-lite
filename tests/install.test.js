@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -184,6 +184,72 @@ describe('install and uninstall scripts', () => {
       assert.doesNotMatch(output, /✓ GSD-Lite uninstalled/, 'nothing was removed, so nothing was uninstalled');
       assert.match(output, /nothing|not installed|no GSD/i, 'say that there was nothing to remove');
     } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  // Reinstall resets ~/.claude/gsd to clear stale files, and promises to keep
+  // gsd/runtime/ (update-state.json, update-notification.json). It used to keep
+  // it by copying the directory out to ~/.claude/.gsd-runtime-backup-<pid>,
+  // wiping gsd/ unconditionally, and copying back. A read failure while staging
+  // discarded the handle but not the directory already created on disk — so the
+  // wipe went ahead with nothing to restore from, the promised state was lost,
+  // and an orphan staging dir accumulated in ~/.claude/, one per failed attempt.
+  it('keeps gsd/runtime/ across a reinstall and leaves no staging dir behind', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-reinstall-runtime-');
+    try {
+      runScript('install.js', home);
+      const runtimeDir = join(claudeDir, 'gsd', 'runtime');
+      await mkdir(runtimeDir, { recursive: true });
+      await writeFile(join(runtimeDir, 'update-state.json'), '{"lastCheck":"2026-01-01T00:00:00Z"}\n');
+      // A stale top-level file the reset step is supposed to clear.
+      await writeFile(join(claudeDir, 'gsd', 'stale-from-old-version.js'), '// stale\n');
+
+      runScript('install.js', home);
+
+      assert.equal(
+        await readFile(join(runtimeDir, 'update-state.json'), 'utf-8'),
+        '{"lastCheck":"2026-01-01T00:00:00Z"}\n',
+        'reinstall must preserve gsd/runtime/',
+      );
+      assert.ok(
+        !existsSync(join(claudeDir, 'gsd', 'stale-from-old-version.js')),
+        'reinstall must still clear stale files outside runtime/',
+      );
+      assert.deepEqual(
+        readdirSync(claudeDir).filter(e => e.startsWith('.gsd-runtime-backup-')),
+        [],
+        'no staging directory may survive in the user\'s config dir',
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves gsd/runtime/ even when a file in it cannot be read', async (t) => {
+    if (process.getuid?.() === 0) {
+      t.skip('running as root — chmod 000 does not block reads');
+      return;
+    }
+    const { home, claudeDir } = await makeClaudeHome('gsd-reinstall-unreadable-');
+    const runtimeDir = join(claudeDir, 'gsd', 'runtime');
+    try {
+      runScript('install.js', home);
+      await mkdir(runtimeDir, { recursive: true });
+      const statePath = join(runtimeDir, 'update-state.json');
+      await writeFile(statePath, '{"lastCheck":"2026-01-01T00:00:00Z"}\n');
+      await chmod(statePath, 0o000);
+
+      runScript('install.js', home);
+
+      assert.ok(existsSync(statePath), 'an unreadable file must not cost the user gsd/runtime/');
+      assert.deepEqual(
+        readdirSync(claudeDir).filter(e => e.startsWith('.gsd-runtime-backup-')),
+        [],
+        'a failed reinstall must not leave a staging directory in the config dir',
+      );
+    } finally {
+      await chmod(join(runtimeDir, 'update-state.json'), 0o600).catch(() => {});
       await rm(home, { recursive: true, force: true });
     }
   });
