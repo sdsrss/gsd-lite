@@ -922,6 +922,18 @@ describe('describeUpdateOutcome', () => {
     });
   });
 
+  it('sends a throttled plugin install straight to /plugin update', async () => {
+    // A plugin install cannot self-update, so `gsd update --force` would only
+    // re-derive the same answer one round trip later.
+    await withRealModule(async (mod) => {
+      const line = mod.describeUpdateOutcome({
+        updateAvailable: true, action: 'cached', installMode: 'plugin', from: '0.1.0', to: '0.2.0',
+      });
+      assert.match(line, /\/plugin update gsd/);
+      assert.doesNotMatch(line, /--force/, 'a re-check cannot change the answer for a plugin install');
+    });
+  });
+
   it('still reports a genuinely failed install', async () => {
     await withRealModule(async (mod) => {
       const line = mod.describeUpdateOutcome({
