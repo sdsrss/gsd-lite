@@ -55,15 +55,6 @@ export const PHASE_LIFECYCLE = {
 
 export const TASK_LEVELS = ['L0', 'L1', 'L2', 'L3'];
 
-// The gate vocabulary is kind-dependent, and selectRunnableTask is the authority
-// on it: a task-kind dep gated on `phase_complete` is blocked unconditionally
-// (tools/state/logic.js), and its diagnostic calls the gate "invalid for
-// task-kind dependency". Validating gates as one flat set lets a plan be
-// authored that can never run. Every authoring path imports these.
-export const TASK_GATES = ['checkpoint', 'accepted'];
-export const PHASE_GATES = ['accepted', 'phase_complete'];
-export const gatesForKind = (kind) => (kind === 'task' ? TASK_GATES : PHASE_GATES);
-
 export const PHASE_REVIEW_STATUS = ['pending', 'reviewing', 'accepted', 'rework_required'];
 
 export const CANONICAL_FIELDS = [
@@ -869,9 +860,9 @@ export function createInitialState({ project, phases }) {
         if (!['task', 'phase'].includes(dep.kind)) {
           return { error: true, message: `Task ${taskId}: requires entry kind must be "task" or "phase" (got "${dep.kind}")` };
         }
-        const validGates = gatesForKind(dep.kind);
+        const validGates = ['checkpoint', 'accepted', 'phase_complete'];
         if (dep.gate && !validGates.includes(dep.gate)) {
-          return { error: true, message: `Task ${taskId}: requires entry gate must be one of ${validGates.join(', ')} for a ${dep.kind}-kind dependency (got "${dep.gate}")` };
+          return { error: true, message: `Task ${taskId}: requires entry gate must be one of ${validGates.join(', ')} (got "${dep.gate}")` };
         }
         if (dep.kind === 'task' && !phaseTaskIds[pi].has(String(dep.id))) {
           if (seenIds.has(String(dep.id))) {
