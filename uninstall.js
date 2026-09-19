@@ -17,6 +17,7 @@ function log(msg) { console.log(msg); }
 // Count it, and let the closing line say what actually happened rather than
 // asserting success unconditionally.
 let removedCount = 0;
+let deregisterError = null;
 function logRemoved(msg) {
   removedCount += 1;
   log(`  ✓ ${msg}`);
@@ -184,8 +185,24 @@ export function main() {
       atomicWriteSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
       logRemoved('MCP server + hooks + plugin entries deregistered from settings.json');
     }
-  } catch {}
+  } catch (err) {
+    // The hook FILES are already gone by now, so removedCount is non-zero and the
+    // closing line would otherwise report a clean uninstall while settings.json
+    // still registers SessionStart/PostToolUse/Stop hooks pointing at paths that
+    // no longer exist — firing, and failing, every session.
+    //
+    // A missing settings.json is not that: there was nothing registered to
+    // remove, which is a clean outcome, not a failure.
+    if (err.code !== 'ENOENT') deregisterError = err;
+  }
 
+  if (deregisterError) {
+    log(`\n! Could not deregister from ${settingsPath}: ${deregisterError.message}`);
+    log('  GSD files were removed, but its hook and MCP entries are still in that file');
+    log('  and now point at deleted paths. Fix the JSON and re-run, or remove the');
+    log('  "gsd" entries under mcpServers, statusLine and hooks by hand.');
+    return;
+  }
   if (removedCount === 0) {
     log(`\nNothing to remove — no GSD-Lite files or registrations found in ${CLAUDE_DIR}.`);
     return;
