@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, cpSync } from 'node:fs';
+import { existsSync, readFileSync, cpSync, lstatSync, symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -324,5 +324,63 @@ describe('session init Phase 6: stale block removal touches only the splice poin
   it('removes a block at the very start of the file', async () => {
     const out = await cleanupRun(`${BEGIN_MARKER}\nstale\n${END_MARKER}\n\nRest.\n`);
     assert.equal(out, 'Rest.\n');
+  });
+});
+
+// A project CLAUDE.md is often a symlink into a dotfiles or shared-team repo.
+// readFileSync follows the link, but writeFileSync(tmp) + renameSync(tmp, path)
+// replaces the *link* with a regular file: the project silently forks a private
+// copy and stops tracking the shared source. Editing a symlinked file should
+// write through to its target, the way every editor does.
+//
+// Covers both write sites — the injection path and the stale-block cleanup path.
+// Does not cover hard links, or a symlink whose target does not exist.
+describe('session init Phase 6: a symlinked CLAUDE.md stays a symlink', () => {
+  it('writes the status block through the link, leaving the link intact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-init6-symlink-'));
+    try {
+      const { pluginRoot, projectDir, home } = await setupEnv(root);
+      const sharedDir = join(root, 'shared');
+      await mkdir(sharedDir, { recursive: true });
+      const target = join(sharedDir, 'CLAUDE.md');
+      await writeFile(target, '# Shared team instructions\n\nAlways do X.\n');
+      symlinkSync(target, join(projectDir, 'CLAUDE.md'));
+
+      runSessionInit(projectDir, pluginRoot, home);
+
+      assert.ok(
+        lstatSync(join(projectDir, 'CLAUDE.md')).isSymbolicLink(),
+        'CLAUDE.md must still be a symlink, not a regular file',
+      );
+      const shared = readFileSync(target, 'utf8');
+      assert.ok(shared.includes(BEGIN_MARKER), 'the block must land in the symlink target');
+      assert.ok(shared.includes('Always do X.'), 'the target\'s own content must survive');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('removes a stale block through the link, leaving the link intact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-init6-symlink-clean-'));
+    try {
+      const { pluginRoot, projectDir, home, gsdDir } = await setupEnv(root);
+      // No active GSD project → the cleanup branch runs instead of injection.
+      await rm(gsdDir, { recursive: true, force: true });
+      const sharedDir = join(root, 'shared');
+      await mkdir(sharedDir, { recursive: true });
+      const target = join(sharedDir, 'CLAUDE.md');
+      await writeFile(target, `# Doc\n\nintro\n\n${BEGIN_MARKER}\nstale\n${END_MARKER}\n`);
+      symlinkSync(target, join(projectDir, 'CLAUDE.md'));
+
+      runSessionInit(projectDir, pluginRoot, home);
+
+      assert.ok(
+        lstatSync(join(projectDir, 'CLAUDE.md')).isSymbolicLink(),
+        'CLAUDE.md must still be a symlink after stale-block cleanup',
+      );
+      assert.equal(readFileSync(target, 'utf8'), '# Doc\n\nintro\n');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
