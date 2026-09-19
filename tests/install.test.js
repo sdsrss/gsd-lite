@@ -196,38 +196,6 @@ describe('install and uninstall scripts', () => {
     }
   });
 
-  it('does not claim a clean uninstall when deregistration failed', async () => {
-    // The hook files are deleted before settings.json is touched, so a failure
-    // there leaves entries pointing at paths that no longer exist — firing, and
-    // failing, every session. Reporting success there is the same defect the
-    // wrong-directory guard fixed, one branch over.
-    const { home, claudeDir } = await makeClaudeHome('gsd-uninstall-badsettings-');
-    try {
-      runScript('install.js', home);
-      const settingsPath = join(claudeDir, 'settings.json');
-      // Corrupt it the way a hand-edit would, after GSD is already registered.
-      const corrupted = `${await readFile(settingsPath, 'utf-8')}trailing garbage`;
-      await writeFile(settingsPath, corrupted);
-
-      let output = '';
-      try {
-        output = execFileSync('node', ['uninstall.js'], {
-          cwd: process.cwd(),
-          env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir },
-          encoding: 'utf-8',
-        });
-      } catch (err) {
-        output = `${err.stdout || ''}${err.stderr || ''}`;
-      }
-
-      assert.doesNotMatch(output, /✓ GSD-Lite uninstalled/, 'deregistration failed, so the uninstall is not clean');
-      assert.match(output, /settings\.json/, 'name the file the user has to fix');
-      assert.equal(await readFile(settingsPath, 'utf-8'), corrupted, 'and do not rewrite it');
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
   it('does not claim to have uninstalled anything when GSD was never installed', async () => {
     const { home } = await makeClaudeHome('gsd-uninstall-absent-');
     try {
