@@ -132,6 +132,9 @@ describe('auto update install modes', () => {
       assert.equal(result.updateAvailable, true);
       assert.equal(result.to, '0.3.2');
       assert.equal(result.from, '0.3.0');
+      // Nothing was fetched and nothing was installed. The label is what stops
+      // `gsd update` reporting this replayed answer as an install that failed.
+      assert.equal(result.action, 'cached');
     } finally {
       await ctx.cleanup();
     }
@@ -869,4 +872,65 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
       assert.equal(res, null);
     });
   });
+
+// `gsd update` used to translate every outcome checkForUpdate cannot express
+// into one of two sentences. checkForUpdate returns null from six distinct
+// outcomes — orphan, dev-mode skip, throttled, fetch failure, 403 rate limit,
+// genuinely current — and the CLI printed "✓ Already up to date" for all six,
+// so an offline run said "Could not fetch latest release" and "✓ Already up to
+// date" back to back. A throttled run holding a cached result printed "install
+// failed" when no install had been attempted.
+//
+// describeUpdateOutcome covers the sentence the CLI adds on top of
+// checkForUpdate's own verbose output. It does not cover that output itself,
+// nor the CLI's exit code.
+describe('describeUpdateOutcome', () => {
+  it('says nothing when the check produced no comparison', async () => {
+    await withRealModule(async (mod) => {
+      // null is ambiguous by construction — the CLI must not invent a verdict.
+      assert.equal(mod.describeUpdateOutcome(null), null);
+      assert.equal(mod.describeUpdateOutcome(undefined), null);
+    });
+  });
+
+  it('reports a completed update', async () => {
+    await withRealModule(async (mod) => {
+      const line = mod.describeUpdateOutcome({ updated: true, from: '0.1.0', to: '0.2.0' });
+      assert.match(line, /0\.1\.0/);
+      assert.match(line, /0\.2\.0/);
+    });
+  });
+
+  it('points plugin installs at /plugin update rather than claiming failure', async () => {
+    await withRealModule(async (mod) => {
+      const line = mod.describeUpdateOutcome({
+        updateAvailable: true, action: 'plugin_update', from: '0.1.0', to: '0.2.0',
+      });
+      assert.match(line, /\/plugin update gsd/);
+      assert.doesNotMatch(line, /failed/i, 'nothing failed — this install mode updates via the plugin system');
+    });
+  });
+
+  it('does not claim an install failed when the result came from a cached check', async () => {
+    await withRealModule(async (mod) => {
+      const line = mod.describeUpdateOutcome({
+        updateAvailable: true, action: 'cached', from: '0.1.0', to: '0.2.0',
+      });
+      assert.match(line, /0\.2\.0/);
+      assert.doesNotMatch(line, /failed/i, 'no install was attempted on the throttled path');
+      assert.match(line, /--force/, 'tell the user how to re-check');
+    });
+  });
+
+  it('still reports a genuinely failed install', async () => {
+    await withRealModule(async (mod) => {
+      const line = mod.describeUpdateOutcome({
+        updateAvailable: true, updated: false, from: '0.1.0', to: '0.2.0',
+      });
+      assert.match(line, /0\.2\.0/);
+      assert.match(line, /failed|did not/i);
+    });
+  });
+
+});
 });

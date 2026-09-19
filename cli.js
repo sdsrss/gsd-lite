@@ -33,21 +33,15 @@ switch (command) {
     break;
   }
   case 'update': {
-    const { checkForUpdate } = await import('./hooks/gsd-auto-update.cjs');
+    const { checkForUpdate, describeUpdateOutcome } = await import('./hooks/gsd-auto-update.cjs');
     const force = process.argv.includes('--force');
     console.log('Checking for updates...');
+    // verbose: true means checkForUpdate prints the outcome of the check itself
+    // ("Already up to date", "Could not fetch latest release", "Throttled — …").
+    // Only add a line for what that output does not cover.
     const result = await checkForUpdate({ force, verbose: true, install: true });
-    if (result?.updated) {
-      console.log(`\n✓ Updated: v${result.from} → v${result.to}`);
-    } else if (result?.updateAvailable) {
-      if (result.action === 'plugin_update') {
-        console.log(`\n! Update available: v${result.to}. Run /plugin update gsd`);
-      } else {
-        console.log(`\n! Update available v${result.to} but install failed. Try manually.`);
-      }
-    } else if (!result) {
-      console.log('✓ Already up to date');
-    }
+    const line = describeUpdateOutcome(result);
+    if (line) console.log(line);
     break;
   }
   case 'help':
