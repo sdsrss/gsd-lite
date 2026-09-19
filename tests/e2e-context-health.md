@@ -2,9 +2,9 @@
 
 ## Overview
 
-验证上下文健康监控系统（hooks/context-monitor.js）在不同阈值下的行为：
-- StatusLine hook 写入 `.gsd/.context-health`
-- PostToolUse hook 读取并返回警告/停止文本
+验证上下文健康监控系统（`hooks/gsd-statusline.cjs` + `hooks/gsd-context-monitor.cjs`）在不同阈值下的行为：
+- StatusLine hook 写入 `$TMPDIR/gsd-ctx-<session_id>.json` 桥接文件
+- PostToolUse hook 读取该文件并通过 `hookSpecificOutput.additionalContext` 注入警告
 - 编排器响应 hook 信号保存状态
 
 ---
@@ -197,42 +197,25 @@ Claude Code Runtime
 
 ---
 
-## Test Case 8: CLI 调用模式
+## Test Case 8: hook 进程调用
 
-### 8a. statusLine CLI
+这一节原先描述的 `node hooks/context-monitor.js statusLine|postToolUse` CLI 从未存在——
+那个文件是一个没有任何调用者的 ESM 包装层，已在 0.10.0 删除。两个 hook 的真实契约是
+读 stdin JSON、写 stdout JSON，已由 `tests/context-monitor.test.js` 和
+`tests/statusline.test.js` 自动覆盖（阈值 35%/25%、5 次调用防抖、严重度升级绕过防抖、
+60 秒过期、非 GSD 会话早退）。
 
-**Action:** `echo '{"context_window":{"remaining_percentage":50}}' | node hooks/context-monitor.js statusLine`
+手动复现一次告警：
 
-**Verify:**
-- [ ] `.gsd/.context-health` 文件内容 = `"50"`
-- [ ] 进程退出码 = 0
-
-### 8b. postToolUse CLI — 正常
-
-**Setup:** `.gsd/.context-health` = `"50"`
-
-**Action:** `node hooks/context-monitor.js postToolUse`
-
-**Verify:**
-- [ ] stdout 无输出（null → 不打印）
-- [ ] 进程退出码 = 0
-
-### 8c. postToolUse CLI — LOW
-
-**Setup:** `.gsd/.context-health` = `"30"`
-
-**Action:** `node hooks/context-monitor.js postToolUse`
+**Action:**
+```bash
+S=manual-check
+printf '%s' "{\"remaining_percentage\":20,\"used_pct\":80,\"timestamp\":$(date +%s),\"has_gsd\":true}" \
+  > "${TMPDIR:-/tmp}/gsd-ctx-$S.json"
+echo "{\"session_id\":\"$S\"}" | node hooks/gsd-context-monitor.cjs
+rm -f "${TMPDIR:-/tmp}/gsd-ctx-$S.json" "${TMPDIR:-/tmp}/gsd-ctx-$S-warned.json"
+```
 
 **Verify:**
-- [ ] stdout 包含 ⚠️ CONTEXT LOW 消息
-- [ ] 进程退出码 = 0
-
-### 8d. postToolUse CLI — EMERGENCY
-
-**Setup:** `.gsd/.context-health` = `"10"`
-
-**Action:** `node hooks/context-monitor.js postToolUse`
-
-**Verify:**
-- [ ] stdout 包含 🛑 CONTEXT EMERGENCY 消息
+- [ ] stdout 是 JSON，`hookSpecificOutput.additionalContext` 含 `CONTEXT CRITICAL`
 - [ ] 进程退出码 = 0

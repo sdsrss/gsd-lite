@@ -2,6 +2,90 @@
 
 All notable changes to this project are documented here.
 
+## [0.10.0] - 2026-09-19
+
+**A plugin install now actually installs the hooks.** Found by running the
+install → use → update → self-heal → uninstall path as a new user would, against
+a real `/plugin install` into a throwaway config directory.
+
+Minor, not patch: if you installed with `/plugin install gsd`, hooks that were
+silently inert now run, and you will see behaviour you have not seen before.
+
+**If you installed via `/plugin`, upgrading turns three hooks on for the first
+time.** Nothing to do to get them — `/plugin update gsd` and restart. What
+changes in a session:
+
+- SessionStart writes a marker-delimited progress block into your project's
+  `CLAUDE.md` when a `.gsd/` project is present. Opt out with
+  `GSD_NO_CLAUDEMD_STATUS=1`; the block is idempotent and bounded by
+  `<!-- GSD-STATUS-BEGIN -->` / `<!-- GSD-STATUS-END -->`.
+- PostToolUse injects a context warning below 35% remaining, Stop writes a
+  crash marker, and update checks resume (plugin installs are notified only —
+  they never self-install; you run `/plugin update gsd`).
+- A plugin-path session now creates `~/.claude/gsd/runtime/` (two small files
+  holding update-check throttle state). `/plugin uninstall` does not remove it;
+  `npx gsd-lite uninstall` does.
+
+To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
+0.9.0 and skip the update.
+
+### Fixed
+
+- **`/plugin install gsd` registered zero hooks.** `hooks/hooks.json` shipped
+  emptied out — a 0.7.x change moved registration into `settings.json` on the
+  belief that the plugin system's `hooks.json` loading was unreliable. Only
+  `install.js` writes `settings.json`, and the plugin system never runs it, so
+  the recommended install path silently had no SessionStart, no PostToolUse and
+  no Stop hook: no project status injection, no context monitoring, no crash
+  marker, no update checks. `claude plugin details gsd` reported `Hooks (0)`
+  while the README promised the opposite. `hooks/hooks.json` declares the three
+  hooks again, and `install.js` now *deregisters* its `settings.json` copies when
+  it detects a plugin install, so exactly one registration is live either way.
+- **The repository's own `.mcp.json` broke the MCP server for anyone who opened
+  the repo.** A `.mcp.json` at the repo root is the plugin's MCP manifest *and*
+  project-scope MCP config for any Claude Code session whose working directory is
+  the repo — and `${CLAUDE_PLUGIN_ROOT}` does not expand in the latter, so the
+  entry failed with `Missing environment variables: CLAUDE_PLUGIN_ROOT` and
+  shadowed the user's working install. The server is now declared inline in
+  `.claude-plugin/plugin.json` and the root `.mcp.json` is gone.
+- The marketplace listing advertised 5 commands and 5 workflows; there are 6 of
+  each.
+- `scripts/sync-versions.js` no longer rewrites `installed_plugins.json` and
+  hand-builds a plugin cache directory by default. It copied a subset of the tree
+  — no `install.js`, `uninstall.js` or `cli.js` — and pointed the registry at it,
+  so `claude plugin update gsd` then answered "already at the latest version" for
+  a build the plugin manager never installed, and the only copy being dogfooded
+  was one no user ever gets. Set `GSD_SYNC_PLUGIN_CACHE=1` to opt in; the copy
+  now mirrors a real install.
+- Added the `LICENSE` file that `package.json` has always claimed.
+- `commands/resume.md` named `gsd:executor` as the only agent id. That is the
+  plugin form; an npx/manual install registers the agents unprefixed, so the
+  command now names both and says to go by the session's actual agent list.
+- Deleted `hooks/context-monitor.js`, an ESM wrapper with no importers whose
+  thresholds and message text duplicated `gsd-context-monitor.cjs` and had
+  drifted from it. `tests/e2e-context-health.md` documented a CLI on that file
+  which never existed; it now documents the real stdin/stdout hook contract,
+  with a repro command that was run before it was written down. Also deleted
+  `.npmignore`, dead since `package.json` gained a `files` allowlist.
+
+### Changed
+
+- StatusLine is documented as needing `npx gsd-lite install`. A plugin may not
+  write the top-level `statusLine` key in `settings.json`, so a plugin-only
+  install cannot register it — previously this was advertised as automatic.
+- A plugin-path session now creates `~/.claude/gsd/runtime/` (update-check
+  throttle state, two small files), because the SessionStart hook runs again.
+  `/plugin uninstall` does not remove it; `npx gsd-lite uninstall` does.
+
+### Added
+
+- `tests/plugin-manifest.test.js` — asserts what a `/plugin install` delivers by
+  reading the shipped manifests rather than by driving `install.js`: every hook
+  in `install.js`'s registry is declared in `hooks/hooks.json` with the same
+  matcher and timeout, every hook command is rooted at `${CLAUDE_PLUGIN_ROOT}`
+  and points at a file that exists, no `.mcp.json` sits at the repo root, and the
+  advertised command/agent/workflow/tool counts match the tree.
+
 ## [0.9.0] - 2026-09-19
 
 **Security release.** Three ways a repository you clone could act on your

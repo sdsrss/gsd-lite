@@ -80,14 +80,28 @@ try {
   }
 } catch { /* CLAUDE.md sync is best-effort */ }
 
-// ── Plugin cache sync (dev workflow) ─────────────────────
-// When developing locally, the MCP server runs from the plugin cache
-// at ~/.claude/plugins/cache/gsd/gsd/<version>/.
-// After version bumps, sync source → cache so the running server picks up changes.
+// ── Plugin cache sync (opt-in dev workflow) ──────────────
+// When developing locally, the MCP server runs from the plugin cache at
+// ~/.claude/plugins/cache/gsd/gsd/<version>/. Pointing that cache at the working
+// tree makes the running server pick up changes without a release.
+//
+// It is opt-in because it is not free: it hand-builds a cache directory and
+// rewrites installed_plugins.json to point at it, so `claude plugin update gsd`
+// afterwards reports "already at the latest version" for a version the plugin
+// manager never installed. Worse, anything the copy below misses is missing from
+// the only copy the developer ever exercises — a packaging bug then cannot be
+// reproduced by dogfooding, which is exactly how one ships. `npm version` and
+// `prepublishOnly` must not do that silently, so set GSD_SYNC_PLUGIN_CACHE=1
+// when you want it.
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const pluginsFile = join(claudeDir, 'plugins', 'installed_plugins.json');
+const syncPluginCache = process.env.GSD_SYNC_PLUGIN_CACHE === '1';
 
-if (existsSync(pluginsFile)) {
+if (existsSync(pluginsFile) && !syncPluginCache) {
+  console.log('Plugin cache not touched (set GSD_SYNC_PLUGIN_CACHE=1 to sync, or run: claude plugin update gsd)');
+}
+
+if (existsSync(pluginsFile) && syncPluginCache) {
   try {
     const plugins = JSON.parse(readFileSync(pluginsFile, 'utf8'));
     const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
@@ -97,8 +111,15 @@ if (existsSync(pluginsFile)) {
 
       // Copy source files to cache
       mkdirSync(newCachePath, { recursive: true });
+      // Mirror what a real plugin install contains. A short list here is how a
+      // dogfooded cache ends up missing install.js/uninstall.js/cli.js while
+      // every local test still passes.
       const syncDirs = ['src', 'commands', 'agents', 'workflows', 'references', 'hooks', 'scripts', '.claude-plugin'];
-      const syncFiles = ['package.json', 'launcher.js', '.mcp.json'];
+      const syncFiles = [
+        'package.json', 'package-lock.json', 'launcher.js',
+        'install.js', 'uninstall.js', 'cli.js', 'biome.json',
+        'README.md', 'CHANGELOG.md', 'LICENSE',
+      ];
 
       for (const dir of syncDirs) {
         const srcDir = join(root, dir);
