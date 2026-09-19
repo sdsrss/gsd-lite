@@ -1,7 +1,7 @@
 // tests/error-codes.test.js — M-10: Structured error codes
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, chmod } from 'node:fs/promises';
+import { mkdtemp, chmod, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ERROR_CODES, init, read, update, addEvidence, phaseComplete, pruneEvidence } from '../src/tools/state/index.js';
@@ -12,6 +12,12 @@ describe('M-10: structured error codes', () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'gsd-errcode-'));
+  });
+
+  // Without this the suite left one sandbox per test behind in the system temp
+  // dir — 18 directories on every `npm test`, accumulating across runs.
+  afterEach(async () => {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true });
   });
 
   it('exports ERROR_CODES object', () => {
