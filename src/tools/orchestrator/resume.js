@@ -318,55 +318,56 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
   // Force-unblock specified tasks before normal resume flow
   if (Array.isArray(unblock_tasks) && unblock_tasks.length > 0 && _depth === 0) {
     const phase = getCurrentPhase(state);
+    // Defensive: read() validates current_phase against the phase list before we
+    // get here, so this is unreachable through the tool surface today. It exists
+    // so a future caller cannot reintroduce the silent skip this block removed.
     if (!phase) {
       return { error: true, code: ERROR_CODES.NOT_FOUND, message: `No task was unblocked — current phase ${state.current_phase} not found` };
     }
-    {
-      const patches = [];
-      // Track what could not be unblocked. Silently skipping a typo'd or
-      // already-running task id made `/gsd:resume --unblock 9.9` look like it
-      // worked — the caller got a plain dispatch result with no hint that its
-      // request was a no-op.
-      const skipped = [];
-      for (const taskId of unblock_tasks) {
-        const task = (phase.todo || []).find(t => t.id === taskId);
-        if (!task) {
-          skipped.push({ id: taskId, reason: `not found in phase ${phase.id}` });
-        } else if (task.lifecycle !== 'blocked') {
-          skipped.push({ id: taskId, reason: `not blocked (lifecycle: ${task.lifecycle})` });
-        } else {
-          patches.push({ id: taskId, lifecycle: 'pending', blocked_reason: null, unblock_condition: null });
-        }
+    const patches = [];
+    // Track what could not be unblocked. Silently skipping a typo'd or
+    // already-running task id made `/gsd:resume --unblock 9.9` look like it
+    // worked — the caller got a plain dispatch result with no hint that its
+    // request was a no-op.
+    const skipped = [];
+    for (const taskId of unblock_tasks) {
+      const task = (phase.todo || []).find(t => t.id === taskId);
+      if (!task) {
+        skipped.push({ id: taskId, reason: `not found in phase ${phase.id}` });
+      } else if (task.lifecycle !== 'blocked') {
+        skipped.push({ id: taskId, reason: `not blocked (lifecycle: ${task.lifecycle})` });
+      } else {
+        patches.push({ id: taskId, lifecycle: 'pending', blocked_reason: null, unblock_condition: null });
       }
-      if (patches.length === 0 && skipped.length > 0) {
-        // Nothing was changed, so failing here is safe and tells the caller why.
-        return {
-          error: true,
-          code: ERROR_CODES.NOT_FOUND,
-          message: `No task was unblocked — ${skipped.map(s => `${s.id}: ${s.reason}`).join('; ')}`,
-          unblock_skipped: skipped,
-        };
-      }
-      if (patches.length > 0) {
-        const persistError = await persist(basePath, {
-          workflow_mode: 'executing_task',
-          current_task: null,
-          current_review: null,
-          phases: [{ id: phase.id, todo: patches }],
-        });
-        if (persistError) return persistError;
-        // Re-read state after unblock and continue (recursive call adds its own summary)
-        const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
-        // The unblock itself persisted; if the resume that follows it failed,
-        // return that error unadorned rather than mixing success-shaped keys
-        // into an error object.
-        if (resumed.error) return resumed;
-        return {
-          ...resumed,
-          unblocked: patches.map(p => p.id),
-          ...(skipped.length > 0 ? { unblock_skipped: skipped } : {}),
-        };
-      }
+    }
+    if (patches.length === 0 && skipped.length > 0) {
+      // Nothing was changed, so failing here is safe and tells the caller why.
+      return {
+        error: true,
+        code: ERROR_CODES.NOT_FOUND,
+        message: `No task was unblocked — ${skipped.map(s => `${s.id}: ${s.reason}`).join('; ')}`,
+        unblock_skipped: skipped,
+      };
+    }
+    if (patches.length > 0) {
+      const persistError = await persist(basePath, {
+        workflow_mode: 'executing_task',
+        current_task: null,
+        current_review: null,
+        phases: [{ id: phase.id, todo: patches }],
+      });
+      if (persistError) return persistError;
+      // Re-read state after unblock and continue (recursive call adds its own summary)
+      const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
+      // The unblock itself persisted; if the resume that follows it failed,
+      // return that error unadorned rather than mixing success-shaped keys
+      // into an error object.
+      if (resumed.error) return resumed;
+      return {
+        ...resumed,
+        unblocked: patches.map(p => p.id),
+        ...(skipped.length > 0 ? { unblock_skipped: skipped } : {}),
+      };
     }
   }
 
