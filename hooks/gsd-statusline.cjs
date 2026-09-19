@@ -24,8 +24,18 @@ process.stdin.on('end', () => {
     // arithmetic below as NaN, which renders an empty bar labelled "NaN%" and —
     // because every `used < N` comparison is false for NaN — dresses it in the
     // blinking-red critical style. Treat it as absent instead.
+    // Must resolve to a real number: a non-numeric value propagates through the
+    // arithmetic below as NaN, which renders an empty bar labelled "NaN%" and —
+    // because every `used < N` comparison is false for NaN — dresses it in the
+    // blinking-red critical style. Treat it as absent instead.
+    // A numeric string is accepted, but only by coercing strings: Number('') and
+    // Number(null) are both 0, so coercing everything would turn an ABSENT value
+    // into "100% used" plus that same false critical alarm.
     const rawRemaining = data.context_window?.remaining_percentage;
-    const remaining = Number.isFinite(rawRemaining) ? rawRemaining : null;
+    const coerced = typeof rawRemaining === 'string' && rawRemaining.trim() !== ''
+      ? Number(rawRemaining)
+      : rawRemaining;
+    const remaining = Number.isFinite(coerced) ? coerced : null;
 
     // Current GSD task from state.json
     let task = '';

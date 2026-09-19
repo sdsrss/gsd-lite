@@ -11,7 +11,7 @@
 // STATE_EXISTS.
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ERROR_CODES, read, update, phaseComplete, patchPlan } from '../src/tools/state/index.js';
@@ -85,6 +85,39 @@ describe('corrupt state.json surfaces a structured error, never a raw TypeError'
       assert.match(result.message, /unreadable/i);
     });
   }
+
+  // Regression: the missing-vs-corrupt branch used to substring-match the error
+  // MESSAGE for 'ENOENT'. A JSON SyntaxError message quotes the file's own
+  // content, so a state.json that merely contained the text "ENOENT" (a stray
+  // `2>` redirect, say) was reported as "No GSD project found" — routing the
+  // user to /gsd:start, the exact dead-end this guard exists to close.
+  it('does not mistake file CONTENT saying ENOENT for a missing file', async () => {
+    const result = await read({ basePath: await withState('ENOENT: no such file or directory\n') });
+    assert.equal(result.error, true);
+    assert.equal(result.code, ERROR_CODES.VALIDATION_FAILED,
+      'the file exists and is unreadable — that is corruption, not a missing project');
+    assert.match(result.message, /unreadable/i);
+  });
+
+  it('force-init does not overwrite a good backup with a corrupt state', async () => {
+    const { init } = await import('../src/tools/state/index.js');
+    const dir = await sandbox('gsd-corrupt-');
+    const phases = [{ name: 'P1', tasks: [{ name: 'a' }] }];
+
+    // A real project, then a force re-init: that writes the first good .bak.
+    await init({ project: 'good', phases, basePath: dir });
+    await init({ project: 'second', phases, force: true, basePath: dir });
+    const goodBackup = JSON.parse(await readFile(join(dir, '.gsd', 'state.json.bak'), 'utf8'));
+    assert.equal(goodBackup.project, 'good', 'precondition: .bak holds the first good state');
+
+    // Now the live state is corrupted and the user takes the documented escape.
+    await writeFile(join(dir, '.gsd', 'state.json'), 'null');
+    await init({ project: 'recovered', phases, force: true, basePath: dir });
+
+    const backupAfter = JSON.parse(await readFile(join(dir, '.gsd', 'state.json.bak'), 'utf8'));
+    assert.equal(backupAfter.project, 'good',
+      'the corrupt state must not clobber the backup the recovery hint points at');
+  });
 
   it('a genuinely absent state.json is still NO_PROJECT_DIR', async () => {
     const dir = await sandbox('gsd-corrupt-');

@@ -181,7 +181,11 @@ export async function readJson(filePath) {
     const content = await readFile(filePath, 'utf-8');
     return { ok: true, data: JSON.parse(content) };
   } catch (err) {
-    return { ok: false, error: err.message };
+    // `code` is the filesystem errno ('ENOENT', 'EACCES', …) and is absent on a
+    // JSON SyntaxError. Callers must branch on it rather than substring-matching
+    // `error`: a JSON parse message quotes the file's own content, so a file that
+    // merely CONTAINS the text "ENOENT" would otherwise be read as "file missing".
+    return { ok: false, error: err.message, code: err.code };
   }
 }
 

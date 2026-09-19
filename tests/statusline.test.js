@@ -240,11 +240,16 @@ describe('gsd-statusline ancestor traversal', () => {
 // every `used < N` comparison is false for NaN, painted it in the blinking-red
 // critical style — a false context-exhaustion alarm on every prompt.
 describe('statusline: non-numeric context percentage', () => {
+  // JSON.stringify turns NaN and Infinity into null, so passing those over the
+  // hook's stdin would exercise the pre-existing `!= null` gate, not this one.
+  // Every case below survives JSON round-tripping as a non-null non-number.
   for (const [label, value] of [
     ['a string', 'lots'],
-    ['NaN', Number.NaN],
-    ['Infinity', Number.POSITIVE_INFINITY],
+    ['the string "NaN"', 'NaN'],
     ['an object', {}],
+    ['an array', []],
+    ['a boolean', true],
+    ['an empty string', ''],
   ]) {
     it(`omits the context bar when remaining_percentage is ${label}`, async () => {
       const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-nan-'));
@@ -269,6 +274,50 @@ describe('statusline: non-numeric context percentage', () => {
       }
     });
   }
+
+  it('accepts a numeric string rather than dropping the bar', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-nan-'));
+    try {
+      await mkdir(join(dir, '.gsd'), { recursive: true });
+      await writeFile(join(dir, '.gsd', 'state.json'), JSON.stringify({ project: 'p', phases: [] }));
+      const { stdout: out } = runHook({
+        session_id: 'numstr-test',
+        workspace: { current_dir: dir },
+        model: { display_name: 'Opus' },
+        context_window: { remaining_percentage: '90' },
+      });
+      assert.match(out, /\d+%/, 'a numeric string still renders a bar');
+      assert.ok(!out.includes('NaN'), 'and does not render NaN');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('renders the extremes without a false critical alarm at 100', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-nan-'));
+    try {
+      await mkdir(join(dir, '.gsd'), { recursive: true });
+      await writeFile(join(dir, '.gsd', 'state.json'), JSON.stringify({ project: 'p', phases: [] }));
+      // 0 is falsy — it must not be dropped by the finite check
+      const { stdout: zero } = runHook({
+        session_id: 'zero-test',
+        workspace: { current_dir: dir },
+        model: { display_name: 'Opus' },
+        context_window: { remaining_percentage: 0 },
+      });
+      assert.match(zero, /100%/, 'no context left renders as 100% used');
+      const { stdout: full } = runHook({
+        session_id: 'full-test',
+        workspace: { current_dir: dir },
+        model: { display_name: 'Opus' },
+        context_window: { remaining_percentage: 100 },
+      });
+      assert.match(full, /0%/, 'a full window renders as 0% used');
+      assert.ok(!full.includes('\u{1F480}'), 'a full window is not a critical alarm');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it('still renders the bar for a valid percentage', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-nan-'));
