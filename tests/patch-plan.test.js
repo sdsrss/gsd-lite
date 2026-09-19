@@ -334,6 +334,19 @@ describe('patchPlan — add_task dependency validation parity', () => {
     });
   }
 
+  // Without the array guard, a caller passing one dependency instead of a list
+  // gets an uncaught TypeError out of patchPlan rather than a structured error.
+  for (const bad of [{ kind: 'task', id: '1.1' }, 42, 'oops']) {
+    it(`rejects a non-array requires (${JSON.stringify(bad)}) without throwing`, async () => {
+      const result = await patchPlan({
+        operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Bad shape', requires: bad } }],
+        basePath: tempDir,
+      });
+      assert.equal(result.error, true);
+      assert.match(result.message, /array/i);
+    });
+  }
+
   it('still accepts a well-formed same-phase task dependency', async () => {
     const result = await patchPlan({
       operations: [{
@@ -388,6 +401,17 @@ describe('patchPlan — add_task dependency validation parity', () => {
 describe('patchPlan — add_task index derivation cannot wedge a phase', () => {
   beforeEach(setup);
   afterEach(() => rm(tempDir, { recursive: true, force: true }));
+
+  it('rejects an explicit index that is an integer but not a safe integer', async () => {
+    // Number.isInteger(1e21) is true, so this is the only shape that tells the
+    // two predicates apart — without it the isSafeInteger guard is untested.
+    const result = await patchPlan({
+      operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Huge', index: 1e21 } }],
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /index/i);
+  });
 
   it('keeps accepting tasks after one is added at MAX_SAFE_INTEGER', async () => {
     const far = await patchPlan({
