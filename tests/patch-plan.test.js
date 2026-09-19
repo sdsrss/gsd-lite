@@ -265,6 +265,9 @@ describe('patchPlan — add_dependency', () => {
     });
     assert.equal(result.error, true);
     assert.match(result.message, /forward\/self reference/);
+    // Name the task, not just the phase — a multi-op patch needs to say which
+    // dependency failed.
+    assert.match(result.message, /Task 1\.1/);
   });
 
   it('accepts a backward phase dependency via add_dependency (R-06)', async () => {

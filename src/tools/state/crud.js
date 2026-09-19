@@ -882,7 +882,7 @@ function _applyPatchOp(state, op) {
       // "1.0"/"1.1.5"/"1.x"; "1.x" then poisons Math.max() and cascades to "1.NaN".
       if (task.index !== undefined && task.index !== null
           && (!Number.isSafeInteger(task.index) || task.index < 1)) {
-        return { error: true, message: `task.index must be a positive integer (got ${JSON.stringify(task.index)})` };
+        return { error: true, message: `task.index must be a positive integer below 2^53 (got ${JSON.stringify(task.index)})` };
       }
 
       const phase = state.phases.find(p => p.id === phase_id);
@@ -891,10 +891,8 @@ function _applyPatchOp(state, op) {
       // Cannot add tasks to accepted phases
       if (phase.lifecycle === 'accepted') return { error: true, message: `Cannot add tasks to accepted phase ${phase_id}` };
 
-      // Every requires entry goes through the same rules add_dependency and
-      // createInitialState enforce. Validating only phase-kind deps here let a
-      // malformed task-kind dep reach state.json, where selectRunnableTask reads
-      // it as satisfied and drops the ordering silently.
+      // Every requires entry goes through _validateRequiresEntry — see its doc
+      // comment for why a dep that slips through is worse than a loud rejection.
       if (task.requires !== undefined && task.requires !== null && !Array.isArray(task.requires)) {
         return { error: true, message: `task.requires must be an array (got ${JSON.stringify(task.requires)})` };
       }
@@ -1054,8 +1052,12 @@ function _applyPatchOp(state, op) {
       const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));
       if (!phase) return { error: true, message: `Task ${task_id} not found` };
 
+      // Name the task, the way createInitialState does. patchPlan prefixes op
+      // errors with the op name only, so a multi-op patch with several
+      // add_dependency ops would otherwise say which phase failed but not which
+      // dependency.
       const depError = _validateRequiresEntry(state, phase, requires);
-      if (depError) return { error: true, message: depError };
+      if (depError) return { error: true, message: `Task ${task_id}: ${depError}` };
 
       const task = phase.todo.find(t => t.id === task_id);
       // Check for duplicate dependency

@@ -828,11 +828,14 @@ export function createInitialState({ project, phases }) {
       if (!t.name || typeof t.name !== 'string') {
         return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: name is required (got ${JSON.stringify(t.name)})` };
       }
-      // Guard explicit index: must be a positive integer or it yields malformed task IDs
-      // (e.g. "1.0", "1.1.5", "1.x") that break downstream id parsing.
+      // Guard explicit index: must be a positive SAFE integer, or it yields either
+      // a malformed task ID ("1.0", "1.1.5", "1.x") that breaks downstream id
+      // parsing, or an ID whose numeric part cannot be incremented — Number.isInteger
+      // accepts 2**53, where Math.max(...) + 1 stops advancing and state-patch
+      // add_task can never derive another index for the phase (crud.js:912).
       if (t.index !== undefined && t.index !== null
-          && (!Number.isInteger(t.index) || t.index < 1)) {
-        return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: index must be a positive integer (got ${JSON.stringify(t.index)})` };
+          && (!Number.isSafeInteger(t.index) || t.index < 1)) {
+        return { error: true, message: `Phase ${pi + 1} task ${ti + 1}: index must be a positive integer below 2^53 (got ${JSON.stringify(t.index)})` };
       }
       const id = `${pi + 1}.${t.index ?? (ti + 1)}`;
       if (seenIds.has(id)) {
