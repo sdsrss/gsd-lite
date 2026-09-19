@@ -10,7 +10,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize } from 'node:path';
 
@@ -60,4 +60,41 @@ describe('repo gates — git hooks are executable', () => {
       );
     });
   }
+});
+
+// A relative link in a tracked markdown file points at a path a reader is
+// expected to be able to open. Linking a path that is gitignored or deleted
+// gives every reader on GitHub and npm a 404, and nothing in the repo notices.
+//
+// This covers relative links in tracked .md files. It does NOT check external
+// http(s) links, anchor fragments, or whether the linked file says anything
+// useful.
+describe('repo gates — markdown links resolve', () => {
+  const trackedMarkdown = execFileSync('git', ['ls-files', '*.md'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).split('\n').filter(Boolean);
+
+  const links = trackedMarkdown.flatMap(mdPath =>
+    [...readFileSync(join(repoRoot, mdPath), 'utf8').matchAll(/\]\(([^)\s]+)\)/g)]
+      .map(m => m[1])
+      .filter(t => !/^(https?:|mailto:|#)/.test(t))
+      .map(t => ({ mdPath, target: t.split('#')[0] }))
+      .filter(l => l.target),
+  );
+
+  // Vacuity guard: this suite is one assertion over a corpus, so an empty corpus
+  // would make it pass without checking anything. Deleting the last relative
+  // link in the repo should turn this red, not quiet.
+  it('finds relative markdown links to check', () => {
+    assert.ok(trackedMarkdown.includes('README.md'), 'expected README.md among tracked markdown');
+    assert.ok(links.length > 0, 'no relative markdown links found — the link check below would be vacuous');
+  });
+
+  it('every relative markdown link resolves', () => {
+    const broken = links
+      .filter(l => !existsSync(join(repoRoot, dirname(l.mdPath), l.target)))
+      .map(l => `${l.mdPath} → ${l.target}`);
+    assert.deepEqual(broken, [], `markdown links to paths that do not exist:\n  ${broken.join('\n  ')}`);
+  });
 });
