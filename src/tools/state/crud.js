@@ -881,7 +881,7 @@ function _applyPatchOp(state, op) {
       // Guard task.index: a non-positive-integer index produces malformed IDs like
       // "1.0"/"1.1.5"/"1.x"; "1.x" then poisons Math.max() and cascades to "1.NaN".
       if (task.index !== undefined && task.index !== null
-          && (!Number.isInteger(task.index) || task.index < 1)) {
+          && (!Number.isSafeInteger(task.index) || task.index < 1)) {
         return { error: true, message: `task.index must be a positive integer (got ${JSON.stringify(task.index)})` };
       }
 
@@ -903,12 +903,23 @@ function _applyPatchOp(state, op) {
         if (depError) return { error: true, message: depError };
       }
 
-      // Compute next task index
-      const existingIndices = phase.todo.map(t => {
-        const parts = t.id.split('.');
-        return parseInt(parts[1], 10);
-      });
+      // Derive the next index from ids that actually carry one. A task id with
+      // no numeric part makes parseInt return NaN, and Math.max propagates NaN
+      // into every later derivation: "1.NaN" is persisted as a real task id and
+      // the phase can never take another auto-indexed task.
+      const existingIndices = phase.todo
+        .map(t => Number.parseInt(String(t.id).split('.')[1], 10))
+        .filter(Number.isSafeInteger);
       const nextIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 1;
+      // One past MAX_SAFE_INTEGER stops advancing, so every later add would
+      // collide with the same id and report "already exists" forever. Say what
+      // actually happened instead.
+      if ((task.index === undefined || task.index === null) && !Number.isSafeInteger(nextIndex)) {
+        return {
+          error: true,
+          message: `cannot derive the next task index for phase ${phase_id}: the highest existing index is ${Math.max(...existingIndices)} and one past it is not a safe integer — pass an explicit task.index`,
+        };
+      }
       const taskId = `${phase_id}.${task.index ?? nextIndex}`;
 
       // Check for duplicate ID
