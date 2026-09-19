@@ -3066,6 +3066,7 @@ describe('resumeWorkflow validates unblock_tasks', () => {
     ['a string', '1.1'],
     ['an object', { id: '1.1' }],
     ['a number', 11],
+    ['a boolean', true],
   ]) {
     it(`rejects unblock_tasks given as ${label}`, async () => {
       await init({ project: 'unb', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], basePath: tempDir });
@@ -3075,11 +3076,24 @@ describe('resumeWorkflow validates unblock_tasks', () => {
     });
   }
 
-  it('still resumes normally when unblock_tasks is omitted or empty', async () => {
+  it('still resumes normally when unblock_tasks is omitted, null or empty', async () => {
     await init({ project: 'unb', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], basePath: tempDir });
-    const omitted = await resumeWorkflow({ basePath: tempDir });
-    assert.ok(!omitted.error, `omitted should resume: ${omitted.message}`);
-    const empty = await resumeWorkflow({ basePath: tempDir, unblock_tasks: [] });
-    assert.ok(!empty.error, `empty array should resume: ${empty.message}`);
+    for (const [label, args] of [
+      ['omitted', {}],
+      ['null', { unblock_tasks: null }],
+      ['empty array', { unblock_tasks: [] }],
+    ]) {
+      const result = await resumeWorkflow({ basePath: tempDir, ...args });
+      assert.ok(!result.error, `${label} should resume: ${result.message}`);
+    }
+  });
+
+  it('reports the tasks it actually unblocked on the happy path', async () => {
+    await init({ project: 'unb', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }, { index: 2, name: 'B' }] }], basePath: tempDir });
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'blocked', blocked_reason: 'needs key' }] }] }, basePath: tempDir });
+    const result = await resumeWorkflow({ basePath: tempDir, unblock_tasks: ['1.1'] });
+    assert.ok(!result.error, `expected success: ${result.message}`);
+    assert.deepEqual(result.unblocked, ['1.1']);
+    assert.equal(result.unblock_skipped, undefined, 'nothing was skipped, so no skip list');
   });
 });

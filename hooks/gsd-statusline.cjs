@@ -20,10 +20,6 @@ process.stdin.on('end', () => {
     const cwd = data.workspace?.current_dir || process.cwd();
     const session = String(data.session_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
     if (!session) process.exit(0); // Reject empty session ID to avoid bridge file collision
-    // Must be a real number: a non-numeric value propagates through the
-    // arithmetic below as NaN, which renders an empty bar labelled "NaN%" and —
-    // because every `used < N` comparison is false for NaN — dresses it in the
-    // blinking-red critical style. Treat it as absent instead.
     // Must resolve to a real number: a non-numeric value propagates through the
     // arithmetic below as NaN, which renders an empty bar labelled "NaN%" and —
     // because every `used < N` comparison is false for NaN — dresses it in the
