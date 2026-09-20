@@ -101,6 +101,30 @@ describe('context bridge lives somewhere only this user can reach (#8)', () => {
     });
   });
 
+  it('falls back to the config dir when XDG_RUNTIME_DIR is unset, and makes it private', () => {
+    // macOS has no XDG_RUNTIME_DIR, and neither do plenty of Linux sessions, so
+    // this is the branch most users are on. The suite's preload sets the
+    // variable for isolation, which would otherwise leave this path untested —
+    // it has to be unset explicitly here, in a child that inherits nothing else.
+    sandbox(({ root, env }) => {
+      const claudeDir = join(root, 'claude');
+      const child = execFileSync(process.execPath, [
+        '-e',
+        'const {bridgePaths}=require(process.argv[1]);const fs=require("node:fs");const p=bridgePaths("fallback1");process.stdout.write(JSON.stringify({p,mode:fs.statSync(p.dir).mode & 0o777}))',
+        join(PROJECT_ROOT, 'hooks', 'lib', 'ctx-bridge.cjs'),
+      ], {
+        encoding: 'utf8',
+        env: { ...process.env, ...env, XDG_RUNTIME_DIR: undefined, CLAUDE_CONFIG_DIR: claudeDir },
+      });
+      const { p, mode } = JSON.parse(child);
+      assert.equal(p.dir, join(claudeDir, 'gsd', 'runtime', 'ctx'));
+      assert.equal(p.metrics, join(claudeDir, 'gsd', 'runtime', 'ctx', 'gsd-ctx-fallback1.json'));
+      if (process.platform !== 'win32') {
+        assert.equal(mode & 0o022, 0, `the fallback directory must not be group- or other-writable (got ${mode.toString(8)})`);
+      }
+    });
+  });
+
   it('the statusline writes the bridge there and leaves nothing in the shared temp directory', () => {
     sandbox(({ xdg, tmp, env }) => {
       const session = 'ctxb-write';
