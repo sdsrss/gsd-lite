@@ -38,7 +38,7 @@ const path = require('node:path');
  * @param {string} claudeDir  resolved CLAUDE_CONFIG_DIR / ~/.claude
  * @param {string} scriptDir  the calling hook's __dirname
  */
-function pluginServesHooks(claudeDir, scriptDir) {
+function pluginServesHooks(claudeDir, scriptDir, hookType) {
   // We ARE the plugin's copy — we are the live registration, never stand down.
   if (process.env.CLAUDE_PLUGIN_ROOT) return false;
   // Node resolves __dirname through symlinks and path.join does not, so compare
@@ -50,24 +50,34 @@ function pluginServesHooks(claudeDir, scriptDir) {
   }
 
   // We are the ~/.claude/hooks copy an npx/manual install wrote.
-  let installed = false;
+  //
+  // The id is marketplace-qualified, and the same plugin installed from a fork
+  // or mirror is `gsd@<other>`. Matching only `gsd@gsd` would miss it and both
+  // copies would run.
+  let entry = null;
+  let pluginId = null;
   try {
     const registry = JSON.parse(
       fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8'),
     );
-    installed = !!registry.plugins?.['gsd@gsd'];
+    pluginId = Object.keys(registry.plugins ?? {}).find(k => k === 'gsd@gsd' || k.startsWith('gsd@'));
+    if (!pluginId) return false;
+    const record = registry.plugins[pluginId];
+    entry = Array.isArray(record) ? record[0] : record;
   } catch {
     // No registry, unreadable, or a torn read while Claude Code rewrites it
     // during install/update/enable/disable. Never read that as "the plugin is
     // there" — that would stand us down on a transient error.
     return false;
   }
-  if (!installed) return false;
+  if (!entry) return false;
 
   // Installed but disabled means hooks.json is not loaded, so we are still the
   // only registration. enabledPlugins can live in the user settings or in the
-  // project's, so an explicit false in either one keeps us running. Only an
-  // explicit false disables — a missing key means enabled.
+  // project's, so a disabling value in any of them keeps us running. Claude
+  // Code treats the string "false" as disabled too, and `=== false` is the one
+  // comparison that would let that through as "enabled" — test for an explicit
+  // key that is not literally true. A missing key means enabled.
   const cwdClaude = path.join(process.cwd(), '.claude');
   for (const file of [
     path.join(claudeDir, 'settings.json'),
@@ -75,9 +85,26 @@ function pluginServesHooks(claudeDir, scriptDir) {
     path.join(cwdClaude, 'settings.local.json'),
   ]) {
     try {
-      const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (settings.enabledPlugins?.['gsd@gsd'] === false) return false;
+      const enabled = JSON.parse(fs.readFileSync(file, 'utf8')).enabledPlugins;
+      if (enabled && Object.hasOwn(enabled, pluginId) && enabled[pluginId] !== true) return false;
     } catch { /* absent or unreadable — no opinion from this file */ }
+  }
+
+  // Installed and enabled is not the same as serving. A plugin whose
+  // hooks/hooks.json is missing, truncated or malformed registers nothing —
+  // `claude plugin details` says Hooks (0) — and standing down against it is
+  // how this safety net would go silent on the exact fault it exists to catch:
+  // Hooks (0) is the state 0.9.0 shipped in, and back then the settings.json
+  // registration is what kept those users working. So check the manifest
+  // actually declares the hook we implement, and run whenever it does not.
+  if (!entry.installPath) return false;
+  try {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(entry.installPath, 'hooks', 'hooks.json'), 'utf8'),
+    );
+    if (!manifest.hooks?.[hookType]?.length) return false;
+  } catch {
+    return false;
   }
 
   return true;
