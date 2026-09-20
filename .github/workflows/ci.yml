@@ -6,17 +6,30 @@ on:
   pull_request:
     branches: [main]
 
+# Nothing in this workflow writes to the repository: it checks out, installs,
+# lints and tests. Stating `contents: read` means the job's GITHUB_TOKEN cannot
+# push, tag or release even if a step (or a dependency of a step) tries to.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20, 22]
+        # 20 is the engines floor; 24 is the current LTS. Both ends are tested
+        # because the failures that matter here are version-dependent — see the
+        # coverage steps below for one the matrix itself has to work around.
+        node-version: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v5
+      # Actions are pinned to the commit SHA of the major they track, not to the
+      # floating tag. A floating tag is mutable by the action's owner, so `@v5`
+      # is a promise rather than a fact; the SHA is the fact. The trailing
+      # comment records which major the SHA belongs to, so bumping stays legible.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -27,9 +40,19 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Run tests with coverage
-        # This IS the coverage gate: test:coverage runs c8 with
-        # `--check-coverage --lines 80 --branches 75`, so a drop fails here.
+      - name: Run tests (Node 20 — no coverage thresholds available)
+        # `--test-coverage-lines` / `--test-coverage-branches` landed in Node
+        # 22.8. On 20 they are unknown options and node exits before running a
+        # single test, so this leg runs the suite without the coverage gate.
+        # It still proves the engines floor works; the gate lives on 22 and 24.
+        if: matrix.node-version == 20
+        run: npm test
+
+      - name: Run tests with coverage (Node 22+)
+        # This IS the coverage gate: test:coverage runs node's built-in coverage
+        # with `--test-coverage-lines=80 --test-coverage-branches=75`, so a drop
+        # fails here. Verified to be capable of failing: raising the thresholds
+        # to 99 exits 1.
         #
         # A separate "Check coverage threshold" step used to follow, shelling out
         # to `c8 report`. node_modules/.bin is not on PATH inside `run:`, so the
@@ -37,6 +60,7 @@ jobs:
         # "Could not parse coverage, skipping threshold check" and exited 0 on
         # every build it ever ran. A step that cannot fail is worse than no step:
         # it reads like a gate in the job list and in review.
+        if: matrix.node-version != 20
         run: npm run test:coverage
 
       - name: Security audit
