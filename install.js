@@ -12,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const _require = createRequire(import.meta.url);
 const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
+const { removeHookEntry, upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -80,32 +81,15 @@ function registerStatusLine(settings, statuslineScriptPath) {
 
 function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
   const scriptPath = join(CLAUDE_DIR, 'hooks', `${identifier}.cjs`);
-  const command = `node ${JSON.stringify(scriptPath)}`;
-  const hookDef = { type: 'command', command };
-  if (timeout) hookDef.timeout = timeout;
-  const entry = { matcher, hooks: [hookDef] };
-
-  if (!hooks[hookType]) {
-    hooks[hookType] = [entry];
-    return true;
-  }
-  // Handle legacy string format
-  if (typeof hooks[hookType] === 'string') {
-    if (!hooks[hookType].includes(identifier)) {
-      log(`  ! Preserved existing ${hookType} hook`);
-      return false;
-    }
-    hooks[hookType] = [entry];
-    return true;
-  }
-  if (Array.isArray(hooks[hookType])) {
-    const idx = hooks[hookType].findIndex(e =>
-      e.hooks?.some(h => h.command?.includes(identifier)));
-    if (idx >= 0) hooks[hookType][idx] = entry;
-    else hooks[hookType].push(entry);
-    return true;
-  }
-  return false;
+  const registered = upsertHookEntry(hooks, {
+    hookType,
+    identifier,
+    matcher,
+    timeout,
+    command: `node ${JSON.stringify(scriptPath)}`,
+  });
+  if (!registered) log(`  ! Preserved existing ${hookType} hook`);
+  return registered;
 }
 
 /**
@@ -119,18 +103,7 @@ function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
  * what happened rather than inferring it from having reached this line.
  */
 function unregisterHookEntry(hooks, { hookType, identifier }) {
-  const entries = hooks[hookType];
-  if (typeof entries === 'string') {
-    if (!entries.includes(identifier)) return false;
-    delete hooks[hookType];
-    return true;
-  }
-  if (!Array.isArray(entries)) return false;
-  const kept = entries.filter(e => !e.hooks?.some(h => h.command?.includes(identifier)));
-  if (kept.length === entries.length) return false;
-  if (kept.length === 0) delete hooks[hookType];
-  else hooks[hookType] = kept;
-  return true;
+  return removeHookEntry(hooks, hookType, identifier);
 }
 
 /**

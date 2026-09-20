@@ -225,7 +225,7 @@ function cleanupOrphan() {
     try { fs.rmSync(path.join(claudeDir, 'hooks', name), { force: true }); } catch { /* best effort */ }
   }
   // 5. Hook lib files (GSD-owned only — don't touch other plugins' libs)
-  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs']) {
+  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs']) {
     try { fs.rmSync(path.join(claudeDir, 'hooks', 'lib', lib), { force: true }); } catch { /* best effort */ }
   }
   // 6. Runtime dir + plugin marketplace + cache dirs (current + legacy names)
@@ -255,6 +255,41 @@ if (isOrphan()) {
 setTimeout(() => process.exit(0), 4000).unref();
 
 (async () => {
+  // ── Phase 0b: drop duplicate settings.json hook registrations ──
+  // The two install paths register the same three hooks in different places:
+  // the plugin system loads hooks/hooks.json out of the plugin cache, and
+  // install.js writes settings.json. A user who ran `npx gsd-lite install`
+  // first and then installed the plugin has both, so every hook fires twice —
+  // from two different versions, racing on the same CLAUDE.md status block and
+  // the same runtime files. install.js clears this, but the plugin system never
+  // runs install.js, which is the whole reason hooks/hooks.json exists again.
+  // So the copy that has to notice is this one, and it can: we are running out
+  // of the plugin cache exactly when the plugin system launched us.
+  const runningFromPluginCache =
+    !!process.env.CLAUDE_PLUGIN_ROOT ||
+    __dirname.startsWith(path.join(claudeDir, 'plugins', 'cache') + path.sep);
+  if (runningFromPluginCache) {
+    try {
+      const { removeHookEntry } = require('./lib/hook-registry.cjs');
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      let deduped = false;
+      for (const [hookType, identifier] of [
+        ['SessionStart', 'gsd-session-init'],
+        ['PostToolUse', 'gsd-context-monitor'],
+        ['PostToolUse', 'context-monitor.js'],
+        ['Stop', 'gsd-session-stop'],
+      ]) {
+        if (settings.hooks && removeHookEntry(settings.hooks, hookType, identifier)) deduped = true;
+      }
+      if (deduped) {
+        atomicWrite(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        // Static text, no interpolation — nothing from settings.json reaches
+        // the model through this line.
+        console.log('GSD-Lite: removed duplicate hook registrations from settings.json; the plugin serves them now.');
+      }
+    } catch { /* missing or unparseable settings.json is not ours to rewrite */ }
+  }
+
   // ── Phase 1: Clean up stale bridge/debounce files (throttled to once/day) ──
   try {
     const cleanupMarker = path.join(claudeDir, 'gsd', 'runtime', 'last-cleanup');

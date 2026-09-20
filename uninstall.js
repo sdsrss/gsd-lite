@@ -2,13 +2,32 @@
 // Plugin uninstaller for GSD-Lite
 
 import { existsSync, rmSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
+
+// Hook removal is shared with install.js so both edit settings.json at hook
+// granularity rather than matcher-group granularity — deleting a whole group
+// takes any other tool's hook that happens to sit in it. This file runs from
+// two places: the package root (npx/manual uninstall, sibling hooks/lib) and
+// ~/.claude/gsd/uninstall.js (spawned by the orphan cleanup, where install.js
+// has already copied hooks/lib into ~/.claude/hooks/lib). One of the two
+// always exists when there is anything to uninstall.
+const _uninstallRequire = createRequire(import.meta.url);
+const _selfDir = dirname(fileURLToPath(import.meta.url));
+const { removeHookEntry } = (() => {
+  for (const candidate of [
+    join(_selfDir, 'hooks', 'lib', 'hook-registry.cjs'),
+    join(CLAUDE_DIR, 'hooks', 'lib', 'hook-registry.cjs'),
+  ]) {
+    if (existsSync(candidate)) return _uninstallRequire(candidate);
+  }
+  return {};
+})();
 
 function log(msg) { console.log(msg); }
 
@@ -79,7 +98,7 @@ export function main() {
   const hookLibDir = join(CLAUDE_DIR, 'hooks', 'lib');
   if (existsSync(hookLibDir)) {
     // Only remove GSD-owned files, not other plugins' libs
-    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs']) {
+    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs']) {
       const fullPath = join(hookLibDir, libFile);
       if (existsSync(fullPath)) {
         rmSync(fullPath);
@@ -160,23 +179,23 @@ export function main() {
         delete settings.hooks.StatusLine;
         changed = true;
       }
-      // Remove GSD entries from hook arrays
-      for (const [hookType, identifier] of [
-        ['PostToolUse', 'gsd-context-monitor'],
-        ['PostToolUse', 'context-monitor.js'],
-        ['SessionStart', 'gsd-session-init'],
-        ['Stop', 'gsd-session-stop'],
-      ]) {
-        if (Array.isArray(settings.hooks[hookType])) {
-          const len = settings.hooks[hookType].length;
-          settings.hooks[hookType] = settings.hooks[hookType].filter(e =>
-            !e.hooks?.some(h => h.command?.includes(identifier)));
-          if (settings.hooks[hookType].length < len) changed = true;
-          if (settings.hooks[hookType].length === 0) delete settings.hooks[hookType];
-        } else if (typeof settings.hooks[hookType] === 'string'
-            && settings.hooks[hookType].includes(identifier)) {
-          delete settings.hooks[hookType];
-          changed = true;
+      // Remove GSD entries from hook arrays. removeHookEntry strips only our
+      // hook out of a matcher group and keeps the group for whoever else is in
+      // it; the earlier inline filter here dropped the whole group.
+      if (typeof removeHookEntry !== 'function') {
+        // The shared helper is the only correct remover — an inline retry here
+        // is how the group-granularity bug got written three times. Say so
+        // rather than leaving the caller to infer it from a silent success.
+        log('  ! hooks/lib/hook-registry.cjs not found — settings.json hook entries left in place');
+        log(`    Remove them by hand, or reinstall and uninstall again: ${settingsPath}`);
+      } else {
+        for (const [hookType, identifier] of [
+          ['PostToolUse', 'gsd-context-monitor'],
+          ['PostToolUse', 'context-monitor.js'],
+          ['SessionStart', 'gsd-session-init'],
+          ['Stop', 'gsd-session-stop'],
+        ]) {
+          if (removeHookEntry(settings.hooks, hookType, identifier)) changed = true;
         }
       }
     }
