@@ -41,7 +41,11 @@ const path = require('node:path');
 function pluginServesHooks(claudeDir, scriptDir) {
   // We ARE the plugin's copy — we are the live registration, never stand down.
   if (process.env.CLAUDE_PLUGIN_ROOT) return false;
-  if (scriptDir?.startsWith(path.join(claudeDir, 'plugins', 'cache') + path.sep)) {
+  // Node resolves __dirname through symlinks and path.join does not, so compare
+  // resolved paths. Unresolved, a symlinked config dir makes this clause quietly
+  // inoperative, and the plugin's own copy would fall through to the registry
+  // lookup below and stand itself down — zero hooks, silently.
+  if (scriptDir && realish(scriptDir).startsWith(realish(path.join(claudeDir, 'plugins', 'cache')) + path.sep)) {
     return false;
   }
 
@@ -53,18 +57,39 @@ function pluginServesHooks(claudeDir, scriptDir) {
     );
     installed = !!registry.plugins?.['gsd@gsd'];
   } catch {
-    return false; // no registry, or unreadable — we are all there is
+    // No registry, unreadable, or a torn read while Claude Code rewrites it
+    // during install/update/enable/disable. Never read that as "the plugin is
+    // there" — that would stand us down on a transient error.
+    return false;
   }
   if (!installed) return false;
 
   // Installed but disabled means hooks.json is not loaded, so we are still the
-  // only registration. Only an explicit false disables — a missing key is on.
-  try {
-    const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'));
-    if (settings.enabledPlugins?.['gsd@gsd'] === false) return false;
-  } catch { /* unreadable settings — treat the plugin as enabled */ }
+  // only registration. enabledPlugins can live in the user settings or in the
+  // project's, so an explicit false in either one keeps us running. Only an
+  // explicit false disables — a missing key means enabled.
+  const cwdClaude = path.join(process.cwd(), '.claude');
+  for (const file of [
+    path.join(claudeDir, 'settings.json'),
+    path.join(cwdClaude, 'settings.json'),
+    path.join(cwdClaude, 'settings.local.json'),
+  ]) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (settings.enabledPlugins?.['gsd@gsd'] === false) return false;
+    } catch { /* absent or unreadable — no opinion from this file */ }
+  }
 
   return true;
+}
+
+/** realpath when it resolves, the path as given when it does not. */
+function realish(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
 }
 
 /** Hook identifiers GSD owns, current and legacy. */

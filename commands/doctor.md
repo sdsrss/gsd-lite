@@ -33,15 +33,37 @@ Check if GSD hooks are registered in Claude settings:
   2. Composite cache registry: `~/.cache/code-graph/statusline-registry.json` — any entry whose `command` contains `gsd-statusline`
   3. Composite backup mirror: `~/.claude/statusline-providers.json` — same match rule (durable mirror written by code-graph's chain CLI)
   - Any path present: StatusLine = registered
-- Check the three hook arrays in `settings.hooks`:
+- Determine the install mode first — hooks are registered in a different place
+  for each, and checking only one reports a healthy install as broken:
+  - **Plugin**: `~/.claude/plugins/installed_plugins.json` lists `gsd@gsd`, and
+    `enabledPlugins["gsd@gsd"]` is not `false` in `~/.claude/settings.json` or
+    the project's `.claude/settings.json` / `settings.local.json`. Claude Code
+    loads the three hooks from `hooks/hooks.json` in the plugin cache; nothing
+    appears in `settings.json` and nothing is copied to `~/.claude/hooks/`.
+  - **npx / manual**: the three hooks are registered in `settings.hooks` and the
+    five scripts sit in `~/.claude/hooks/`.
+  - Both can be true at once. That is supported and is not a double
+    registration: the `~/.claude/hooks` copies stand down while the plugin is
+    installed and enabled, so each hook still fires once.
+- Plugin mode — read `hooks/hooks.json` from the entry's `installPath` and check
+  it declares `SessionStart`, `PostToolUse` and `Stop`:
+  - All three declared: record PASS "hooks served by the plugin"
+  - Partial or the file missing/unparseable: record FAIL naming what is absent,
+    fix `/plugin update gsd`
+- npx/manual mode — check the three hook arrays in `settings.hooks`:
   - `PostToolUse` entry referencing `gsd-context-monitor`
   - `SessionStart` entry referencing `gsd-session-init`
   - `Stop` entry referencing `gsd-session-stop`
-- All four (statusLine + three hooks) present: record PASS
-- Partial: record WARN naming each missing hook
-- None: record FAIL "No GSD hooks registered"
+  - All three present: record PASS
+  - Partial: record WARN naming each missing hook, fix `npx gsd-lite install`
+- Neither mode registers all three: record FAIL "No GSD hooks registered"
+- StatusLine: PASS if registered by any path above. Absent on a plugin-only
+  install is expected, not a failure — a plugin may not write the top-level
+  `statusLine` key. Record INFO "StatusLine needs `npx gsd-lite install`".
 
-Also verify the hook files exist on disk (install.js copies all five):
+Also verify the hook files exist on disk. These are written by install.js, so
+check them only in npx/manual mode — a plugin-only install does not have them
+and must not be reported as missing:
 - `~/.claude/hooks/gsd-statusline.cjs`
 - `~/.claude/hooks/gsd-context-monitor.cjs`
 - `~/.claude/hooks/gsd-session-init.cjs`

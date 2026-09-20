@@ -146,4 +146,16 @@ describe('plugin manifest: advertised inventory matches the tree', () => {
       assert.equal(entry.version, packageJson.version);
     }
   });
+
+  it('ships the version the CHANGELOG says it is shipping', () => {
+    // The three manifests agreeing with each other says nothing about whether
+    // the bump happened: they agree at the old version too. Tie them to the
+    // CHANGELOG heading, which is written by hand, so a forgotten
+    // `npm version` fails here instead of shipping green.
+    const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf-8');
+    const top = changelog.match(/^## \[(\d+\.\d+\.\d+[^\]]*)\]/m)?.[1];
+    assert.ok(top, 'CHANGELOG has no versioned heading');
+    assert.equal(packageJson.version, top,
+      `package.json is ${packageJson.version} but the CHANGELOG heads ${top} — run npm version`);
+  });
 });

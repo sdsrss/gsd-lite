@@ -18,7 +18,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { cpSync, existsSync } from 'node:fs';
+import { cpSync, existsSync, symlinkSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -251,6 +251,50 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
       }
     });
   }
+
+  it('runs when the project disables the plugin, not just the user config', async () => {
+    // enabledPlugins can live in the project's settings as well as the user's.
+    // Reading only ~/.claude/settings.json would stand this copy down while the
+    // disabled plugin serves nothing — zero hooks, from one `/plugin disable`.
+    for (const file of ['settings.json', 'settings.local.json']) {
+      const { home, claudeDir } = await makeClaudeHome('gsd-standdown-proj-disable-');
+      const project = await mkdtemp(join(tmpdir(), 'gsd-standdown-projdir-'));
+      try {
+        await markPluginInstalled(claudeDir);
+        await mkdir(join(project, '.claude'), { recursive: true });
+        await writeFile(join(project, '.claude', file),
+          JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
+        await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir, { project });
+        assert.equal(existsSync(ranMarker(claudeDir)), true,
+          `project ${file} disabled the plugin, so this copy is the only one left`);
+      } finally {
+        await rm(project, { recursive: true, force: true });
+        await rm(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('recognises its own cache location through a symlinked config dir', async () => {
+    // Node resolves __dirname through symlinks; path.join(claudeDir, …) does
+    // not. Compared unresolved, the plugin's own copy fails the "am I the
+    // plugin?" test, falls through to the registry lookup, and stands ITSELF
+    // down — the plugin-only user then has no hooks at all.
+    const realHome = await mkdtemp(join(tmpdir(), 'gsd-standdown-real-'));
+    const linkHome = join(await mkdtemp(join(tmpdir(), 'gsd-standdown-link-')), 'linked');
+    try {
+      const realClaude = join(realHome, '.claude');
+      await mkdir(realClaude, { recursive: true });
+      await markPluginInstalled(realClaude);
+      symlinkSync(realHome, linkHome, 'dir');
+      const linkClaude = join(linkHome, '.claude');
+      await runHook('gsd-session-init.cjs', cacheHooks(linkClaude), linkClaude);
+      assert.equal(existsSync(ranMarker(realClaude)), true,
+        'the plugin\'s own copy must never stand itself down');
+    } finally {
+      await rm(realHome, { recursive: true, force: true });
+      await rm(join(linkHome, '..'), { recursive: true, force: true });
+    }
+  });
 
   it('session-init from the plugin cache always runs', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-standdown-cache-');

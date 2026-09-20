@@ -48,8 +48,16 @@ function isInstalledAsPlugin(claudeDir) {
 function registerStatusLine(settings, statuslineScriptPath) {
   const command = `node ${JSON.stringify(statuslineScriptPath)}`;
 
-  // Clean up legacy format (was incorrectly placed in hooks)
-  if (settings.hooks?.StatusLine) delete settings.hooks.StatusLine;
+  // Clean up GSD's own legacy format (a StatusLine key under hooks, which was
+  // this project's mistake). Ownership-checked: the two sibling call sites in
+  // uninstall.js and gsd-session-init.cjs both match on the command before
+  // deleting, and this one used to delete any StatusLine key it found — the
+  // same shape as removing a whole matcher group for one hook in it.
+  const legacyStatusLine = settings.hooks?.StatusLine;
+  if (typeof legacyStatusLine === 'string'
+      && (legacyStatusLine.includes('gsd-statusline') || legacyStatusLine.includes('context-monitor.js'))) {
+    delete settings.hooks.StatusLine;
+  }
 
   const current = settings.statusLine?.command || '';
 
