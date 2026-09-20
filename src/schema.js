@@ -513,6 +513,7 @@ export function validateState(state) {
       if (typeof entry.scope !== 'string' || entry.scope.length === 0) {
         errors.push(`evidence["${id}"].scope must be a non-empty string`);
       }
+      errors.push(...evidenceFieldErrors(entry, `evidence["${id}"]`));
     }
   }
   // M-4: Cross-field check — current_phase ≤ total_phases (skip degenerate 0-phase case)
@@ -695,7 +696,32 @@ export function validateExecutorResult(r) {
   if (!Array.isArray(r.decisions)) errors.push('decisions must be array');
   if (!Array.isArray(r.blockers)) errors.push('blockers must be array');
   if (typeof r.contract_changed !== 'boolean') errors.push('contract_changed must be boolean');
-  if (!Array.isArray(r.evidence)) errors.push('evidence must be array');
+  if (!Array.isArray(r.evidence)) {
+    errors.push('evidence must be array');
+  } else {
+    r.evidence.forEach((entry, i) => {
+      const label = `evidence[${i}]`;
+      if (typeof entry === 'string') {
+        if (entry.length === 0) errors.push(`${label} must be a non-empty evidence id`);
+        return;
+      }
+      if (!isPlainObject(entry)) {
+        errors.push(`${label} must be an evidence id or an object {id, scope, type?, passed?}`);
+        return;
+      }
+      // id and scope are what handleExecutorResult keys the state.evidence map
+      // on: an object missing either is dropped there without a word, while
+      // still counting as "has evidence" for the review-level guard. Refuse it
+      // instead — a record that looks stored and is not is the worse outcome.
+      if (typeof entry.id !== 'string' || entry.id.length === 0) {
+        errors.push(`${label}.id must be a non-empty string`);
+      }
+      if (typeof entry.scope !== 'string' || entry.scope.length === 0) {
+        errors.push(`${label}.scope must be a non-empty string (without it the entry is not recorded)`);
+      }
+      errors.push(...evidenceFieldErrors(entry, label));
+    });
+  }
   if (r.outcome === 'checkpointed' && typeof r.checkpoint_commit !== 'string') {
     errors.push('checkpointed outcome requires checkpoint_commit');
   }
@@ -765,6 +791,26 @@ export function validateReviewerResult(r) {
 /**
  * Validate a researcher result against the agent contract.
  */
+/**
+ * The two fields an evidence entry can carry beyond its identity, checked only
+ * when present so the short `"ev:test:a"` form and older callers stay valid.
+ *
+ * They are not decoration: reclassifyReviewLevel drops a high-confidence L1
+ * task to L0 — self-review only — unless an evidence entry is a test that did
+ * not pass. `passed: "no"` is truthy, so an unchecked string would buy exactly
+ * the downgrade the guard exists to withhold.
+ */
+function evidenceFieldErrors(entry, label) {
+  const errors = [];
+  if ('type' in entry && (typeof entry.type !== 'string' || entry.type.length === 0)) {
+    errors.push(`${label}.type must be a non-empty string when present`);
+  }
+  if ('passed' in entry && typeof entry.passed !== 'boolean') {
+    errors.push(`${label}.passed must be a boolean when present (${JSON.stringify(entry.passed)} would read as a pass)`);
+  }
+  return errors;
+}
+
 export function validateResearcherResult(r) {
   const errors = [];
   if (!Array.isArray(r.decision_ids)) errors.push('decision_ids must be array');

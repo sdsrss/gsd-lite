@@ -212,7 +212,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: [{id, summary, rationale}], blockers: [{reason: string, unblock_condition: string|null}], contract_changed: boolean, evidence: [{id: string, scope: string, type?: string}]}',
+          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: [{id, summary, rationale}], blockers: [{reason: string, unblock_condition: string|null}], contract_changed: boolean, evidence: [{id: string, scope: string, type?: string, passed?: boolean}]}. Evidence carries its own verdict: type is what was run ("test", "lint", "typecheck") and passed is whether it passed. A test evidence with passed:false keeps the task at its current review level — confidence:"high" beside a failing test does not shorten review.',
         },
       },
       required: ['result'],
@@ -226,7 +226,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Debugger result: {task_id: string, outcome: "root_cause_found"|"fix_suggested"|"failed", root_cause: string, evidence: [{id: string, scope: string, type?: string}], hypothesis_tested: [{hypothesis: string, result: "confirmed"|"rejected", evidence: string}], fix_direction: string, fix_attempts: integer, blockers: object[], architecture_concern: boolean}',
+          description: 'Debugger result: {task_id: string, outcome: "root_cause_found"|"fix_suggested"|"failed", root_cause: string, evidence: [{id: string, scope: string, type?: string, passed?: boolean}], hypothesis_tested: [{hypothesis: string, result: "confirmed"|"rejected", evidence: string}], fix_direction: string, fix_attempts: integer, blockers: object[], architecture_concern: boolean}',
         },
       },
       required: ['result'],

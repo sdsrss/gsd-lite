@@ -34,6 +34,22 @@ Evidence 是 GSD-Lite 的验证证据系统，用于记录 task 和 phase 的执
 | `id` | string | 非空 | evidence 唯一标识符 |
 | `scope` | string | 非空 | 作用域标识，格式见下方 |
 
+### 可选字段
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `type` | string | 非空（给了才校验） | 跑了什么：`test` / `lint` / `typecheck` / `manual` |
+| `passed` | boolean | 必须是布尔（给了才校验） | 该项是否通过 |
+
+`passed` 有行为后果，不是记录用的装饰：`reclassifyReviewLevel()` 只在
+「`confidence: high` + 有证据 + 没有 `type: "test"` 且 `passed: false` 的条目」
+时把任务从 L1 降到 L0（跳过独立审查）。所以这个字段只接受真正的布尔——
+`"no"` 是 truthy，一个未校验的字符串会恰好买到守卫本该拒绝的那次降级。
+
+字段缺失按「未声明」处理，不按失败处理：老调用方和 `"ev:test:a"` 这种纯 id
+形式仍然有效。要把「缺失即未验证」也变成拒绝降级，是一次用户可见的默认行为
+变更，不在本次范围内。
+
 ### 验证规则
 
 `addEvidence()` 入参校验:
