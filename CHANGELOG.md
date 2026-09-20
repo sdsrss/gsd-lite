@@ -62,8 +62,11 @@ predictable temp filenames — `.gsd/.session-end.<pid>.tmp` and two in the shar
 temp directory. A repository (or, for the temp-directory ones, another local
 user) could pre-create those paths as symlinks and have the hook write through
 them. 0.9.0 fixed this for the SessionStart hook but left the hardened helper
-inline in that file; it now lives in `hooks/lib/atomic-write.cjs` and all four
-hooks use it.
+inline in that file; it now lives in `hooks/lib/atomic-write.cjs` and every
+write in the hooks, the installer and the uninstaller goes through it — including
+the ones to `~/.claude/settings.json` and `installed_plugins.json`, which the
+first pass of this change left on the old pattern while the commit message
+claimed the class was closed.
 
 Releases are also signed and verified *before* `npm publish` rather than after.
 A signing key that no longer paired with the public key embedded in the client

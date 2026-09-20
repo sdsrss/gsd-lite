@@ -13,6 +13,7 @@ const _require = createRequire(import.meta.url);
 const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
 const { upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
+const { atomicWriteJson } = _require('./hooks/lib/atomic-write.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -256,8 +257,25 @@ export function main() {
       // pid has since been recycled onto THIS process would be skipped here and
       // then merged into by copyDir — stale files riding into the swap. It is
       // ours by name, so take it regardless.
-      if (owner !== process.pid && isPidAlive(owner) && !isAbandoned(join(CLAUDE_DIR, entry))) continue;
-      rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
+      if (owner === process.pid) {
+        rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
+        continue;
+      }
+      if (!isPidAlive(owner)) {
+        rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
+        continue;
+      }
+      // The age fallback reclaims a staging dir whose pid has been recycled onto
+      // an unrelated long-lived process — otherwise it reads as alive forever and
+      // this sweep is the only GC it gets.
+      //
+      // Staging only. renameSync PRESERVES mtime, so a backup made from a runtime
+      // last written months ago is older than the threshold the instant it is
+      // created — and sweeping it would take a live install's rollback target out
+      // from under it mid-swap, which is worse than the litter this reclaims.
+      if (prefix === '.gsd-staging-' && isAbandoned(join(CLAUDE_DIR, entry))) {
+        rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
+      }
     }
   }
 
@@ -489,9 +507,7 @@ export function main() {
       if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
     }
 
-    const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;
-    writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n');
-    renameSync(tmpSettings, settingsPath);
+    atomicWriteJson(settingsPath, settings);
     // Say which of the two actually landed. "hooks registered" printed after a
     // plugin install — where hooksRegistered is false by design — would be the
     // installer asserting work it did not do.

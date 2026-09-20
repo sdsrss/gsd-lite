@@ -10,6 +10,7 @@
 // directly, same as the original behavior.
 
 const fs = require('node:fs');
+const { atomicWriteJson } = require('./atomic-write.cjs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
@@ -99,9 +100,7 @@ function normalizeRegistryFile(registryPath, canonicalCommand) {
     const after = JSON.stringify(nonGsd);
     if (before === after) return true;
 
-    const tmp = registryPath + `.${process.pid}-${Date.now()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(nonGsd, null, 2) + '\n');
-    fs.renameSync(tmp, registryPath);
+    atomicWriteJson(registryPath, nonGsd);
     return true;
   } catch {
     return false;
@@ -161,9 +160,7 @@ function removeProvider() {
 
     registry.splice(idx, 1);
 
-    const tmp = registryPath + `.${process.pid}-${Date.now()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(registry, null, 2) + '\n');
-    fs.renameSync(tmp, registryPath);
+    atomicWriteJson(registryPath, registry);
     return true;
   } catch {
     return false;

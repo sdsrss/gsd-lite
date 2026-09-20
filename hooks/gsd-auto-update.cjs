@@ -5,6 +5,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { atomicWriteJson } = require('./lib/atomic-write.cjs');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { execSync, spawnSync } = require('node:child_process');
@@ -636,9 +637,7 @@ function readState() {
 function saveState(state) {
   try {
     fs.mkdirSync(stateDir, { recursive: true });
-    const tmpPath = STATE_FILE + `.${process.pid}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2) + '\n');
-    fs.renameSync(tmpPath, STATE_FILE);
+    atomicWriteJson(STATE_FILE, state);
   } catch {
     /* silent */
   }
@@ -647,9 +646,7 @@ function saveState(state) {
 function writeNotification(notification) {
   try {
     fs.mkdirSync(stateDir, { recursive: true });
-    const tmpPath = NOTIFICATION_FILE + `.${process.pid}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(notification, null, 2) + '\n');
-    fs.renameSync(tmpPath, NOTIFICATION_FILE);
+    atomicWriteJson(NOTIFICATION_FILE, notification);
   } catch {
     /* silent */
   }
@@ -750,9 +747,7 @@ function syncPluginCache(extractedDir, verbose = false) {
     gsdEntry.installPath = newCachePath;
     gsdEntry.version = newVersion;
     gsdEntry.lastUpdated = new Date().toISOString();
-    const tmpPlugins = pluginsFile + `.${process.pid}.tmp`;
-    fs.writeFileSync(tmpPlugins, JSON.stringify(plugins, null, 2) + '\n');
-    fs.renameSync(tmpPlugins, pluginsFile);
+    atomicWriteJson(pluginsFile, plugins);
 
     // Update settings.json statusLine if it points to the old cache path
     try {
@@ -763,9 +758,7 @@ function syncPluginCache(extractedDir, verbose = false) {
         const updated = oldCmd.replace(/\/plugins\/cache\/gsd\/gsd\/[^/]+\//g, `/plugins/cache/gsd/gsd/${newVersion}/`);
         if (updated !== oldCmd) {
           settings.statusLine.command = updated;
-          const tmpSettings = settingsPath + `.${process.pid}.tmp`;
-          fs.writeFileSync(tmpSettings, JSON.stringify(settings, null, 2) + '\n');
-          fs.renameSync(tmpSettings, settingsPath);
+          atomicWriteJson(settingsPath, settings);
           if (verbose) console.log('  StatusLine path updated to new version');
         }
       }
