@@ -240,6 +240,40 @@ describe('a failed install leaves the working runtime alone', () => {
     }
   });
 
+  it('abandons staging when a copy throws part-way through the build', async () => {
+    // Everything between staging creation and the swap runs outside any
+    // try/catch, so a throw there left the tree behind. The exit handler covers
+    // it. Forced by making a file the installer copies into staging a directory
+    // instead, which is a genuine throw on an otherwise unguarded path.
+    const home = await mkdtemp(join(tmpdir(), 'gsd-staging-throw-'));
+    try {
+      const claudeDir = join(home, '.claude');
+      await mkdir(claudeDir, { recursive: true });
+      const pkgDir = await makeNpxPackage(home);
+      cpSync(join(PROJECT_ROOT, 'node_modules'), join(pkgDir, 'node_modules'), { recursive: true });
+
+      await rm(join(pkgDir, 'uninstall.js'), { force: true });
+      await mkdir(join(pkgDir, 'uninstall.js'), { recursive: true });
+
+      try {
+        execFileSync(process.execPath, [join(pkgDir, 'install.js')], {
+          cwd: pkgDir,
+          env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' },
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        });
+        assert.fail('copying a directory as a file should have thrown');
+      } catch (err) {
+        assert.notEqual(err.status, 0);
+      }
+
+      const stray = (await readdir(claudeDir)).filter(e => e.startsWith('.gsd-staging'));
+      assert.deepEqual(stray, [], `staging survived an unguarded throw: ${stray.join(', ')}`);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('installs normally and preserves runtime/ state when dependencies are available', async () => {
     // The success path still has to work, and update-state.json under runtime/
     // must survive the swap — losing it resets the update-check throttle.
