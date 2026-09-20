@@ -53,7 +53,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
   "checkpoint_commit": "a1b2c3d",
   "files_changed": ["src/api/users.ts", "tests/users.test.ts"],
   "decisions": [{"id": "d1", "summary": "use optimistic locking by version column", "rationale": "prevents concurrent update conflicts"}],
-  "blockers": [],
+  "blockers": [{"reason": "STRIPE_KEY 未配置，无法调用支付 API", "unblock_condition": "在 .env 中设置 STRIPE_KEY"}],
   "contract_changed": true,
   "confidence": "high",
   "error_fingerprint": "optional string — short fingerprint for 3-strike deduplication (file+line or msg[:50])",
@@ -62,6 +62,11 @@ tools: Read, Write, Edit, Bash, Grep, Glob
     {"id": "ev:typecheck:phase-2", "scope": "task:2.3"}
   ]
 }
+`blockers` 形状 (仅 `outcome: "blocked"` 时非空):
+- `reason` — 阻塞的具体原因，会存入 task 的 `blocked_reason` 并展示给用户
+- `unblock_condition` — 用户需要做什么才能解除，会存入 `unblock_condition`；确实无法给出时填 `null`
+- 两者都不给 → 服务端只能回落到 `summary`，用户看到的是一句泛泛的任务摘要
+
 `contract_changed` 判定指南:
 - 改了函数/方法签名 (参数、返回类型) → true
 - 改了 API endpoint 的 request/response schema → true

@@ -12,8 +12,10 @@ description: Resume project execution from saved state with workspace validation
 ## STEP 1: 调用 orchestrator-resume 获取状态摘要
 
 调用 MCP tool `orchestrator-resume`，使用响应中的 `summary` 字段展示状态给用户:
-- 如果响应为 error 且 message 包含 "No .gsd directory" → 告知用户 "未找到 GSD 项目状态，请先运行 /gsd:start 或 /gsd:prd"，停止
+- 如果响应为 error 且 `code === "NO_PROJECT_DIR"` → 告知用户 "未找到 GSD 项目状态，请先运行 /gsd:start 或 /gsd:prd"，停止
 - 如果响应为 error → 告知用户错误信息并停止
+
+（按 `code` 判断，不要匹配 message 文本。）
 
 `summary` 字段包含:
 - `workflow_mode` — 当前工作流状态
@@ -24,47 +26,25 @@ description: Resume project execution from saved state with workspace validation
 
 注意: 不需要单独读取 state.json，`orchestrator-resume` 的响应已包含所有需要展示的信息。
 
-## STEP 2: 前置校验
+## STEP 2: 前置校验已由服务端完成 — 不要重做
 
 <HARD-GATE id="resume-preflight">
-必须在恢复执行前完成所有校验，按以下优先级顺序:
+**不要自己比对 git HEAD、plan 改动、方向漂移、dirty phase 或研究过期，也不要自己覆写 `workflow_mode`。**
 
-0. **Session End 检查:**
-   - 检查 `.gsd/.session-end` 文件是否存在
-   - 如果存在:
-     - 读取内容，向用户展示: "⚠️ 上次 session 在 {ended_at} 非正常结束，当时处于 {workflow_mode_was} (Phase {current_phase} / Task {current_task})"
-     - 删除 `.session-end` 文件
-     - 继续后续校验 (不覆写 workflow_mode — 由下面的校验决定)
-   - 如果不存在 → 跳过，继续后续校验
+STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`），并且已经把结果**写入** state。重做一遍的后果是实打实的：
 
-1. **Git HEAD 校验:**
-   - 运行 `git rev-parse HEAD` 获取当前 HEAD
-   - 如果与 state.json 中的 `git_head` 不同:
-     - 检查工作区是否与 state.json 记录一致
-     - 不一致 → 覆写 `workflow_mode = reconcile_workspace`
+- `.gsd/.session-end` 在 STEP 1 里就被读取并删除了，你再去找它永远找不到；非正常退出的提示来自 STEP 1 响应，不是文件。
+- plan 漂移服务端按 **sha256** 判定，按 mtime 自己判会得出不同答案（`git checkout` 会改 mtime 而不改内容）。
+- 自己写 `workflow_mode` 要经过转移白名单校验，失败就是 `VALIDATION_FAILED`，而服务端刚写好的状态可能被你覆盖掉。
 
-2. **计划版本校验:**
-   - 如果本地 plan.md 或 phases/*.md 被手动修改 (mtime > last_session)
-   - → 覆写 `workflow_mode = replan_required`
+你要做的只有一件事：**读 STEP 1 响应里的 `action` 和 `workflow_mode`**，按下面的动作表走。
 
-3. **方向漂移校验:**
-   - 如果当前或任何未完成 phase 的 `phase_handoff.direction_ok === false`
-   - → 覆写 `workflow_mode = awaiting_user`
-
-4. **Dirty-phase 回滚检测:**
-   - 检查 `current_phase` 之前的 phase (`p.id < current_phase`) 中是否有 `needs_revalidation` 状态的 task
-   - 如有 → 回滚 `current_phase` 到最早的 dirty phase
-   - → 覆写 `workflow_mode = executing_task`
-
-5. **研究过期校验:**
-   - 如果 `research.expires_at` 已过期 (早于当前时间)
-   - 或 research.decision_index 中有条目的 expires_at 已过期
-   - → 覆写 `workflow_mode = research_refresh_needed`
-
-6. **全部通过:**
-   - 保持原 `workflow_mode` 不变
-
-校验顺序: 1→2→3→4→5，首个命中的覆写生效 (不累积)
+服务端命中前置条件时，响应会带上对应字段供你展示：
+- `saved_git_head` / `current_git_head` / `changed_files` — 工作区与记录不一致
+- `drift_phase` — plan 或 phases 文件与记录的哈希不符
+- `dirty_phase` — 更早的 phase 里有 `needs_revalidation` 任务，`current_phase` 已被回滚
+- `expired_research` — 研究结论已过期
+- `pending_issues` — 同时命中多个条件时，这里是未生效的其余几条
 </HARD-GATE>
 
 ## STEP 3: 按 workflow_mode 恢复
@@ -205,10 +185,10 @@ description: Resume project execution from saved state with workspace validation
   - 失败的 phase / task
   - 失败原因 (从 blocked_reason 或 todo 中提取)
   - 重试历史
-- 让用户选择:
-  - a) 重试失败的 task
-  - b) 跳过失败的 task，继续后续
-  - c) 重新规划
+- 让用户选择，然后用 `orchestrator-resume` 的 `recovery` 参数落实（这三项就是响应里的 `recovery_options`）:
+  - a) 重试失败的 task → `recovery: 'retry_failed'`（失败 task 回到队列，retry 计数清零）
+  - b) 跳过失败的 task，继续后续 → `recovery: 'skip_failed'`（失败记录保留，不会被改写成成功）
+  - c) 重新规划 → `recovery: 'replan'`（回到 planning，可用 `state-patch` 改计划）
 
 ---
 
@@ -245,12 +225,18 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
      awaiting_user     → 展示 blockers / drift 信息，等待用户输入
      awaiting_human_confirmation → 展示 security_implications + pending_tasks，等待用户确认;
                           确认 → orchestrator-resume confirm_review:'confirm';拒绝 → confirm_review:'reject'
-     await_manual_intervention → 展示需要人工干预的信息，停止
+     await_manual_intervention → 不是无条件终止。按 summary 里的 workflow_mode 分派
+                          (见执行流程表): reconcile_workspace / replan_required 是自动
+                          处理后继续循环的;其余情况展示信息并停止
+     direction_drift   → 展示 drift_phase 与漂移说明，等待用户决定;方向无误 →
+                          phase-complete({direction_ok: true})
      phase_failed      → 展示架构失败信息，停止
      task_failed       → 展示 task 失败信息;有其他可运行 task 则继续，否则向用户报告
      review_retry_exhausted → phase 审查返工超限，展示问题，等待用户干预
      noop (completed)  → 展示完成报告，停止
-     await_recovery_decision (failed) → 展示失败信息和恢复选项，停止
+     await_recovery_decision (failed) → 展示失败信息和 recovery_options，等待用户选择;
+                          用户决定后 → orchestrator-resume recovery:'retry_failed' |
+                          'skip_failed' | 'replan'
 
   4. 上下文安全阀:
      每次循环迭代前检查上下文健康度
@@ -268,8 +254,8 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
 
 <EXTREMELY-IMPORTANT>
 ## 恢复纪律
-- 前置校验必须在恢复执行前完成，不可跳过
-- 校验覆写 workflow_mode 时，首个命中生效，不累积
+- 前置校验由服务端 `orchestrator-resume` 完成，编排器不重做、不自行覆写 workflow_mode
+- 服务端多个条件同时命中时，首个生效，其余在 `pending_issues` 里
 - awaiting_user / reconcile_workspace / replan_required 模式下不自动执行代码
 - 只有编排器写 state.json，子代理不直接写
 - 上下文 < 35% → 保存状态 + workflow_mode = awaiting_clear + 停止执行
