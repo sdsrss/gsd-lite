@@ -2,6 +2,50 @@
 
 All notable changes to this project are documented here.
 
+## [0.12.1] - 2026-09-20
+
+Patch: one contract fix, one README that was missing three things, and a
+supply-chain pass over the release pipeline. **Nothing here changes what the
+tools do for a project that was already working.**
+
+- **`phase-complete` told you the wrong thing was wrong.** Calling it with
+  `run_verify: true` but no `verification` object is a contradiction in the
+  arguments — no project state makes that call valid. But the check sat below
+  three gates that read state, so if your tasks were not all accepted yet you
+  got `HANDOFF_GATE: 2 task(s) not accepted`, went and accepted them, called
+  again, and only then learned the call had been malformed the whole time. The
+  tool description has always promised `INVALID_INPUT` for this; now that is
+  what you get, on the first call. Two side effects worth knowing: a malformed
+  call no longer takes the state lock, and it is no longer preempted by
+  `NO_PROJECT_DIR` — matching the argument checks that already ran before it.
+
+- **The README was missing the one place execution stops and waits for you.**
+  L3 tasks pass review and are then *held* at `awaiting_user` for explicit human
+  sign-off, resolved with `confirm_review: "confirm"` or `"reject"`. The gate
+  fires on the task's level, so a reviewer cannot opt out of it. That was
+  enforced in code and documented in `references/review-classification.md`, but
+  the README stopped at L2 — so anyone reading only the README could not know
+  autonomous execution had a stopping point. Also added: whether `.gsd/` belongs
+  in git (no, by default, with the reasons and a gitignore stanza for teams that
+  want the plan reviewable), and a warning not to `/gsd:resume` a checkout you
+  do not trust. `.gsd/` is repository content, resume turns its task
+  descriptions into executor dispatches, and the statusline and SessionStart
+  hooks both read `state.json` before you type anything. The read path is
+  hardened; that is not the same claim as the plan being safe to run.
+
+- **Release pipeline, supply chain.** Every GitHub Action is pinned to a commit
+  SHA instead of a floating major tag, `release.yml` no longer grants write at
+  the top level (only the publish job raises it), and `npm publish` now carries
+  `--provenance`, which ties the published tarball to this workflow and commit.
+  The Ed25519 signature that auto-update verifies is unchanged and still the
+  thing clients check.
+
+- **Coverage runs locally again.** c8 stopped loading on current Node, so
+  `npm run test:coverage` was unrunnable outside CI and CI was the only coverage
+  gate anyone had. It now uses node's built-in coverage at the same 80% line /
+  75% branch thresholds. The CI matrix gained Node 24; the threshold flags need
+  Node 22.8+, so the Node 20 leg runs the suite without the gate.
+
 ## [0.12.0] - 2026-09-20
 
 **Coming from 0.11.1, this also carries everything in the 0.11.2 entry below** —
