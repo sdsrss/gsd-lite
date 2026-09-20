@@ -34,6 +34,20 @@ Minor, not patch: `orchestrator-resume` gains a `recovery` parameter.
   climbing. Any named review stage is now a real hold, cleared only by an
   explicit `recovery`, which also resets the counter.
 
+`skip_failed` refuses rather than reporting a success it did not achieve. It
+means "leave these failed and get on with the rest", so it needs a rest to get
+on with — and that is decided per phase, not per plan: a phase holding a failed
+task can never be accepted, so `current_phase` never advances past it and work
+sitting in a later phase cannot be reached from there. The refusal says which of
+the two cases you are in, because "no other work remains" would read as wrong to
+anyone looking at a pending phase 2.
+
+`recovery` can no longer be sent alongside `unblock_tasks` or `confirm_review`.
+They are three different ways to resolve a hold, the combination is refused as
+`INVALID_INPUT`, and it is refused before anything is written — the pair used to
+commit the first action, including an L3 human sign-off, and then return an
+error the caller would reasonably read as "nothing happened".
+
 **Background updates can no longer leave you without a working GSD.** `install.js`
 wiped the runtime directory and ran `npm ci` about a hundred lines later, so any
 dependency install that could not finish — no network, a registry error — left
@@ -72,7 +86,18 @@ Reads of those files are guarded too. A symlink pointing at a fifo made
 `readFileSync` block forever rather than fail, so a repository shipping one at
 `.gsd/.context-health` hung the statusline on every render — and since the read
 happens before the write decision, no amount of write-side hardening touched
-it. Marker files are now read only when they are regular files.
+it. The guard covers `.gsd/state.json` as well, which is read on every render
+and which a checkout controls just as directly; a fifo there hung the statusline
+the same way.
+
+Every one of those reads now goes through a single helper that returns nothing
+unless the file is a regular file that parsed to a plain object. Both halves
+earned their place. `JSON.parse(null)` returns null instead of throwing, so a
+`try`/`catch` around the parse never fires and the caller adopts the null.
+And `typeof [] === 'object'`, so an array planted at the context monitor's
+debounce path in the shared temp directory was adopted as state — assigning the
+counter to it works, `JSON.stringify` drops it again, and the warning was
+suppressed for the rest of the session by a single write of `[]`.
 
 Releases are also signed and verified *before* `npm publish` rather than after.
 A signing key that no longer paired with the public key embedded in the client
