@@ -691,7 +691,12 @@ describe('TC: zero-task (empty milestone) phase', () => {
         await handleExecutorResult({ result: {
           task_id: r.task_id, outcome: 'checkpointed', summary: 'w', checkpoint_commit: 'c' + i,
           files_changed: [], decisions: [], blockers: [], contract_changed: false,
-          confidence: 'high', evidence: [{ type: 'test', detail: 'ok', passed: true }],
+          // A recordable entry: handleExecutorResult keys state.evidence on
+          // id + scope, so the shape this used to send (type/detail/passed and
+          // no id) was dropped there while still counting as "has evidence"
+          // for the review-level guard. The contract refuses it now.
+          confidence: 'high',
+          evidence: [{ id: `ev:test:${r.task_id}`, scope: `task:${r.task_id}`, type: 'test', passed: true }],
         }, basePath: dir });
       } else if (r.action === 'dispatch_reviewer') {
         const targets = (r.review_targets || (r.review_target ? [r.review_target] : [])).map(t => t.id);

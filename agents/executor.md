@@ -58,8 +58,8 @@ tools: Read, Write, Edit, Bash, Grep, Glob
   "confidence": "high",
   "error_fingerprint": "optional string — short fingerprint for 3-strike deduplication (file+line or msg[:50])",
   "evidence": [
-    {"id": "ev:test:users-update", "scope": "task:2.3"},
-    {"id": "ev:typecheck:phase-2", "scope": "task:2.3"}
+    {"id": "ev:test:users-update", "scope": "task:2.3", "type": "test", "passed": true},
+    {"id": "ev:typecheck:phase-2", "scope": "task:2.3", "type": "typecheck", "passed": true}
   ]
 }
 `blockers` 形状 (仅 `outcome: "blocked"` 时非空):
@@ -74,6 +74,11 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 - 改了共享类型定义 / 接口 → true
 - 只改了内部实现逻辑、不影响外部调用方 → false
 - 拿不准时 → true (安全优先)
+
+`evidence` 形状:
+- `id` / `scope` — 必填；`type` — 跑了什么 (`test` / `lint` / `typecheck` / `manual`)
+- `passed` — 该项是否通过。**这不是装饰**：编排器只在「confidence 为 high + 有证据 + 没有失败的测试」时把 L1 降到 L0（只做自审、不派独立审查）。少了 `passed`，"跑过了但红了" 和 "跑过了且绿了" 对它是同一件事
+- 不确定是否通过时不要填 `true`；宁可不填，也不要用它换掉一次审查
 
 `confidence` 判定指南 (用于审查级别自动调整):
 - "high" — 测试全通过 + 改动明确 + 无意外复杂度
