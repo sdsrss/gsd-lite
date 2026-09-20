@@ -319,14 +319,19 @@ export function main() {
     }
   }
 
-  // 5. Hooks (copy scripts only, skip hooks.json to avoid overwriting other plugins)
-  for (const hookFile of HOOK_FILES) {
-    copyFile(join(__dirname, 'hooks', hookFile), join(CLAUDE_DIR, 'hooks', hookFile), `hooks/${hookFile}`);
-  }
-  // 5b. Hook library dependencies (e.g. gsd-finder.cjs used by statusline + session-init)
+  // 5. Hook library dependencies FIRST. Every hook requires something out of
+  // hooks/lib at module scope, so a run interrupted between these two steps
+  // would leave registered hooks throwing MODULE_NOT_FOUND on every session.
+  // Copying the dependencies before the scripts that need them means the
+  // half-finished state is "old hooks, new lib" — which works, because the lib
+  // only ever gains files — rather than "new hooks, no lib".
   const hookLibDir = join(__dirname, 'hooks', 'lib');
   if (existsSync(hookLibDir)) {
     copyDir(hookLibDir, join(CLAUDE_DIR, 'hooks', 'lib'), 'hooks/lib → ~/.claude/hooks/lib/');
+  }
+  // 5b. Hooks (copy scripts only, skip hooks.json to avoid overwriting other plugins)
+  for (const hookFile of HOOK_FILES) {
+    copyFile(join(__dirname, 'hooks', hookFile), join(CLAUDE_DIR, 'hooks', hookFile), `hooks/${hookFile}`);
   }
 
   // 6. Stable runtime for MCP server — built beside the live one, swapped in at
