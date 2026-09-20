@@ -170,7 +170,80 @@ describe('phase handoff gate', () => {
     });
 
     assert.equal(result.error, true);
+    assert.equal(result.code, 'INVALID_INPUT');
     assert.match(result.message, /run_verify requires verification results/i);
+  });
+
+  it('reports run_verify without verification as INVALID_INPUT even when a state gate is also unmet', async () => {
+    // `run_verify: true` with no `verification` is a contradiction in the
+    // ARGUMENTS: no state makes that call valid, so it cannot be diagnosed by
+    // looking at the phase. The tool description promises INVALID_INPUT for it
+    // (src/server.js, phase-complete → run_verify).
+    //
+    // The test above reaches that check only because it first satisfies every
+    // handoff gate. With a gate unmet the caller used to get HANDOFF_GATE
+    // instead — sent off to accept tasks, and told the call was malformed all
+    // along only on the next attempt.
+    //
+    // Enumerate the gates rather than sampling one: each is its own early
+    // return, so a fix that only reorders past the first leaves the others.
+    const gates = [
+      {
+        name: 'tasks not accepted',
+        arrange: async (basePath) => {
+          await init({
+            project: 'handoff-test',
+            phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+            basePath,
+          });
+        },
+      },
+      {
+        name: 'phase review not passed',
+        arrange: prepareReviewingAcceptedPhase,
+      },
+      {
+        name: 'critical issues open',
+        arrange: async (basePath) => {
+          await prepareReviewingAcceptedPhase(basePath);
+          const patched = await update({
+            updates: {
+              phases: [{
+                id: 1,
+                phase_review: { status: 'accepted' },
+                phase_handoff: { critical_issues_open: 2 },
+              }],
+            },
+            basePath,
+          });
+          assert.equal(patched.success, true, 'arrange: expected critical_issues_open to be set');
+        },
+      },
+    ];
+
+    for (const gate of gates) {
+      const gateDir = await mkdtemp(join(tmpdir(), 'gsd-handoff-gate-'));
+      try {
+        await gate.arrange(gateDir);
+
+        const result = await phaseComplete({
+          phase_id: 1,
+          basePath: gateDir,
+          run_verify: true,
+          direction_ok: true,
+        });
+
+        assert.equal(result.error, true, `${gate.name}: expected an error`);
+        assert.equal(
+          result.code,
+          'INVALID_INPUT',
+          `${gate.name}: a malformed call must be reported as malformed, not as the state gate it also happens to trip`,
+        );
+        assert.match(result.message, /run_verify requires verification results/i, gate.name);
+      } finally {
+        await rm(gateDir, { recursive: true, force: true });
+      }
+    }
   });
 
   it('completes phase when verification object is provided directly with all passing exit codes', async () => {

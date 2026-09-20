@@ -507,6 +507,21 @@ export async function phaseComplete({
   if (direction_ok !== undefined && typeof direction_ok !== 'boolean') {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'direction_ok must be a boolean when provided' };
   }
+  // Checked here with the other argument checks, not down beside the handoff
+  // gates where it used to sit. `run_verify: true` with no `verification` is a
+  // contradiction in the arguments — no phase state makes that call valid — so
+  // reading the state cannot diagnose it. Below the gates, a caller whose tasks
+  // were not yet accepted got HANDOFF_GATE, went and accepted them, and only
+  // then learned the call had been malformed the whole time. The tool
+  // description (src/server.js, phase-complete → run_verify) promises
+  // INVALID_INPUT for this; now it is what they get, on the first call.
+  if (run_verify && !verification) {
+    return {
+      error: true,
+      code: ERROR_CODES.INVALID_INPUT,
+      message: 'run_verify requires verification results to be passed via the verification parameter; the state layer does not execute external tools',
+    };
+  }
   const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
@@ -579,13 +594,6 @@ export async function phaseComplete({
       };
     }
 
-    if (run_verify && !verification) {
-      return {
-        error: true,
-        code: ERROR_CODES.INVALID_INPUT,
-        message: 'run_verify requires verification results to be passed via the verification parameter; the state layer does not execute external tools',
-      };
-    }
     const verificationResult = verification || null;
     const testsPassed = verificationResult
       ? verificationPassed(verificationResult)
