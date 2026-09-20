@@ -62,6 +62,55 @@ describe('repo gates — git hooks are executable', () => {
   }
 });
 
+describe('repo gates — the release workflow signs before it publishes', () => {
+  // npm publish cannot be undone. The signing-key preflight only checked that
+  // the secret was non-empty; the step that asserts it actually pairs with the
+  // RELEASE_PUBLIC_KEY committed in the client ran afterwards. Rotate the secret
+  // without updating the embedded key and the sequence was: npm gets the new
+  // version permanently, the release job then fails, no signed GitHub Release
+  // exists, and every auto-update client — which reads GitHub Releases, not npm
+  // — fails closed and never sees the update again.
+  const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+  const stepAt = (needle) => {
+    const at = workflow.indexOf(needle);
+    assert.notEqual(at, -1, `release.yml no longer contains ${JSON.stringify(needle)} — update this gate`);
+    return at;
+  };
+
+  it('verifies the signature against the embedded public key before npm publish', () => {
+    assert.ok(
+      stepAt('verifyReleaseSignature') < stepAt('npm publish'),
+      'the key-pairing assertion must run before the irreversible publish',
+    );
+  });
+
+  it('packs and signs before npm publish', () => {
+    assert.ok(stepAt('npm pack') < stepAt('npm publish'), 'pack before publish');
+    assert.ok(stepAt('createPrivateKey') < stepAt('npm publish'), 'sign before publish');
+  });
+
+  it('keeps the coverage thresholds where they can actually fail', () => {
+    // CI's coverage gate is c8's own --check-coverage inside this script. A
+    // second "Check coverage threshold" step used to sit in ci.yml shelling out
+    // to `c8 report`, which is not on PATH inside `run:` — so it printed
+    // "Could not parse coverage, skipping" and exited 0 on every build. Moving
+    // the numbers out of here without replacing the gate would leave the same
+    // gap, quietly.
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    assert.match(pkg.scripts['test:coverage'], /--check-coverage/);
+    assert.match(pkg.scripts['test:coverage'], /--lines \d+/);
+    assert.match(pkg.scripts['test:coverage'], /--branches \d+/);
+  });
+
+  it('publishes the same tarball it hashed and signed', () => {
+    // Publishing the directory instead of the packed file would let npm and the
+    // GitHub Release asset differ, and the sha256 in the release body describes
+    // only the asset.
+    assert.match(workflow, /npm publish "\$TARBALL" --access public/,
+      'npm publish must be handed the packed tarball, not the working directory');
+  });
+});
+
 // A relative link in a tracked markdown file points at a path a reader is
 // expected to be able to open. Linking a path that is gitignored or deleted
 // gives every reader on GitHub and npm a 404, and nothing in the repo notices.

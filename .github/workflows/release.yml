@@ -72,10 +72,11 @@ jobs:
         run: npm ci
 
       - name: Preflight — signing key present before any publish
-        # R-11b: fail BEFORE `npm publish` if the signing secret is missing.
-        # Otherwise npm would get the new version but the later sign step aborts,
-        # leaving no signed GitHub Release — auto-update clients (which read GitHub
-        # Releases, not npm) would never see the update. Check first, publish after.
+        # R-11b: fail fast and with a clear message when the secret is simply
+        # missing. This is a convenience, not the gate — the real assertion is
+        # "Verify signature against the embedded public key" below, and publish
+        # now runs after it. An empty NPM_TOKEN secret has bitten this release
+        # before, so cheap checks that name the missing secret earn their place.
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
@@ -84,19 +85,6 @@ jobs:
             exit 1
           fi
           echo "Signing key present"
-
-      - name: Publish to npm (skip if version already exists)
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          PUBLISHED=$(npm view gsd-lite@$VERSION version 2>/dev/null || echo "")
-          if [ "$PUBLISHED" = "$VERSION" ]; then
-            echo "::notice::gsd-lite@$VERSION already published to npm — skipping"
-          else
-            npm publish --access public
-            echo "Published gsd-lite@$VERSION to npm"
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Pack deterministic tarball + compute SHA-256
         id: pack
@@ -158,6 +146,32 @@ jobs:
             }
             console.log("Embedded public key pairs with the signing secret ✓");
           '
+
+      - name: Publish to npm (skip if version already exists)
+        # Deliberately the LAST irreversible step. This used to run before pack,
+        # sign and verify, so a signing secret that no longer paired with the
+        # embedded RELEASE_PUBLIC_KEY produced: npm permanently holding the new
+        # version, the job then failing at the verify step, no signed GitHub
+        # Release, and every auto-update client — which reads GitHub Releases,
+        # not npm — failing closed and never seeing the update again. The
+        # preflight above only proved the secret was non-empty, which is not the
+        # property that matters.
+        #
+        # The packed tarball is published rather than the working directory, so
+        # the bytes on npm are the same bytes hashed into the release body and
+        # attached as the asset.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view gsd-lite@$VERSION version 2>/dev/null || echo "")
+          if [ "$PUBLISHED" = "$VERSION" ]; then
+            echo "::notice::gsd-lite@$VERSION already published to npm — skipping"
+          else
+            npm publish "$TARBALL" --access public
+            echo "Published gsd-lite@$VERSION to npm"
+          fi
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
