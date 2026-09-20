@@ -212,7 +212,7 @@ const TOOLS = [
       properties: {
         result: {
           type: 'object',
-          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: [{id, summary, rationale}], blockers: [{description}], contract_changed: boolean, evidence: [{id: string, scope: string, type?: string}]}',
+          description: 'Executor result: {task_id: string, outcome: "checkpointed"|"blocked"|"failed", summary: string, checkpoint_commit: string|null, files_changed: string[], decisions: [{id, summary, rationale}], blockers: [{reason: string, unblock_condition: string|null}], contract_changed: boolean, evidence: [{id: string, scope: string, type?: string}]}',
         },
       },
       required: ['result'],

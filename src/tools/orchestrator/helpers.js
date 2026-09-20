@@ -342,7 +342,13 @@ function getBlockedReasonFromResult(result) {
     return { blocked_reason: firstBlocker, unblock_condition: null };
   }
   return {
-    blocked_reason: firstBlocker.reason || result.summary,
+    // `description` is the field the MCP tool schema advertised for several
+    // releases while this function only ever read `reason`, so every blocker an
+    // agent produced by following the published contract lost its text and
+    // fell back to the generic summary. The schema says `reason` now; this
+    // keeps reading the old name so executors still following the shipped text
+    // are not silently degraded.
+    blocked_reason: firstBlocker.reason || firstBlocker.description || result.summary,
     unblock_condition: firstBlocker.unblock_condition || null,
   };
 }

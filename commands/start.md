@@ -16,7 +16,7 @@ argument-hint: Optional feature or project description
 - 告知用户: "检测到进行中的 GSD 项目。"
 - 提供选项:
   - (a) 恢复执行 → 转到 `/gsd:resume`
-  - (b) 重新开始 → 继续 STEP 1（现有 state.json 将被覆盖）
+  - (b) 重新开始 → 继续 STEP 1（现有 state.json 将被覆盖：STEP 3 的 `state-init` 必须带 `force: true`，否则会返回 `STATE_EXISTS` 且什么也不做）
 - 等待用户选择后再继续
 
 ## STEP 1 — 语言检测

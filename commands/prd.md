@@ -24,7 +24,7 @@ argument-hint: File path to requirements doc, or inline description text
 - 显示当前项目状态 (项目名、当前阶段、workflow_mode)
 - 提供选项:
   - (a) 恢复现有项目 → 转到 `/gsd:resume`
-  - (b) 覆盖并重新开始 → 继续 STEP 1（现有 state.json 将被覆盖）
+  - (b) 覆盖并重新开始 → 继续 STEP 1（现有 state.json 将被覆盖：后续 `state-init` 必须带 `force: true`，否则会返回 `STATE_EXISTS` 且什么也不做）
   - (c) 取消
 - 等待用户选择后再继续
 

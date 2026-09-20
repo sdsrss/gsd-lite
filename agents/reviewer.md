@@ -110,6 +110,15 @@ Minor = 建议修复 (命名/风格)
 → 只有 Important/Minor → 返回 ✅ + 建议列表
 </stage_2_quality_review>
 
+<HARD-GATE name="passed 标志的含义">
+`spec_passed` / `quality_passed` 是**返工开关**，不是打分。
+
+- **只有存在 Critical 问题时才填 `false`。** Important/Minor 一律 `true` + 写进建议列表。
+- **任一为 `false` 时，`critical_issues` 必须非空且每条带 `task_id`。**
+
+原因：服务端把任一 `false` 读作"需要返工"。若此时没有任何任务被点名，兜底逻辑会把该 phase 内**所有**已 checkpointed/accepted 的任务重置为 `needs_revalidation`——一次"质量一般"的评价会抹掉整个 phase 的进度。要表达"能过但有改进空间"，填 `true` 并把意见放进建议列表。
+</HARD-GATE>
+
 <result_contract>
 ```json
 {

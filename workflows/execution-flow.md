@@ -102,6 +102,12 @@
    })
    ```
    ⚠️ 必须使用 `state-init` MCP 工具，禁止手写 state.json — 工具自动生成 id/lifecycle/phase_review/phase_handoff，内置 schema 校验和循环依赖检测。
+
+   ⚠️ **已存在项目时必须带 `force: true`**：`/gsd:start` 与 `/gsd:prd` 的"重新开始/覆盖"选项走到这里时，`.gsd/state.json` 还在原地，不带 `force` 的 `state-init` 会直接返回 `STATE_EXISTS` 而不是覆盖——用户选了"重新开始"却什么也没发生。仅在用户明确选择覆盖后使用；它会丢弃现有计划与进度。
+
+   ```
+   state-init({ project: "...", phases: [...], force: true })
+   ```
 2. 写入 `plan.md` — 项目总览索引 (不含 task 级细节)
 3. 写入 `phases/*.md` — 每阶段详细 task 规格 (source of truth)
 4. 如有研究: 确认 `.gsd/research/` 已写入
@@ -132,7 +138,8 @@
 1. 调用 `orchestrator-resume` 获取 action
 2. 按 action 执行对应操作 (见下方 action 处理表)
 3. 操作完成后回到步骤 1
-4. 终止: action ∈ {idle, awaiting_user, noop, phase_failed, task_failed, await_manual_intervention, await_recovery_decision, review_retry_exhausted}
+4. 终止: action ∈ {idle, awaiting_user, noop, phase_failed, task_failed, await_recovery_decision, review_retry_exhausted, direction_drift}
+   - `await_manual_intervention` **不在**终止集里：它按 `workflow_mode` 分派，其中 `reconcile_workspace` 与 `replan_required` 是自动处理后继续循环的（见下方分派表）
 
 不要在循环中间停下来等用户确认 — 让编排器驱动。
 
@@ -159,10 +166,25 @@
 | `research_stored` | researcher 结果已存储。继续循环 |
 | `awaiting_user` | task 被阻塞或方向漂移，需要用户输入。展示 blockers 列表，等待用户解除 |
 | `awaiting_human_confirmation` | L3 任务审查通过但需人工确认。展示 `security_implications` + `pending_tasks`，等待用户决定;确认 → `orchestrator-resume confirm_review:'confirm'`(accepted),拒绝 → `confirm_review:'reject'`(返工) |
-| `await_manual_intervention` | 上下文不足 / 项目暂停 / 计划阶段。根据场景执行: awaiting_clear 时执行 /clear + /resume; paused 时确认恢复; planning 时完成计划并 state-init |
+| `await_manual_intervention` | **按 `workflow_mode` 分派，不要一律当作终止**（见下表）|
+| `direction_drift` | `phase-complete` 报告方向漂移，phase 被置为 `awaiting_user` hold。展示 `drift_phase` 与漂移说明，等待用户决定;用户确认方向无误后重新调用 `phase-complete({direction_ok: true})` |
 | `noop` | 工作流已完成 (completed 状态)，无需操作。展示完成信息和 PR 建议 |
 | `idle` | 当前 phase 无可运行 task。检查 task 状态和依赖关系，必要时向用户报告 |
 | `await_recovery_decision` | 工作流处于 failed 状态。向用户展示失败信息和恢复选项 (retry/skip/replan) |
+
+**`await_manual_intervention` 的分派表:**
+
+这个 action 名字被多种情况复用，其中一半是可以自动处理的。preflight 首次检测到工作区/计划不一致时返回的就是它——把它一律当终止，就会出现"同一个条件第一次停住、第二次自动继续"：第二次 resume 时模式已是 `reconcile_workspace`/`replan_required`，返回的才是上表里那两个可自动处理的 action 名。看 `workflow_mode` 决定怎么做：
+
+| `workflow_mode` | 操作 |
+|--------|------|
+| `reconcile_workspace` | 同上表 `reconcile_workspace` 行：核对 `changed_files`，确认无误后 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: "executing_task"}})` → 继续循环 |
+| `replan_required` | 同上表 `replan_required` 行：核对 `drift_phase` 指出的计划改动，确认无误后 `state-update({updates: {workflow_mode: "executing_task"}})` → 继续循环 |
+| `awaiting_clear` | 上下文不足。执行 /clear 后重新 /gsd:resume |
+| `paused_by_user` | 项目已暂停。向用户确认是否恢复 |
+| `planning` | 计划尚未落地。完成计划并调用 `state-init` |
+| `awaiting_user` | 有 `current_review.stage` 的 hold（如 `review_retry_exhausted`）。展示 `current_review` 与 `recovery_options`，等待用户选择;用户决定后 `orchestrator-resume recovery:'retry_failed'\|'skip_failed'\|'replan'` |
+| 其他 | 展示信息并停止 |
 
 **`phase-complete` 参数:**
 
