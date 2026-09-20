@@ -295,6 +295,12 @@ setTimeout(() => process.exit(0), 4000).unref();
         console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run /plugin update gsd`);
       } else if (notif.kind === 'available') {
         console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run gsd update`);
+      } else if (notif.kind === 'failed') {
+        // A failed background update used to be entirely silent: the notification
+        // was only ever written on success. The runtime is intact either way now,
+        // so this is informational rather than an emergency — but a user whose
+        // updates have been failing for a month should get to know.
+        console.log(`⚠️  GSD-Lite update to v${safeSemver(notif.to)} failed; still on v${safeSemver(notif.from)}. Run gsd update to see why.`);
       }
       fs.unlinkSync(notifPath);
     }
