@@ -706,7 +706,7 @@ describe('plugin-mode install: user-scope copy suppression', () => {
 });
 
 describe('plugin-mode install', () => {
-  it('registers statusLine but leaves hooks to the plugin hooks.json', async () => {
+  it('registers statusLine and hooks even when the plugin is installed', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-plugin-install-');
     try {
       // Simulate plugin installation by creating installed_plugins.json
@@ -735,15 +735,15 @@ describe('plugin-mode install', () => {
         command: `node ${JSON.stringify(statuslinePath)}`,
       }, 'Plugin mode should still register statusLine in settings.json');
 
-      // Hooks must NOT be registered here: the plugin system loads
-      // hooks/hooks.json from the cache, so a settings.json copy would run
-      // every hook a second time on every event.
+      // Hooks ARE registered, plugin or not. They do not double-fire: the
+      // ~/.claude/hooks copies stand down while the plugin's registration is
+      // live. Deregistering here instead would leave nothing behind after
+      // `/plugin uninstall` to notice the plugin had gone.
       for (const identifier of ['gsd-context-monitor', 'gsd-session-init', 'gsd-session-stop']) {
         const entries = Object.values(settings.hooks || {}).flat();
         const found = entries.find(e =>
           e?.hooks?.some(h => h.command?.includes(identifier)));
-        assert.equal(found, undefined,
-          `${identifier} must not be registered in settings.json on the plugin path`);
+        assert.ok(found, `${identifier} should stay registered in settings.json`);
       }
 
       // Files should still be copied
@@ -756,7 +756,7 @@ describe('plugin-mode install', () => {
     }
   });
 
-  it('removes hook entries left by an earlier npx install when reinstalled as plugin', async () => {
+  it('refreshes stale hook entries in place, keeping other tools\' hooks', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-plugin-cleanup-');
     try {
       // Simulate plugin installation
@@ -789,21 +789,16 @@ describe('plugin-mode install', () => {
       runScript('install.js', home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
 
-      // Every GSD entry the npx installer left behind must be gone: the plugin
-      // cache's hooks.json is now the live registration, and keeping both means
-      // two SessionStart runs, two Stop runs, two context-monitor runs.
+      // Each GSD entry is refreshed, exactly once, with the current matcher.
       for (const identifier of ['gsd-context-monitor', 'gsd-session-init', 'gsd-session-stop']) {
-        const entries = Object.values(settings.hooks || {}).flat();
-        const found = entries.find(e =>
-          e?.hooks?.some(h => h.command?.includes(identifier)));
-        assert.equal(found, undefined,
-          `stale ${identifier} entry should be deregistered on the plugin path`);
+        const matches = Object.values(settings.hooks || {}).flat()
+          .filter(e => e?.hooks?.some(h => h.command?.includes(identifier)));
+        assert.equal(matches.length, 1, `${identifier} should be registered exactly once`);
       }
-      // A hook type that held only a GSD entry is dropped, not left as []
-      assert.equal(settings.hooks?.SessionStart, undefined,
-        'SessionStart held only the GSD entry, so the key should be gone');
-      assert.equal(settings.hooks?.Stop, undefined,
-        'Stop held only the GSD entry, so the key should be gone');
+      const gsdSS = settings.hooks.SessionStart.find(e =>
+        e.hooks.some(h => h.command.includes('gsd-session-init')));
+      assert.equal(gsdSS.matcher, 'startup|clear|compact',
+        'SessionStart matcher should be refreshed to include clear|compact');
 
       // Non-GSD hooks should be preserved
       const customHook = settings.hooks?.PostToolUse?.find(e =>

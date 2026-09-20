@@ -26,11 +26,14 @@ changes in a session:
   holding update-check throttle state). `/plugin uninstall` does not remove it;
   `npx gsd-lite uninstall` does.
 
-If you have **both** an npx install and the plugin, the first session after
-updating prints one line saying it removed the duplicate `settings.json` hook
-registrations, and leaves the plugin's copies as the live ones. Without that
-step every hook would fire twice, from two different versions. Nothing else to
-do, and hooks from other tools sharing a matcher group are left alone.
+If you have **both** an npx install and the plugin, nothing fires twice and
+there is nothing to do. Both registrations stay in place; the copies under
+`~/.claude/hooks` stand down while the plugin's are live, and take over again
+the moment the plugin is removed. Deleting a registration to achieve that was
+tried first and was wrong: the `settings.json` one is the only GSD code that
+still runs after `/plugin uninstall`, so removing it left a complete npx
+install on disk with nothing registered, nothing able to notice, and no
+message saying so.
 
 To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
 0.9.0 and skip the update.
@@ -84,19 +87,20 @@ To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
   `/plugin uninstall` does not remove it; `npx gsd-lite uninstall` does.
 
 - **Editing `settings.json` hooks could delete another tool's hook.** Claude
-  Code groups hooks by matcher and several tools routinely share a group; all
-  three places that touched the `hooks` object — `install.js` registering,
-  `install.js` deregistering on the plugin path, `uninstall.js` removing — edited
-  at group granularity, so a GSD hook sharing a matcher group took its
+  Code groups hooks by matcher and several tools routinely share a group; every
+  place that touched the `hooks` object — `install.js` registering,
+  `uninstall.js` removing, and the orphan cleanup inside the SessionStart hook —
+  edited at group granularity, so a GSD hook sharing a matcher group took its
   neighbours with it. Installing or uninstalling GSD silently destroyed them.
-  The three now share `hooks/lib/hook-registry.cjs`, which strips exactly one
-  hook and keeps the group for whoever else is in it.
+  They now share `hooks/lib/hook-registry.cjs`, which strips exactly one hook
+  and keeps the group for whoever else is in it.
 
 ### Added
 
-- `tests/hook-registry.test.js` — pins hook-granularity editing through all
-  three call sites plus the plugin-path dedupe, both directions (an npx-only
-  install must keep its registrations).
+- `tests/hook-registry.test.js` — pins hook-granularity editing through the
+  call sites, and pins stand-down for all three hooks in both directions:
+  suppressed while the plugin serves, running when it is absent, disabled, or
+  its registry is unreadable.
 - `tests/plugin-manifest.test.js` — asserts what a `/plugin install` delivers by
   reading the shipped manifests rather than by driving `install.js`: every hook
   in `install.js`'s registry is declared in `hooks/hooks.json` with the same
