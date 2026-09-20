@@ -102,6 +102,37 @@ function readMarker(filePath, encoding = 'utf8') {
 }
 
 /**
+ * Read a JSON file GSD owns, or return null — the object form of readMarker.
+ *
+ * Three different failures collapse into the same null on purpose: not a regular
+ * file, unparseable bytes, or parsed to something that is not a plain object.
+ * Every caller wants the same thing from all three — fall back to the default.
+ *
+ * The third case is not pedantry, and neither is the null check. `typeof [] ===
+ * 'object'`, so a caller testing only that adopts an array as its state;
+ * assigning properties to an array works and JSON.stringify drops them again, so
+ * nothing ever persists — one `[]` planted on the context monitor's debounce
+ * path silenced every exhaustion warning for that session, permanently, because
+ * each run re-read `[]` and re-lost the counter. `JSON.parse(null)` returning
+ * null instead of throwing is the same trap one level up: a try/catch wrapped
+ * around the parse never fires, so absence has to be a return value rather than
+ * an exception. Both were live bugs, a release apart. Centralising the check is
+ * what stops the next call site from reintroducing either one.
+ */
+function readJsonOwned(filePath) {
+  const raw = readMarker(filePath);
+  if (raw === null) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return parsed;
+}
+
+/**
  * Atomically rewrite a text file, writing *through* a symlink rather than over
  * it — but never outside `root`.
  *
@@ -141,6 +172,7 @@ function atomicWriteThroughLink(filePath, content, root) {
 
 module.exports = {
   readMarker,
+  readJsonOwned,
   atomicWrite,
   atomicWriteJson,
   atomicWriteThroughLink,

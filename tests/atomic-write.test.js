@@ -5,12 +5,14 @@ import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, st
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 const {
   atomicWrite,
   atomicWriteJson,
   atomicWriteThroughLink,
+  readJsonOwned,
 } = require('../hooks/lib/atomic-write.cjs');
 
 function withTmpSync(fn) {
@@ -163,6 +165,69 @@ describe('atomicWriteThroughLink', () => {
       const p = join(root, 'CLAUDE.md');
       assert.equal(atomicWriteThroughLink(p, 'fresh', root), true);
       assert.equal(readFileSync(p, 'utf8'), 'fresh');
+    });
+  });
+});
+
+describe('readJsonOwned', () => {
+  // This is the shared guard three hook call sites now depend on, so its contract
+  // is pinned here rather than only through those hooks. Every rejection below
+  // was a real bug at some call site: the array shape silenced context warnings
+  // for a whole session, and the non-regular-file cases hung the statusline.
+  it('returns the parsed object for a plain JSON object', () => {
+    withTmpSync(root => {
+      const p = join(root, 'state.json');
+      writeFileSync(p, JSON.stringify({ callsSinceWarn: 3, lastLevel: 'warning' }));
+      assert.deepEqual(readJsonOwned(p), { callsSinceWarn: 3, lastLevel: 'warning' });
+    });
+  });
+
+  it('returns null for an array, which typeof calls an object', () => {
+    withTmpSync(root => {
+      const p = join(root, 'state.json');
+      writeFileSync(p, '[]');
+      assert.equal(readJsonOwned(p), null);
+    });
+  });
+
+  it('returns null for a bare JSON null, which JSON.parse does not throw on', () => {
+    withTmpSync(root => {
+      const p = join(root, 'state.json');
+      writeFileSync(p, 'null');
+      assert.equal(readJsonOwned(p), null);
+    });
+  });
+
+  it('returns null for unparseable bytes and for a missing file', () => {
+    withTmpSync(root => {
+      const p = join(root, 'state.json');
+      writeFileSync(p, '{not json');
+      assert.equal(readJsonOwned(p), null);
+      assert.equal(readJsonOwned(join(root, 'absent.json')), null);
+    });
+  });
+
+  it('returns null for a directory and for a symlink, without following either', () => {
+    withTmpSync(root => {
+      const dir = join(root, 'as-dir.json');
+      mkdirSync(dir);
+      assert.equal(readJsonOwned(dir), null);
+
+      const target = join(root, 'target.json');
+      writeFileSync(target, JSON.stringify({ reached: true }));
+      const link = join(root, 'as-link.json');
+      symlinkSync(target, link);
+      assert.equal(readJsonOwned(link), null, 'a symlink was followed');
+    });
+  });
+
+  it('returns null for a fifo instead of blocking on it', () => {
+    withTmpSync(root => {
+      const p = join(root, 'as-fifo.json');
+      execFileSync('mkfifo', [p]);
+      // The assertion that matters is that this line is reached at all: a bare
+      // readFileSync here never returns.
+      assert.equal(readJsonOwned(p), null);
     });
   });
 });
