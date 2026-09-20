@@ -348,6 +348,45 @@ describe('resume recovery parameter', () => {
     });
   });
 
+  it('refuses skip_failed when the only work left is in a phase that cannot be reached', async () => {
+    // The guard above shipped scoped to the whole plan, which made it inert for
+    // every project with more than one phase: a pending task in phase 2 satisfied
+    // it while changing nothing about phase 1. But the stranding is per-current-
+    // phase — resumeExecutingTask only ever looks at getCurrentPhase(state), and
+    // the handoff gate in crud.js counts a `failed` task as not-accepted, so a
+    // phase holding one can never complete and current_phase can never advance
+    // past it. Phase 2 is unreachable work, not a reason to proceed.
+    await withProject('skip-unreachable-next-phase', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' }] }] }, 'start both');
+      await step(basePath, { current_task: null, phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'failed' }, { id: '1.2', lifecycle: 'accepted' }] }] }, 'fail 1.1, accept 1.2');
+
+      const before = await read({ basePath });
+      assert.equal(before.current_phase, 1, 'setup: should still be on phase 1');
+      assert.equal(before.phases[1].todo[0].lifecycle, 'pending', 'setup: phase 2 must hold runnable work');
+
+      const result = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+      assert.equal(result.error, true, 'skip_failed reported success while phase 1 stayed stuck');
+      assert.equal(result.code, 'TRANSITION_ERROR');
+      assert.deepEqual(result.recovery_options, ['retry_failed', 'replan']);
+      assert.match(result.message, /unreachable/,
+        'the refusal must say the later work is unreachable, not that no work remains');
+
+      // The no-op was self-sustaining: nothing changed, so the same call kept
+      // returning the same success. Assert the state is untouched and the named
+      // options really do work from here.
+      const after = await read({ basePath });
+      assert.equal(after.current_phase, 1);
+      assert.equal(after.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'failed');
+
+      const retry = await resumeWorkflow({ basePath, recovery: 'retry_failed' });
+      assert.ok(!retry.error, `${retry.code}: ${retry.message}`);
+    }, [
+      { name: 'Core', tasks: [{ index: 1, name: 'Task A' }, { index: 2, name: 'Task B', level: 'L0' }] },
+      { name: 'Followup', tasks: [{ index: 1, name: 'Task C', level: 'L0' }] },
+    ]);
+  });
+
   it('rejects an unknown recovery option instead of ignoring it', async () => {
     await withProject('recover-bogus', async (basePath) => {
       await enterFailed(basePath);

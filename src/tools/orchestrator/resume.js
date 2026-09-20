@@ -121,14 +121,31 @@ async function applyRecovery(state, basePath, recovery) {
   // accepted, so that loop had no exit. Refusing here is the loud failure; the
   // false success was the quiet one.
   if (recovery === 'skip_failed') {
-    const somethingLeft = phases.some((phase) => phase.lifecycle !== 'accepted'
-      && (phase.todo || []).some((t) => t.lifecycle !== 'accepted' && t.lifecycle !== 'failed'));
-    if (!somethingLeft) {
+    // Scoped to the CURRENT phase, not the whole plan. The first version of this
+    // guard asked "is there work left anywhere", which made it inert for every
+    // project with more than one phase: a pending task in phase 2 satisfied it
+    // while changing nothing about phase 1, and the silent no-op came straight
+    // back. The stranding is per-phase — resumeExecutingTask only ever looks at
+    // getCurrentPhase(state), and the handoff gate in crud.js counts a `failed`
+    // task as not-accepted, so a phase holding one never completes and
+    // current_phase never advances past it. Later-phase work is unreachable, not
+    // a reason to proceed.
+    const currentPhase = getCurrentPhase(state);
+    const runnableHere = (currentPhase?.todo || [])
+      .some((t) => t.lifecycle !== 'accepted' && t.lifecycle !== 'failed');
+    if (!runnableHere) {
+      const strandedElsewhere = phases.some((phase) => phase.id !== currentPhase?.id
+        && phase.lifecycle !== 'accepted'
+        && (phase.todo || []).some((t) => t.lifecycle !== 'accepted' && t.lifecycle !== 'failed'));
       return {
         error: true,
         code: ERROR_CODES.TRANSITION_ERROR,
-        message: `skip_failed cannot proceed: ${skippedTasks.length} task(s) failed and no other work remains, `
-          + 'so there is nothing to continue with. Use retry_failed to requeue them, or replan to change the plan.',
+        message: `skip_failed cannot proceed: ${skippedTasks.length} task(s) failed in phase ${currentPhase?.id ?? '?'} `
+          + (strandedElsewhere
+            ? 'and nothing else in that phase can run. Later phases still hold work, but the phase cannot be '
+              + 'accepted while these sit there, so that work is unreachable from here. '
+            : 'and no other work remains, so there is nothing to continue with. ')
+          + 'Use retry_failed to requeue them, or replan to change the plan.',
         failed_tasks: skippedTasks,
         recovery_options: RECOVERY_OPTIONS.filter((o) => o !== 'skip_failed'),
       };
