@@ -348,6 +348,80 @@ describe('resume recovery parameter', () => {
     });
   });
 
+  it('accepts skip_failed when a sibling task is still running', async () => {
+    // The ordinary shape after a parallel dispatch: 1.1 went to the debugger and
+    // failed, 1.2 is still running. resumeExecutingTask re-dispatches a running
+    // task (resume.js:293-315) BEFORE it consults selectRunnableTask, and
+    // selectRunnableTask ignores every lifecycle outside pending and
+    // needs_revalidation — so a guard built on selectRunnableTask alone cannot
+    // see 1.2 and refuses. Worse, the failed-mode response keeps advertising
+    // skip_failed afterwards, so resume offers an option that fails every time.
+    // That is the advertisement-with-no-handler bug this release is named for.
+    await withProject('skip-running-sibling', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [
+        { id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' },
+      ] }] }, 'start both');
+      await step(basePath, { current_task: null, phases: [{ id: 1, lifecycle: 'failed', todo: [
+        { id: '1.1', lifecycle: 'failed' },
+      ] }] }, 'fail 1.1, leave 1.2 running');
+      await walkModes(basePath, ['failed']);
+
+      const result = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+      assert.ok(!result.error,
+        `skip_failed refused while 1.2 was still running: ${result.code}: ${result.message}`);
+      assert.equal(result.recovery_applied, 'skip_failed');
+      assert.equal(result.task_id, '1.2', 'the running task should be picked back up');
+
+      const state = await read({ basePath });
+      assert.equal(state.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'failed',
+        'skipping is not accepting');
+    });
+  });
+
+  it('always leaves a recovery option that actually works', async () => {
+    // The property, not an instance — three revisions of this guard each broke a
+    // shape the previous one handled, because each was checked by example. What
+    // must hold everywhere: when resume offers skip_failed, sending it back
+    // either makes progress, or refuses while naming options that do work. A
+    // refusal pointing at a remedy that also fails is the
+    // advertisement-with-no-handler defect this release exists to close.
+    const shapes = [
+      ['runnable sibling', [{ id: '1.1', lifecycle: 'failed' }], null],
+      ['blocked sibling', [{ id: '1.1', lifecycle: 'failed' }, { id: '1.2', lifecycle: 'blocked', blocked_reason: 'needs a human' }], null],
+      ['running sibling', [{ id: '1.1', lifecycle: 'failed' }], [{ id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' }]],
+      ['accepted sibling', [{ id: '1.1', lifecycle: 'failed' }, { id: '1.2', lifecycle: 'accepted' }], [{ id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' }]],
+    ];
+    for (const [label, failPatch, startPatch] of shapes) {
+      await withProject(`advertise-${label.replace(/ /g, '-')}`, async (basePath) => {
+        await walkModes(basePath, ['executing_task']);
+        await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: startPatch || [{ id: '1.1', lifecycle: 'running' }] }] }, `${label}: start`);
+        await step(basePath, { current_task: null, phases: [{ id: 1, lifecycle: 'failed', todo: failPatch }] }, `${label}: fail`);
+        await walkModes(basePath, ['failed']);
+
+        const offered = await resumeWorkflow({ basePath });
+        const options = offered.recovery_options || [];
+        if (!options.includes('skip_failed')) return; // not advertised — nothing to honour
+
+        const applied = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+        if (!applied.error) return; // made progress — nothing further to prove
+
+        // Refused. That is allowed, but only while pointing somewhere real.
+        const alternatives = applied.recovery_options || [];
+        assert.ok(alternatives.length > 0,
+          `${label}: skip_failed refused and named no alternative`);
+        assert.ok(!alternatives.includes('skip_failed'),
+          `${label}: the refusal re-offered the option that just refused`);
+        for (const alt of alternatives) {
+          const retry = await resumeWorkflow({ basePath, recovery: alt });
+          assert.ok(!retry.error,
+            `${label}: the refusal named ${alt}, which also fails — ${retry.code}: ${retry.message}`);
+          return; // one working exit is enough; taking it changes the state
+        }
+      });
+    }
+  });
+
   it('accepts skip_failed when the work left is blocked rather than runnable', async () => {
     // Third try. Tightening the guard to "is a task runnable right now" was too
     // strict: a blocked sibling makes selectRunnableTask return awaiting_user

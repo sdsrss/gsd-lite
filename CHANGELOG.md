@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented here.
 
+## [0.11.1] - 2026-09-20
+
+**`skip_failed` refused when a sibling task was still running, and resume kept
+offering it anyway.** The ordinary shape after a parallel dispatch: one task goes
+to the debugger and fails, another is still running. `skip_failed` returned
+`TRANSITION_ERROR` — "nothing else in that phase can run" — while resume went on
+listing `skip_failed` in `recovery_options` every time. So the release whose
+whole subject is options that were advertised and never implemented shipped one
+of its own, inside the fix for it. Measured: three calls, three refusals, the
+option re-offered after each. `retry_failed` still worked, so no project was
+stuck, but the advertised path was a dead one.
+
+The cause was a guard that predicted what the scheduler would do instead of
+asking it. `resumeExecutingTask` re-dispatches a running task *before* it
+consults `selectRunnableTask`, and `selectRunnableTask` ignores every lifecycle
+outside `pending` and `needs_revalidation` — so a guard built on that function
+alone cannot see a running task at all. Both now go through one
+`phaseHasWork(phase, state)`: one function, two callers, one place to be wrong.
+
+The 0.11.0 note below claimed the guard asks "whether resume would come back
+asking the same thing". That was not true of the code as shipped — in this exact
+case resume did come back asking, and the guard refused anyway. It is true now.
+
+There is a test for the property rather than the case: for every shape of a
+failed task with a sibling — runnable, blocked, running, accepted — sending
+`skip_failed` must either make progress or refuse while naming a recovery option
+that actually works. Each of the three revisions of this guard broke a shape the
+previous one handled, because each was checked by example.
+
 ## [0.11.0] - 2026-09-20
 
 **A project can no longer paint itself into a corner, and a failed update can no
@@ -36,9 +65,10 @@ Minor, not patch: `orchestrator-resume` gains a `recovery` parameter.
 
 `skip_failed` refuses rather than reporting a success it did not achieve. It
 means "leave these failed and get on with the rest", so it needs a rest to get
-on with, and the question it asks now is whether resume would just come back
-asking the same thing — which is the loop it exists to prevent. Two things
-follow. The rest has to be in the *current* phase, because a phase holding a
+on with. (As shipped in 0.11.0 this check missed a task left `running`; see the
+0.11.1 note above. The description below is of the corrected behaviour.) The
+question it asks is whether resume would just come back asking the same thing —
+the loop it exists to prevent. Two things follow. The rest has to be in the *current* phase, because a phase holding a
 failed task can never be accepted and `current_phase` never advances past it, so
 later-phase work cannot be reached from there. And a task that is merely waiting
 on you still counts as somewhere to go: a blocked sibling puts the workflow into
