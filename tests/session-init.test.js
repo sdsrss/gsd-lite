@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, readFileSync, symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -187,5 +187,86 @@ describe('session init settings.json parse error handling (H5)', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('session init reads repo-controlled paths without blocking', () => {
+  // SessionStart reads .gsd/.session-end and the project CLAUDE.md, both of them
+  // paths a checkout controls, both on bare readFileSync inside a try/catch that
+  // cannot catch a blocking read. This is worse than the statusline version of
+  // the same bug: a hook that never returns stops the session from starting.
+  async function withProject(name, fn) {
+    const root = await mkdtemp(join(tmpdir(), `gsd-si-${name}-`));
+    const home = join(root, 'home');
+    const claudeDir = join(home, '.claude');
+    const project = join(root, 'project');
+    try {
+      await mkdir(join(claudeDir, 'hooks'), { recursive: true });
+      await mkdir(join(claudeDir, 'gsd', 'runtime'), { recursive: true });
+      await mkdir(join(project, '.gsd'), { recursive: true });
+      cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
+      cpSync(STATUSLINE, join(claudeDir, 'hooks', 'gsd-statusline.cjs'));
+      cpSync(AUTO_UPDATE, join(claudeDir, 'hooks', 'gsd-auto-update.cjs'));
+      cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
+      await writeFile(join(project, '.gsd', 'state.json'), JSON.stringify({
+        schema_version: 'v1', project: 'p', workflow_mode: 'executing_task',
+        current_phase: 1, current_task: '1.1', total_phases: 1,
+        phases: [{ id: 1, name: 'Core', lifecycle: 'active', todo: [{ id: '1.1', name: 'A', lifecycle: 'pending' }] }],
+      }));
+      await fn({ root, home, claudeDir, project });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  function runInit({ home, claudeDir, project }) {
+    // execFileSync throws ETIMEDOUT on a hang, which is the failure under test.
+    return execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
+      cwd: project,
+      env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '0' },
+      encoding: 'utf8',
+      timeout: 6000,
+    });
+  }
+
+  it('does not hang when .gsd/.session-end is a fifo', async () => {
+    await withProject('endfifo', async (ctx) => {
+      execFileSync('mkfifo', [join(ctx.project, '.gsd', '.session-end')]);
+      runInit(ctx);
+    });
+  });
+
+  it('does not hang when the project CLAUDE.md is a fifo', async () => {
+    await withProject('mdfifo', async (ctx) => {
+      execFileSync('mkfifo', [join(ctx.project, 'CLAUDE.md')]);
+      runInit(ctx);
+    });
+  });
+
+  it('still reads and writes through a CLAUDE.md that is a symlink', async () => {
+    // The guard for the two cases above must not be readMarker: that rejects a
+    // symlink outright, and a symlinked CLAUDE.md is supported — a dotfiles or
+    // shared-team setup, which atomicWriteThroughLink deliberately writes
+    // through. Reading it as absent would be worse than no guard at all: the
+    // hook would treat empty as the whole file and write the status block
+    // through the link, over the real content. So the read has to follow the
+    // link and reject only what it lands on.
+    await withProject('mdlink', async (ctx) => {
+      // Inside the project root on purpose: atomicWriteThroughLink refuses a link
+      // that resolves outside it, which is the arbitrary-file-write guard, so
+      // `CLAUDE.md -> docs/CLAUDE.md` is the shape that is actually supported.
+      const real = join(ctx.project, 'docs', 'CLAUDE.md');
+      await mkdir(join(ctx.project, 'docs'), { recursive: true });
+      await writeFile(real, '# Team standards\n\nDo not lose this line.\n');
+      symlinkSync(real, join(ctx.project, 'CLAUDE.md'));
+
+      runInit(ctx);
+
+      assert.equal(lstatSync(join(ctx.project, 'CLAUDE.md')).isSymbolicLink(), true,
+        'the symlink was replaced with a regular file');
+      const after = readFileSync(real, 'utf8');
+      assert.match(after, /Do not lose this line\./, 'the original content was clobbered');
+      assert.match(after, /GSD-STATUS-BEGIN/, 'the status block was not written through the link');
+    });
   });
 });

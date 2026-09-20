@@ -13,6 +13,8 @@ const {
   atomicWriteJson,
   atomicWriteThroughLink,
   readJsonOwned,
+  readMarker,
+  readThroughLink,
 } = require('../hooks/lib/atomic-write.cjs');
 
 function withTmpSync(fn) {
@@ -228,6 +230,50 @@ describe('readJsonOwned', () => {
       // The assertion that matters is that this line is reached at all: a bare
       // readFileSync here never returns.
       assert.equal(readJsonOwned(p), null);
+    });
+  });
+});
+
+describe('readThroughLink', () => {
+  // The one difference from readMarker is the whole point of it existing, so it
+  // is pinned directly. Inverting it does not fail loudly — it makes the
+  // CLAUDE.md writer read empty, treat that as the file, and write its block
+  // through the link over the real contents.
+  it('follows a symlink to a regular file, unlike readMarker', () => {
+    withTmpSync(root => {
+      const target = join(root, 'real.md');
+      writeFileSync(target, '# real contents\n');
+      const link = join(root, 'CLAUDE.md');
+      symlinkSync(target, link);
+
+      assert.equal(readThroughLink(link), '# real contents\n');
+      assert.equal(readMarker(link), null, 'readMarker is supposed to refuse the link');
+    });
+  });
+
+  it('returns null for a fifo, and for a symlink pointing at one', () => {
+    withTmpSync(root => {
+      const fifo = join(root, 'pipe');
+      execFileSync('mkfifo', [fifo]);
+      assert.equal(readThroughLink(fifo), null);
+
+      const link = join(root, 'CLAUDE.md');
+      symlinkSync(fifo, link);
+      assert.equal(readThroughLink(link), null, 'a link to a fifo blocked or was read');
+    });
+  });
+
+  it('returns null for a missing file, a dangling link and a directory', () => {
+    withTmpSync(root => {
+      assert.equal(readThroughLink(join(root, 'absent.md')), null);
+
+      const dangling = join(root, 'dangling.md');
+      symlinkSync(join(root, 'nothing-here'), dangling);
+      assert.equal(readThroughLink(dangling), null);
+
+      const dir = join(root, 'as-dir.md');
+      mkdirSync(dir);
+      assert.equal(readThroughLink(dir), null);
     });
   });
 });

@@ -348,6 +348,46 @@ describe('resume recovery parameter', () => {
     });
   });
 
+  it('refuses skip_failed when the tasks left in the phase are not actually runnable', async () => {
+    // Second try at the same bug. Scoping the guard to the current phase was
+    // necessary and not sufficient: it still asked "is there a task here that is
+    // neither accepted nor failed", which is looser than selectRunnableTask, the
+    // predicate resumeExecutingTask actually consumes. A pending task that
+    // depends on the failed one satisfied the loose check and nothing else, so
+    // resume fell straight back to offering skip_failed and the self-sustaining
+    // no-op returned at full strength. A dependent of the failed task is the
+    // ordinary shape of this, not an edge case — which is the point: the guard
+    // has to ask the consumer's question, not a proxy for it.
+    await withProject('skip-dependent-not-runnable', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, 'start 1.1');
+      await step(basePath, { current_task: null, phases: [{ id: 1, lifecycle: 'failed', todo: [{ id: '1.1', lifecycle: 'failed' }] }] }, 'fail 1.1');
+      await walkModes(basePath, ['failed']);
+
+      const before = await read({ basePath });
+      assert.equal(before.phases[0].todo.find(t => t.id === '1.2').lifecycle, 'pending',
+        'setup: 1.2 must be pending, and unrunnable only because its dependency failed');
+
+      const result = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+      assert.equal(result.error, true,
+        'skip_failed reported success with nothing it could actually run');
+      assert.equal(result.code, 'TRANSITION_ERROR');
+
+      // The tell for the original bug was that the same call kept working.
+      const again = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+      assert.equal(again.error, true, 'the no-op loop is still reachable on the second call');
+      assert.equal((await read({ basePath })).phases[0].todo.find(t => t.id === '1.2').lifecycle, 'pending');
+    }, [
+      {
+        name: 'Core',
+        tasks: [
+          { index: 1, name: 'Task A' },
+          { index: 2, name: 'Task B', level: 'L0', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }] },
+        ],
+      },
+    ]);
+  });
+
   it('refuses skip_failed when the only work left is in a phase that cannot be reached', async () => {
     // The guard above shipped scoped to the whole plan, which made it inert for
     // every project with more than one phase: a pending task in phase 2 satisfied
