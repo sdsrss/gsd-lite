@@ -246,6 +246,46 @@ describe('phase handoff gate', () => {
     }
   });
 
+  it('reports run_verify without verification as INVALID_INPUT even with no project at all', async () => {
+    // The fourth case, and the one the gate enumeration above cannot reach:
+    // there is no `.gsd/` to have gates. Argument validation runs before
+    // getStatePath, so NO_PROJECT_DIR no longer preempts this — which is the
+    // consistent behaviour, since phase_id's and direction_ok's type checks
+    // already ran before the project lookup and always have.
+    //
+    // Called out because it is a real precedence change for a caller who was
+    // getting NO_PROJECT_DIR from this exact call before, not because it is
+    // in doubt.
+    const emptyDir = await mkdtemp(join(tmpdir(), 'gsd-handoff-noproject-'));
+    try {
+      const result = await phaseComplete({
+        phase_id: 1,
+        basePath: emptyDir,
+        run_verify: true,
+        direction_ok: true,
+      });
+
+      assert.equal(result.error, true);
+      assert.equal(result.code, 'INVALID_INPUT');
+      assert.match(result.message, /run_verify requires verification results/i);
+
+      // Guard the guard: the same directory must still produce NO_PROJECT_DIR
+      // for a well-formed call. Without this, the assertion above would keep
+      // passing if argument validation ever swallowed the project check
+      // outright.
+      const wellFormed = await phaseComplete({
+        phase_id: 1,
+        basePath: emptyDir,
+        verification: { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } },
+        direction_ok: true,
+      });
+      assert.equal(wellFormed.error, true);
+      assert.equal(wellFormed.code, 'NO_PROJECT_DIR');
+    } finally {
+      await rm(emptyDir, { recursive: true, force: true });
+    }
+  });
+
   it('completes phase when verification object is provided directly with all passing exit codes', async () => {
     await prepareReviewingAcceptedPhase(tempDir);
     const reviewAccepted = await update({
