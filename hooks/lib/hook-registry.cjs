@@ -73,13 +73,31 @@ function pluginServesHooks(claudeDir, scriptDir, hookType) {
   }
   if (!entry) return false;
 
+  // A record installed at project or local scope only serves the project it
+  // names. Reading record[0] and ignoring `scope` made every OTHER project stand
+  // this copy down for a plugin that does not load there — the `--scope project`
+  // install, which is the worst version of this failure because nothing on disk
+  // says "disabled" and nothing is printed. Anything we cannot pin to this
+  // directory keeps us running.
+  if (entry.scope && entry.scope !== 'user') {
+    if (!entry.projectPath) return false;
+    if (realish(entry.projectPath) !== realish(process.cwd())) return false;
+  }
+
   // Installed but disabled means hooks.json is not loaded, so we are still the
   // only registration. enabledPlugins can live in the user settings or in the
   // project's, so a disabling value in any of them keeps us running. Claude
   // Code treats the string "false" as disabled too, and `=== false` is the one
   // comparison that would let that through as "enabled" — test for an explicit
-  // key that is not literally true. A missing key means enabled.
+  // key that is not literally true.
+  //
+  // A missing key is NOT consent. Claude Code writes `enabledPlugins[id] = true`
+  // explicitly when it installs a plugin, so the absence of any entry means the
+  // plugin is not enabled for this session — the ordinary case being a
+  // project-scope install whose key lives in a different project's settings.
+  // Treating absence as "enabled" is what let this stand down into zero hooks.
   const cwdClaude = path.join(process.cwd(), '.claude');
+  let enabledSomewhere = false;
   for (const file of [
     path.join(claudeDir, 'settings.json'),
     path.join(cwdClaude, 'settings.json'),
@@ -87,9 +105,13 @@ function pluginServesHooks(claudeDir, scriptDir, hookType) {
   ]) {
     try {
       const enabled = JSON.parse(fs.readFileSync(file, 'utf8')).enabledPlugins;
-      if (enabled && Object.hasOwn(enabled, pluginId) && enabled[pluginId] !== true) return false;
+      if (enabled && Object.hasOwn(enabled, pluginId)) {
+        if (enabled[pluginId] !== true) return false;
+        enabledSomewhere = true;
+      }
     } catch { /* absent or unreadable — no opinion from this file */ }
   }
+  if (!enabledSomewhere) return false;
 
   // Installed and enabled is not the same as serving. A plugin whose
   // hooks/hooks.json is missing, truncated or malformed registers nothing —
