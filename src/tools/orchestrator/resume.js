@@ -898,7 +898,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
  * function with early returns is a gate on some of them.
  */
 export async function resumeWorkflow(args = {}) {
-  const { basePath = process.cwd(), _depth = 0, recovery } = args;
+  const { basePath = process.cwd(), _depth = 0, recovery, unblock_tasks, confirm_review } = args;
 
   // Validate the value before anything runs, so a bad one cannot ride along
   // with unblock_tasks or confirm_review and be dropped as a no-op.
@@ -907,6 +907,27 @@ export async function resumeWorkflow(args = {}) {
       error: true,
       code: ERROR_CODES.INVALID_INPUT,
       message: `recovery must be one of ${RECOVERY_OPTIONS.join(', ')} (got ${JSON.stringify(recovery)})`,
+    };
+  }
+
+  // And refuse the contradiction before anything runs, for the same reason one
+  // line up. These are three different ways to resolve a hold and only one can be
+  // what the caller meant. The check has to sit AHEAD of _resumeWorkflow: both
+  // unblock_tasks and confirm_review persist and return early, so the
+  // recovery_options check further down used to fire after their write had
+  // already landed — the call returned TRANSITION_ERROR with an L3 sign-off
+  // committed behind it, which a caller reading the error as "nothing happened"
+  // would be wrong about.
+  const conflicting = [
+    Array.isArray(unblock_tasks) && unblock_tasks.length > 0 ? 'unblock_tasks' : null,
+    confirm_review ? 'confirm_review' : null,
+  ].filter(Boolean);
+  if (recovery && conflicting.length > 0) {
+    return {
+      error: true,
+      code: ERROR_CODES.INVALID_INPUT,
+      message: `recovery cannot be combined with ${conflicting.join(' or ')} — each resolves a hold a different way, `
+        + 'and running both would commit one before rejecting the other. Send one per call.',
     };
   }
 
