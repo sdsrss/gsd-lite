@@ -1,6 +1,9 @@
 // tests/context-build.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { buildExecutorContext } from '../src/tools/state/index.js';
 
 describe('buildExecutorContext', () => {
@@ -44,7 +47,53 @@ describe('buildExecutorContext', () => {
     };
     const ctx = buildExecutorContext(state, '1.1', 1);
     assert.ok(!ctx.error, 'should not return error');
-    assert.ok(ctx.workflows.includes('workflows/debugging.md'), 'should include debugging workflow');
+    assert.ok(
+      ctx.workflows.some(w => w.endsWith('/debugging.md')),
+      `should include the debugging workflow, got ${JSON.stringify(ctx.workflows)}`,
+    );
+  });
+
+  // The executor is handed these paths and told to read them. It runs with the
+  // USER'S project as its working directory, not this package — so a relative
+  // path resolves against a directory where none of these files exist. The bug
+  // survived because this repo is the one cwd where they all resolve, which is
+  // also why these tests stat the files from a different cwd instead of
+  // matching the strings.
+  describe('workflow paths the executor is told to read', () => {
+    const contextFor = (extra = {}) => buildExecutorContext({
+      phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'pending', requires: [], research_basis: [], level: 'L1', ...extra }] }],
+      research: { decision_index: { 'decision:x': { summary: 's', source: 'c' } } },
+    }, '1.1', 1);
+
+    it('are absolute', () => {
+      const ctx = contextFor();
+      assert.ok(ctx.workflows.length > 0, 'no workflows returned — this suite would be vacuous');
+      const relative = ctx.workflows.filter(w => !isAbsolute(w));
+      assert.deepEqual(relative, [], 'a relative path resolves against the caller\'s cwd, which is the user\'s project');
+    });
+
+    it('point at files that exist, from a working directory that is not this package', () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), 'gsd-cwd-'));
+      const original = process.cwd();
+      try {
+        process.chdir(elsewhere);
+        // Every arm, not just the default two: each push in buildExecutorContext
+        // is its own path, and a fix that only resolves the default arm leaves
+        // the retry and research arms broken in exactly the same way.
+        for (const [label, ctx] of [
+          ['default', contextFor()],
+          ['retry', contextFor({ retry_count: 2 })],
+          ['research', contextFor({ research_basis: ['decision:x'] })],
+        ]) {
+          for (const w of ctx.workflows) {
+            assert.ok(existsSync(w), `${label}: executor is told to read ${w}, which does not exist`);
+          }
+        }
+      } finally {
+        process.chdir(original);
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
   });
 
   it('handles research_basis referencing non-existent decision_index entry gracefully', () => {

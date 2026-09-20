@@ -1,8 +1,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { createRequire } from 'node:module';
 
 const _require = createRequire(import.meta.url);
@@ -372,6 +373,36 @@ describe('health tool', () => {
     assert.equal(result.server, 'gsd');
     assert.equal(result.version, PKG_VERSION);
     assert.equal(result.state_exists, false);
+  });
+
+  it('reports absolute, existing paths to the shipped docs', async () => {
+    // The commands now tell agents to take these paths from here instead of
+    // naming a relative one, so this field IS the mechanism — if it is absent
+    // or wrong, every `/gsd:start` silently stops reading its own workflows.
+    // Asserted from a working directory that is not the package root, because
+    // this package's root is the one cwd where the old relative paths worked.
+    const { handleToolCall } = await import('../src/server.js');
+    const elsewhere = await mkdtemp(join(tmpdir(), 'gsd-health-cwd-'));
+    const original = process.cwd();
+    try {
+      process.chdir(elsewhere);
+      const result = await handleToolCall('health', { basePath: elsewhere });
+      assert.ok(result.docs, 'health must report where the shipped docs are');
+      for (const key of ['references', 'workflows']) {
+        const dir = result.docs[key];
+        assert.ok(isAbsolute(dir), `docs.${key} must be absolute, got ${dir}`);
+        assert.ok(existsSync(dir), `docs.${key} points at ${dir}, which does not exist`);
+      }
+      // Name the files the prompt layer actually asks for, not just the dirs —
+      // a correct directory with the doc missing fails the same way.
+      for (const f of [['references', 'questioning.md'], ['references', 'execution-loop.md'], ['workflows', 'execution-flow.md']]) {
+        const full = join(result.docs[f[0]], f[1]);
+        assert.ok(existsSync(full), `a command instructs agents to read ${full}, which does not exist`);
+      }
+    } finally {
+      process.chdir(original);
+      await rm(elsewhere, { recursive: true, force: true });
+    }
   });
 
   it('returns health status with project info when state exists', async () => {

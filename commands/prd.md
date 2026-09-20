@@ -70,7 +70,7 @@ argument-hint: File path to requirements doc, or inline description text
 
 <!-- STEP 5-12: 共享执行流程 — 修改 workflows/execution-flow.md 即同步所有入口 -->
 
-使用 Read 工具读取 `workflows/execution-flow.md`，严格按照其中 STEP 5-12 执行。
+调用 `health` 工具取 `docs.workflows`，Read `<docs.workflows>/execution-flow.md`，严格按照其中 STEP 5-12 执行。
 
 </process>
 

@@ -4,6 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { init, read, update, phaseComplete, patchPlan } from './tools/state/index.js';
+import { shippedDocPath } from './utils.js';
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION = _require('../package.json').version;
@@ -51,7 +52,7 @@ const server = new Server(
 const TOOLS = [
   {
     name: 'health',
-    description: 'Health check: returns server status and whether .gsd state exists',
+    description: 'Health check: returns server status, whether .gsd state exists, and `docs` — the absolute paths to this install\'s shipped references/ and workflows/ directories. Read a shipped doc via docs.references / docs.workflows; a relative path resolves against the user\'s project, which does not contain them.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -316,6 +317,16 @@ async function dispatchToolCall(name, args) {
           current_phase: stateResult.current_phase,
           total_phases: stateResult.total_phases,
         }),
+        // Where this install's shipped docs actually are. Commands ask for
+        // these rather than naming a relative path: an agent's working
+        // directory is the user's project, and the two install modes put the
+        // same file at different depths (`<root>/references/` under the plugin
+        // system, `~/.claude/references/gsd/` under npx), so no relative
+        // string is correct for both. The server is the only party that knows.
+        docs: {
+          references: shippedDocPath('references'),
+          workflows: shippedDocPath('workflows'),
+        },
         ...(versionDrift ? { warning: versionDrift } : {}),
       };
       break;

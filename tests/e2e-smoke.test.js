@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import {
   init,
   read,
@@ -79,7 +80,10 @@ describe('E2E smoke: full project lifecycle', () => {
     assert.deepEqual(ctx.research_decisions, []);
     assert.deepEqual(ctx.predecessor_outputs, []);
     assert.equal(ctx.project_conventions, 'CLAUDE.md');
-    assert.ok(ctx.workflows.includes('workflows/tdd-cycle.md'));
+    assert.ok(
+      ctx.workflows.some(w => w.endsWith('/tdd-cycle.md') && existsSync(w)),
+      `expected a resolvable path to tdd-cycle.md, got ${JSON.stringify(ctx.workflows)}`,
+    );
     assert.equal(ctx.constraints.level, 'L0');
   });
 

@@ -39,7 +39,8 @@ argument-hint: Optional feature or project description
 ## STEP 4 — 需求追问
 
 用户回答后，跟进追问直到需求清晰:
-- 使用 Read 工具读取 `references/questioning.md`，按其中的技巧进行提问 (挑战模糊、具象化、发现边界)
+- 调用 `health` 工具取 `docs.references`，Read `<docs.references>/questioning.md`，按其中的技巧进行提问 (挑战模糊、具象化、发现边界)
+  - 路径必须这样取：agent 的工作目录是用户项目，插件自带的文档不在那里；两种安装模式下这些文档的深度也不同，没有哪个相对路径对两边都成立
 - 每个问题提供选项，标识 ⭐ 推荐选项
 - 多轮对话直到需求清晰 (通常 2-4 轮)
 - 每轮最多 3-5 个问题，避免过度追问
@@ -55,7 +56,7 @@ argument-hint: Optional feature or project description
 
 <!-- STEP 5-12: 共享执行流程 — 修改 workflows/execution-flow.md 即同步所有入口 -->
 
-使用 Read 工具读取 `workflows/execution-flow.md`，严格按照其中 STEP 5-12 执行。
+调用 `health` 工具取 `docs.workflows`，Read `<docs.workflows>/execution-flow.md`，严格按照其中 STEP 5-12 执行。
 
 </process>
 
