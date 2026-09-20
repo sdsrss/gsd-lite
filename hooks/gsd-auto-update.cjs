@@ -206,12 +206,17 @@ async function checkForUpdate(options = {}) {
           lastUpdate: success ? new Date().toISOString() : state.lastUpdate,
         });
 
-        if (success && notify) {
-          writeNotification({
-            kind: 'updated',
-            from: currentVersion,
-            to: latest.version,
-          });
+        // Both outcomes are reported. Only success used to be, so a runtime that
+        // failed to update said nothing — and because the old installer wrote the
+        // new package.json before `npm ci`, getCurrentVersion then read the new
+        // number and every later check concluded "already latest". Silent, and
+        // permanent. install.js stages and swaps now, so a failure leaves the old
+        // version on disk and the next check retries on its own; this just makes
+        // sure the user finds out it happened.
+        if (notify) {
+          writeNotification(success
+            ? { kind: 'updated', from: currentVersion, to: latest.version }
+            : { kind: 'failed', from: currentVersion, to: latest.version });
         }
 
         return {
@@ -483,8 +488,7 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
     fetchImpl = fetch,
   } = opts;
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
-  const backupPath = path.join(runtimeDir, 'package.json.bak');
-  let backedUp = false;
+
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -584,16 +588,12 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
       return false;
     }
 
-    // Backup current package.json before install
-    const currentPkgPath = path.join(pluginRoot, 'package.json');
-    try {
-      if (fs.existsSync(currentPkgPath)) {
-        fs.copyFileSync(currentPkgPath, backupPath);
-        backedUp = true;
-      }
-    } catch {
-      /* best effort — proceed without backup */
-    }
+    // No backup/restore here any more. It never worked: the source was
+    // pluginRoot/package.json (for the ~/.claude/hooks copy that is
+    // ~/.claude/package.json, which does not exist, so backedUp stayed false)
+    // and the destination sat inside the directory install.js wiped. install.js
+    // now builds into a staging dir and swaps at the end, so a failed install
+    // cannot damage the runtime and there is nothing to roll back.
 
     // Run installer with spawnSync (no shell)
     if (verbose) console.log('  Running installer...');
@@ -603,16 +603,7 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
       env: { ...process.env, PLUGIN_AUTO_UPDATE: '1' },
     });
     if (install.status !== 0) {
-      // Restore backup on install failure
-      if (backedUp) {
-        try { fs.copyFileSync(backupPath, currentPkgPath); } catch { /* best effort */ }
-      }
       throw new Error(`Installer failed: ${(install.stderr || '').toString().slice(0, 200)}`);
-    }
-
-    // Success — remove backup
-    if (backedUp) {
-      try { fs.rmSync(backupPath, { force: true }); } catch { /* ignore */ }
     }
 
     // Sync to plugin cache if installed as plugin

@@ -196,23 +196,18 @@ export function main() {
     log('  ✓ Removed legacy gsd-lite runtime');
   }
 
-  // Reset the managed runtime directory to clear stale files on reinstall, while
-  // keeping runtime/ (update-state.json, update-notification.json). Removing the
-  // managed entries in place is what makes that safe: runtime/ is never moved,
-  // so no failure between here and the end can lose it.
-  if (!DRY_RUN && existsSync(RUNTIME_DIR)) {
-    for (const entry of readdirSync(RUNTIME_DIR)) {
-      if (entry === 'runtime') continue;
-      rmSync(join(RUNTIME_DIR, entry), { recursive: true, force: true });
-    }
-  }
-
-  // Sweep staging dirs stranded by earlier versions of the step above. Kept out
-  // of that block deliberately: the failure it cleans up after could leave
-  // ~/.claude/gsd missing entirely, which is exactly when the block does not run.
+  // The managed runtime is built in a staging directory and swapped in at the
+  // end (see STAGING_DIR below), so nothing here removes the live one. It used
+  // to: the reset ran first and `npm ci` ran ~100 lines later, so any dependency
+  // install that could not complete — no npm on PATH, no network, a registry
+  // 500 — left ~/.claude/gsd holding new src/ with no node_modules, and the MCP
+  // server threw ERR_MODULE_NOT_FOUND on every start after that. The background
+  // updater runs this path on session start, unattended.
+  //
+  // Sweep staging and backup dirs stranded by an interrupted earlier run.
   if (!DRY_RUN) {
     for (const entry of readdirSync(CLAUDE_DIR)) {
-      if (entry.startsWith('.gsd-runtime-backup-')) {
+      if (entry.startsWith('.gsd-runtime-backup-') || entry.startsWith('.gsd-staging-')) {
         rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
       }
     }
@@ -268,8 +263,15 @@ export function main() {
     copyDir(hookLibDir, join(CLAUDE_DIR, 'hooks', 'lib'), 'hooks/lib → ~/.claude/hooks/lib/');
   }
 
-  // 6. Stable runtime for MCP server
-  copyDir(join(__dirname, 'src'), join(RUNTIME_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
+  // 6. Stable runtime for MCP server — built beside the live one, swapped in at
+  // the end. Everything from here to the swap writes only to STAGING_DIR, so a
+  // failure at any point leaves the working runtime exactly as it was.
+  const STAGING_DIR = join(CLAUDE_DIR, `.gsd-staging-${process.pid}`);
+  const abandonStaging = () => {
+    try { rmSync(STAGING_DIR, { recursive: true, force: true }); } catch { /* best effort */ }
+  };
+
+  copyDir(join(__dirname, 'src'), join(STAGING_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
   // Write a sanitized package.json: strip dev-only npm lifecycle scripts
   // (prepare/prepublishOnly/version use POSIX shell + dev tooling absent from
   // the runtime). Leaving them in means a later manual `npm install` in
@@ -279,28 +281,28 @@ export function main() {
   } else {
     const runtimePkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
     delete runtimePkg.scripts;
-    mkdirSync(RUNTIME_DIR, { recursive: true });
-    writeFileSync(join(RUNTIME_DIR, 'package.json'), JSON.stringify(runtimePkg, null, 2) + '\n');
+    mkdirSync(STAGING_DIR, { recursive: true });
+    writeFileSync(join(STAGING_DIR, 'package.json'), JSON.stringify(runtimePkg, null, 2) + '\n');
     log('  ✓ runtime/package.json → ~/.claude/gsd/package.json (scripts stripped)');
   }
   // Copy uninstall.js so the SessionStart hook's Phase 0 orphan-cleanup can
   // spawn it when /plugin uninstall has removed the plugin without running our
   // uninstaller. Without this, hooks/runtime/settings.json entries written by
   // install.js outlive the plugin and keep firing.
-  copyFile(join(__dirname, 'uninstall.js'), join(RUNTIME_DIR, 'uninstall.js'), 'runtime/uninstall.js → ~/.claude/gsd/uninstall.js');
+  copyFile(join(__dirname, 'uninstall.js'), join(STAGING_DIR, 'uninstall.js'), 'runtime/uninstall.js → ~/.claude/gsd/uninstall.js');
   // Copy lock file so `npm ci` works when node_modules are not present (npx scenario)
   const lockFile = join(__dirname, 'package-lock.json');
   if (existsSync(lockFile)) {
-    copyFile(lockFile, join(RUNTIME_DIR, 'package-lock.json'), 'runtime/package-lock.json → ~/.claude/gsd/package-lock.json');
+    copyFile(lockFile, join(STAGING_DIR, 'package-lock.json'), 'runtime/package-lock.json → ~/.claude/gsd/package-lock.json');
   }
 
   // 7. Runtime dependencies — copy local node_modules or install fresh (npx hoists deps)
   const localNM = join(__dirname, 'node_modules');
   if (existsSync(localNM)) {
-    copyDir(localNM, join(RUNTIME_DIR, 'node_modules'), 'runtime/node_modules (copied)');
+    copyDir(localNM, join(STAGING_DIR, 'node_modules'), 'runtime/node_modules (copied)');
   } else if (!DRY_RUN) {
     log('  ⧗ Installing runtime dependencies...');
-    const lockFile = join(RUNTIME_DIR, 'package-lock.json');
+    const lockFile = join(STAGING_DIR, 'package-lock.json');
     const hasLockFile = existsSync(lockFile);
     // --ignore-scripts: the runtime install only needs node_modules. Skipping
     // lifecycle scripts avoids running the dev-only POSIX `prepare` git-hook
@@ -309,14 +311,72 @@ export function main() {
       ? 'npm ci --omit=dev --ignore-scripts'
       : 'npm install --omit=dev --no-fund --no-audit --ignore-scripts';
     try {
-      execSync(installCmd, { cwd: RUNTIME_DIR, stdio: 'pipe' });
+      execSync(installCmd, { cwd: STAGING_DIR, stdio: 'pipe' });
       log('  ✓ runtime dependencies installed');
     } catch (err) {
       log(`  ✗ Failed to install runtime dependencies: ${err.message}`);
+      log('  The previous runtime is untouched and still works.');
+      abandonStaging();
       process.exit(1);
     }
   } else {
     log('  [dry-run] Would install runtime dependencies');
+  }
+
+  // 7b. Swap the staged runtime into place.
+  //
+  // Everything that can fail has now happened, and none of it touched the live
+  // directory. What is left is two renames within CLAUDE_DIR — same filesystem,
+  // so each is atomic and the window where ~/.claude/gsd does not exist is
+  // microseconds rather than the length of an `npm ci`.
+  //
+  // runtime/ (update-state.json, update-notification.json) belongs to the
+  // updater, not to any released version, so it is carried across rather than
+  // replaced. Losing it resets the update-check throttle and drops a pending
+  // notification.
+  if (!DRY_RUN) {
+    const backupDir = join(CLAUDE_DIR, `.gsd-runtime-backup-${process.pid}`);
+    const hadRuntime = existsSync(RUNTIME_DIR);
+    try {
+      if (hadRuntime) renameSync(RUNTIME_DIR, backupDir);
+      try {
+        renameSync(STAGING_DIR, RUNTIME_DIR);
+      } catch (err) {
+        // Put the working runtime back before giving up — a missing
+        // ~/.claude/gsd is worse than a stale one.
+        if (hadRuntime && !existsSync(RUNTIME_DIR)) renameSync(backupDir, RUNTIME_DIR);
+        throw err;
+      }
+      log('  ✓ runtime swapped into ~/.claude/gsd');
+    } catch (err) {
+      log(`  ✗ Failed to install the new runtime: ${err.message}`);
+      log('  The previous runtime is untouched and still works.');
+      abandonStaging();
+      process.exit(1);
+    }
+
+    // Carry runtime/ across by renaming the directory, not by copying its
+    // contents: a file in there the installer cannot read (a root-owned or
+    // chmod-000 update-state.json) must not cost the user the directory, and a
+    // rename never opens what it moves. Best effort by design — the update-check
+    // throttle and a pending notification are worth preserving, but not worth
+    // failing an otherwise complete install over.
+    const carried = join(backupDir, 'runtime');
+    if (hadRuntime && existsSync(carried)) {
+      try {
+        renameSync(carried, join(RUNTIME_DIR, 'runtime'));
+      } catch (err) {
+        log(`  ! Could not carry over gsd/runtime/: ${err.message}`);
+      }
+    }
+    if (hadRuntime) {
+      // force:true swallows ENOENT but not EACCES, and the install is already
+      // complete at this point — a backup we cannot delete is litter, not a
+      // failure. The next run's sweep tries again.
+      try { rmSync(backupDir, { recursive: true, force: true }); } catch { /* swept next run */ }
+    }
+  } else {
+    log('  [dry-run] Would swap the staged runtime into ~/.claude/gsd');
   }
 
   // 8. Register MCP server + hooks in settings.json

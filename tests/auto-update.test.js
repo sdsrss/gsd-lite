@@ -89,6 +89,37 @@ describe('auto update install modes', () => {
     }
   });
 
+  it('manual mode reports a failed install instead of saying nothing', async () => {
+    // writeNotification only ever fired on success, so a background update that
+    // failed was completely silent — and because the old installer wrote the new
+    // package.json before `npm ci`, getCurrentVersion then read the new number
+    // and every later check concluded "already latest". Silent and permanent.
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      const result = await ctx.mod.checkForUpdate({
+        force: true,
+        install: true,
+        notify: true,
+        fetchLatestRelease: async () => ({ version: '0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+        downloadAndInstall: async () => false,
+      });
+
+      assert.equal(result.updated, false);
+      assert.equal(result.updateAvailable, true, 'a failed install must stay on the to-do list');
+
+      const notification = JSON.parse(await readFile(join(ctx.claudeDir, 'gsd', 'runtime', 'update-notification.json'), 'utf8'));
+      assert.equal(notification.kind, 'failed');
+      assert.equal(notification.from, '0.3.0');
+      assert.equal(notification.to, '0.3.1');
+
+      // The recorded version must not have moved, or the next check reports
+      // "already latest" and the update is never retried.
+      assert.equal(ctx.mod.getCurrentVersion('manual'), '0.3.0');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
   it('manual mode still auto-installs and writes success notification', async () => {
     const ctx = await loadAutoUpdate('manual');
     let installCalled = false;
