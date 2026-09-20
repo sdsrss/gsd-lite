@@ -91,6 +91,38 @@ export const PHASE_LIFECYCLE = {
 
 export const TASK_LEVELS = ['L0', 'L1', 'L2', 'L3'];
 
+/**
+ * Which `requires` gates mean anything, per dependency kind. Read off what
+ * selectRunnableTask (src/tools/state/logic.js) actually does, and imported by
+ * both sides so they cannot drift:
+ *
+ *   task  + checkpoint → dep task is checkpointed or accepted
+ *   task  + accepted   → dep task is accepted (the default when no gate given)
+ *   phase + any of the three → dep phase is accepted; the gate does not narrow
+ *                             it further, so all three are reachable
+ *
+ * `{kind: 'task', gate: 'phase_complete'}` is absent on purpose: a task is not
+ * a phase, nothing can ever complete a phase *inside* the task's own phase
+ * while that task waits, and the scheduler refuses it on every call. It used to
+ * be accepted by all three authoring paths, which deadlocked the phase — the
+ * plan was valid and the project could not finish.
+ *
+ * Splitting this by hand once before dropped 'checkpoint' from the phase side
+ * and over-rejected working plans (reverted in 98b47f8), which is why the
+ * table lives next to the semantics it came from and tests/dep-gates.test.js
+ * pins every (kind, gate) pair against the scheduler.
+ */
+export const DEP_GATES = {
+  task: ['checkpoint', 'accepted'],
+  phase: ['checkpoint', 'accepted', 'phase_complete'],
+};
+
+/** True when `gate` (possibly undefined, meaning the default) is usable for `kind`. */
+export function isDepGateAllowed(kind, gate) {
+  if (gate === undefined || gate === null) return true; // defaults to 'accepted'
+  return (DEP_GATES[kind] || []).includes(gate);
+}
+
 export const PHASE_REVIEW_STATUS = ['pending', 'reviewing', 'accepted', 'rework_required'];
 
 export const CANONICAL_FIELDS = [
@@ -896,9 +928,8 @@ export function createInitialState({ project, phases }) {
         if (!['task', 'phase'].includes(dep.kind)) {
           return { error: true, message: `Task ${taskId}: requires entry kind must be "task" or "phase" (got "${dep.kind}")` };
         }
-        const validGates = ['checkpoint', 'accepted', 'phase_complete'];
-        if (dep.gate && !validGates.includes(dep.gate)) {
-          return { error: true, message: `Task ${taskId}: requires entry gate must be one of ${validGates.join(', ')} (got "${dep.gate}")` };
+        if (dep.gate && !isDepGateAllowed(dep.kind, dep.gate)) {
+          return { error: true, message: `Task ${taskId}: requires entry gate for a ${dep.kind} dependency must be one of ${DEP_GATES[dep.kind].join(', ')} (got "${dep.gate}")` };
         }
         if (dep.kind === 'task' && !phaseTaskIds[pi].has(String(dep.id))) {
           if (seenIds.has(String(dep.id))) {

@@ -164,3 +164,6 @@ remaining <= 25%:
 - `accepted` — 默认安全门槛；适合共享行为、公共接口、L2 风险任务
 - `phase_complete` — 跨 phase 依赖；只有 phase handoff 完成后才释放
 - 默认值: 如果 planner 没显式放宽，则依赖按 `accepted` 处理
+- **词汇表按 kind 分**：`task` 依赖只接受 `checkpoint` / `accepted`，`phase` 依赖三个都接受。
+  给 `task` 依赖写 `phase_complete` 会被三条编写路径（state-init / add_task /
+  add_dependency）拒绝——调度器永远满足不了它，该 phase 会再也完不成。

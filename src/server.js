@@ -80,7 +80,7 @@ const TOOLS = [
                     name: { type: 'string', description: 'Task name (required)' },
                     index: { type: 'number', description: 'Task index within phase (default: auto)' },
                     level: { type: 'string', description: 'Complexity level: L0/L1/L2/L3 (default: L1)' },
-                    requires: { type: 'array', description: 'Dependencies: [{kind: "task"|"phase", id: "1.1", gate?: "checkpoint"|"accepted"|"phase_complete"}] (default: [])' },
+                    requires: { type: 'array', description: 'Dependencies: [{kind: "task"|"phase", id: "1.1", gate?: …}] (default: []). Gates are per kind: a task dependency takes "checkpoint" or "accepted"; a phase dependency also takes "phase_complete". "phase_complete" on a task dependency is rejected — the scheduler can never satisfy it, so the phase would never complete. Default gate: "accepted".' },
                     review_required: { type: 'boolean', description: 'Whether review is needed (default: true)' },
                     verification_required: { type: 'boolean', description: 'Whether verification is needed (default: true)' },
                   },
