@@ -68,6 +68,12 @@ the ones to `~/.claude/settings.json` and `installed_plugins.json`, which the
 first pass of this change left on the old pattern while the commit message
 claimed the class was closed.
 
+Reads of those files are guarded too. A symlink pointing at a fifo made
+`readFileSync` block forever rather than fail, so a repository shipping one at
+`.gsd/.context-health` hung the statusline on every render — and since the read
+happens before the write decision, no amount of write-side hardening touched
+it. Marker files are now read only when they are regular files.
+
 Releases are also signed and verified *before* `npm publish` rather than after.
 A signing key that no longer paired with the public key embedded in the client
 used to mean npm got the version permanently, the job then failed, and

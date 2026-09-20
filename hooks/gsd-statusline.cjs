@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { findGsdDir } = require('./lib/gsd-finder.cjs');
-const { atomicWrite } = require('./lib/atomic-write.cjs');
+const { atomicWrite, readMarker } = require('./lib/atomic-write.cjs');
 
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
@@ -67,10 +67,15 @@ process.stdin.on('end', () => {
         try {
           const bridgePath = path.join(os.tmpdir(), `gsd-ctx-${session}.json`);
           let needsWrite = true;
-          try {
-            const existing = JSON.parse(fs.readFileSync(bridgePath, 'utf8'));
-            if (existing.remaining_percentage === remaining && existing.has_gsd === hasGsd) needsWrite = false;
-          } catch { /* no existing file */ }
+          // readMarker returns null instead of throwing, and JSON.parse(null) is
+          // null rather than an error — so absence is checked, not caught.
+          const existingRaw = readMarker(bridgePath);
+          if (existingRaw !== null) {
+            try {
+              const existing = JSON.parse(existingRaw);
+              if (existing?.remaining_percentage === remaining && existing?.has_gsd === hasGsd) needsWrite = false;
+            } catch { /* unparseable — rewrite it */ }
+          }
           if (needsWrite) {
             // R-23 made the tmp name unique (pid+timestamp) so concurrent
             // statusline processes would not race on a shared `.tmp`. Unique is
@@ -98,10 +103,8 @@ process.stdin.on('end', () => {
         try {
           const healthPath = path.join(gsdDir, '.context-health');
           let needsHealthWrite = true;
-          try {
-            const current = fs.readFileSync(healthPath, 'utf8').trim();
-            if (current === String(remaining)) needsHealthWrite = false;
-          } catch { /* file doesn't exist yet */ }
+          const healthRaw = readMarker(healthPath);
+          if (healthRaw !== null && healthRaw.trim() === String(remaining)) needsHealthWrite = false;
           if (needsHealthWrite) {
             // Same predictable-temp problem as the bridge above, but inside
             // `.gsd/`, which a cloned repository controls outright.
