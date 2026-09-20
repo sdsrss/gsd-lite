@@ -37,11 +37,29 @@ async function makeClaudeHome(prefix) {
   return { home, claudeDir };
 }
 
-async function markPluginInstalled(claudeDir, version = '0.10.0') {
-  const pluginsDir = join(claudeDir, 'plugins');
-  await mkdir(pluginsDir, { recursive: true });
-  await writeFile(join(pluginsDir, 'installed_plugins.json'), JSON.stringify({
-    plugins: { 'gsd@gsd': [{ version }] },
+/**
+ * Register a plugin the way Claude Code does: a registry entry carrying
+ * installPath, and a cache directory holding hooks/hooks.json. `manifest`
+ * picks what that file contains, because "installed" and "serving hooks" are
+ * different things and the guard has to tell them apart.
+ */
+async function markPluginInstalled(claudeDir, { id = 'gsd@gsd', version = '0.10.0', manifest = 'real' } = {}) {
+  const installPath = join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd', version);
+  await mkdir(join(installPath, 'hooks'), { recursive: true });
+  const manifestPath = join(installPath, 'hooks', 'hooks.json');
+  if (manifest === 'real') {
+    cpSync(join(PROJECT_ROOT, 'hooks', 'hooks.json'), manifestPath);
+  } else if (manifest === 'malformed') {
+    await writeFile(manifestPath, '{ "hooks": { not json');
+  } else if (manifest === 'empty') {
+    await writeFile(manifestPath, JSON.stringify({ hooks: {} }));
+  } else if (manifest === 'sessionstart-only') {
+    const real = JSON.parse(await readFile(join(PROJECT_ROOT, 'hooks', 'hooks.json'), 'utf-8'));
+    await writeFile(manifestPath, JSON.stringify({ hooks: { SessionStart: real.hooks.SessionStart } }));
+  } // 'missing' → write nothing
+  await mkdir(join(claudeDir, 'plugins'), { recursive: true });
+  await writeFile(join(claudeDir, 'plugins', 'installed_plugins.json'), JSON.stringify({
+    plugins: { [id]: [{ version, installPath }] },
   }));
 }
 
@@ -293,6 +311,91 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
     } finally {
       await rm(realHome, { recursive: true, force: true });
       await rm(join(linkHome, '..'), { recursive: true, force: true });
+    }
+  });
+
+  // "Installed" is not "serving". A plugin whose hooks/hooks.json is missing or
+  // broken registers nothing — `claude plugin details` reports Hooks (0) — and
+  // standing down against it points the safety net at the exact fault it exists
+  // to catch: Hooks (0) is the state 0.9.0 shipped in, and back then these
+  // settings.json copies are what kept those users working.
+  for (const [manifest, label] of [
+    ['malformed', 'its hooks.json does not parse'],
+    ['missing', 'its hooks.json is absent'],
+    ['empty', 'its hooks.json declares no hooks'],
+  ]) {
+    it(`runs when the plugin is installed and enabled but ${label}`, async () => {
+      const { home, claudeDir } = await makeClaudeHome('gsd-standdown-broken-');
+      try {
+        await markPluginInstalled(claudeDir, { manifest });
+        await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
+        assert.equal(existsSync(ranMarker(claudeDir)), true,
+          'the plugin serves nothing, so standing down here means no hooks at all');
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('stands down only for the hook the plugin actually declares', async () => {
+    // A manifest declaring SessionStart but not Stop serves one and not the
+    // other, so the answer differs per hook. One shared yes/no would silence
+    // the Stop hook for a plugin that never registered it.
+    const { home, claudeDir } = await makeClaudeHome('gsd-standdown-partial-');
+    const project = await mkdtemp(join(tmpdir(), 'gsd-standdown-partialproj-'));
+    try {
+      await markPluginInstalled(claudeDir, { manifest: 'sessionstart-only' });
+      await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
+      assert.equal(existsSync(ranMarker(claudeDir)), false,
+        'SessionStart is declared, so this copy stands down');
+
+      await mkdir(join(project, '.gsd'), { recursive: true });
+      await writeFile(join(project, '.gsd', 'state.json'), JSON.stringify({
+        project: 'demo', workflow_mode: 'executing_task', current_phase: 1, phases: [],
+      }));
+      await runHook('gsd-session-stop.cjs', userHooks(claudeDir), claudeDir, { project });
+      assert.equal(existsSync(join(project, '.gsd', '.session-end')), true,
+        'Stop is NOT declared, so this copy must still run');
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  for (const [value, shouldRun, label] of [
+    [true, false, 'boolean true'],
+    ['false', true, 'the string "false"'],
+    [0, true, 'the number 0'],
+  ]) {
+    it(`treats enabledPlugins ${label} the way Claude Code does`, async () => {
+      // Claude Code reports a plugin with the string "false" as disabled, and a
+      // disabled plugin loads no hooks. `=== false` is the one comparison that
+      // lets a wrong-typed value through as enabled — straight to zero hooks.
+      const { home, claudeDir } = await makeClaudeHome('gsd-standdown-enabled-');
+      try {
+        await markPluginInstalled(claudeDir);
+        await writeFile(join(claudeDir, 'settings.json'),
+          JSON.stringify({ enabledPlugins: { 'gsd@gsd': value } }));
+        await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
+        assert.equal(existsSync(ranMarker(claudeDir)), shouldRun,
+          `enabledPlugins ${JSON.stringify(value)}: should run = ${shouldRun}`);
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('stands down for the plugin installed from another marketplace', async () => {
+    // The registry id is marketplace-qualified. A fork or mirror installs as
+    // gsd@<other>, and matching only gsd@gsd would run both copies.
+    const { home, claudeDir } = await makeClaudeHome('gsd-standdown-mirror-');
+    try {
+      await markPluginInstalled(claudeDir, { id: 'gsd@gsdmirror' });
+      await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
+      assert.equal(existsSync(ranMarker(claudeDir)), false,
+        'gsd@gsdmirror serves the same hooks, so this copy stands down');
+    } finally {
+      await rm(home, { recursive: true, force: true });
     }
   });
 

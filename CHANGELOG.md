@@ -35,11 +35,21 @@ still runs after `/plugin uninstall`, so removing it left a complete npx
 install on disk with nothing registered, nothing able to notice, and no
 message saying so.
 
+**If you installed with npx before adding the plugin, run `npx gsd-lite install`
+once after upgrading.** A 0.9.0-era `~/.claude/hooks/*.cjs` has no stand-down
+check yet and fires alongside the plugin's copy. The auto-updater refreshes
+those scripts on its own for most people, but one ordering — an old npx install
+run *after* the plugin was added — leaves auto-update in notify-only mode, so
+nothing refreshes them. One command settles it either way.
+
 Seeing `Hooks (3)` from `claude plugin details gsd` *and* three entries in
 `settings.json` is correct, not a double registration — only one of the two
-copies executes. If your `~/.claude/hooks/*.cjs` are still from 0.9.0 they have
-no stand-down check yet and will fire alongside the plugin until the next
-update refreshes them; `npx gsd-lite install` ends it immediately.
+copies executes.
+
+`claude plugin details` reports `MCP servers (0)` for this version. That is a
+display limitation of the CLI, which counts only a root `.mcp.json` and not an
+inline declaration in `plugin.json`; `claude plugin list --json` reports the
+server correctly and it connects normally.
 
 To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
 0.9.0 and skip the update.

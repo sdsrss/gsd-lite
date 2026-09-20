@@ -33,13 +33,15 @@ function loadRemoveHookEntry() {
 }
 const settingsPath = path.join(claudeDir, 'settings.json');
 
-// Stand down when the plugin's own copy of this hook is the live registration.
-// Both are registered on purpose — see pluginServesHooks in lib/hook-registry.cjs
-// for why removing one is the wrong fix. Guarded: if the helper is missing we
-// run, because running twice is visible and running never is not.
+// Stand down when the plugin's own copy of this hook is the live registration —
+// which means installed, enabled, AND actually declaring SessionStart in its
+// hooks/hooks.json. Both copies are registered on purpose; see pluginServesHooks
+// in lib/hook-registry.cjs for why removing one is the wrong fix. Guarded: if
+// the helper is missing we run, because running twice is visible and running
+// never is not.
 try {
   const { pluginServesHooks } = require('./lib/hook-registry.cjs');
-  if (pluginServesHooks(claudeDir, __dirname)) process.exit(0);
+  if (pluginServesHooks(claudeDir, __dirname, 'SessionStart')) process.exit(0);
 } catch { /* helper absent — carry on */ }
 
 // ── Phase 0: Orphan self-cleanup ──
