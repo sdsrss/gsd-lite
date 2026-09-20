@@ -121,27 +121,33 @@ async function applyRecovery(state, basePath, recovery) {
   // accepted, so that loop had no exit. Refusing here is the loud failure; the
   // false success was the quiet one.
   if (recovery === 'skip_failed') {
-    // Scoped to the CURRENT phase, not the whole plan. The first version of this
-    // guard asked "is there work left anywhere", which made it inert for every
-    // project with more than one phase: a pending task in phase 2 satisfied it
-    // while changing nothing about phase 1, and the silent no-op came straight
-    // back. The stranding is per-phase — resumeExecutingTask only ever looks at
-    // getCurrentPhase(state), and the handoff gate in crud.js counts a `failed`
-    // task as not-accepted, so a phase holding one never completes and
+    // Two things this took three tries to get right, so both are written down.
+    //
+    // It is scoped to the CURRENT phase, not the whole plan. Asking "is there
+    // work left anywhere" made the guard inert for every project with more than
+    // one phase: a pending task in phase 2 satisfied it while changing nothing
+    // about phase 1. The stranding is per-phase — resumeExecutingTask only ever
+    // looks at getCurrentPhase(state), and the handoff gate in crud.js counts a
+    // `failed` task as not-accepted, so a phase holding one never completes and
     // current_phase never advances past it. Later-phase work is unreachable, not
     // a reason to proceed.
-    // Ask the question resumeExecutingTask asks, rather than a proxy for it. The
-    // first version of this guard filtered lifecycles — "neither accepted nor
-    // failed" — which is looser than selectRunnableTask in every direction that
-    // matters: a pending task whose `requires` names the failed task, one over
-    // its retry budget, one carrying a blocked_reason. Each satisfied the filter,
-    // none of them can run, and resume went straight back to offering
-    // skip_failed. A dependent of the failed task is the ordinary shape of that,
-    // not an edge case. Using a proxy predicate instead of the consumer's own was
-    // the original bug here; doing it again one level down is still it.
+    //
+    // And the question is "would resume come back offering skip_failed again",
+    // the only loop this guard exists to stop — not "is a task runnable right
+    // now", which is stricter and refused things that worked. selectRunnableTask
+    // has four answers and three of them are somewhere to go: a task to dispatch,
+    // `trigger_review` (the phase review runs on its own), or `awaiting_user`
+    // with blockers — a different, loud state whose remedy is unblock_tasks. Only
+    // the fourth, no task and no mode, is the no-op. A lifecycle filter written
+    // by hand got this wrong in both directions at once: too loose on a task
+    // whose dependency is the failed one, too strict on a blocked sibling. Ask
+    // the consumer's own function; writing a proxy for it was the original bug
+    // here, and rewriting a narrower proxy was the second one.
     const currentPhase = getCurrentPhase(state);
     const selection = currentPhase ? selectRunnableTask(currentPhase, state) : null;
-    const runnableHere = !!selection?.task || selection?.mode === 'trigger_review';
+    const runnableHere = !!selection
+      && selection.error !== true
+      && (!!selection.task || !!selection.mode);
     if (!runnableHere) {
       const strandedElsewhere = phases.some((phase) => phase.id !== currentPhase?.id
         && phase.lifecycle !== 'accepted'
@@ -155,12 +161,17 @@ async function applyRecovery(state, basePath, recovery) {
       return {
         error: true,
         code: ERROR_CODES.TRANSITION_ERROR,
+        // Say which of the three situations this is. "No other work remains" is
+        // true in exactly one of them, and saying it in the other two reads as a
+        // lie to anyone looking at a pending task in phase 2, or at a task that
+        // is only stuck on the dependency that just failed.
         message: `skip_failed cannot proceed: ${skippedTasks.length} task(s) failed in phase ${currentPhase?.id ?? '?'} `
-          + (strandedElsewhere
-            ? 'and nothing else in that phase can run. Later phases still hold work, but the phase cannot be '
-              + 'accepted while these sit there, so that work is unreachable from here. '
-            : 'and no other work remains, so there is nothing to continue with. ')
-          + (stuckHere ? `Blocked here: ${stuckHere}. ` : '')
+          + (stuckHere
+            ? `and nothing else in that phase can run — ${stuckHere}. `
+            : strandedElsewhere
+              ? 'and nothing else in that phase can run. Later phases still hold work, but the phase cannot be '
+                + 'accepted while these sit there, so that work is unreachable from here. '
+              : 'and no other work remains, so there is nothing to continue with. ')
           + 'Use retry_failed to requeue them, or replan to change the plan.',
         failed_tasks: skippedTasks,
         recovery_options: RECOVERY_OPTIONS.filter((o) => o !== 'skip_failed'),

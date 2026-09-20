@@ -348,6 +348,42 @@ describe('resume recovery parameter', () => {
     });
   });
 
+  it('accepts skip_failed when the work left is blocked rather than runnable', async () => {
+    // Third try. Tightening the guard to "is a task runnable right now" was too
+    // strict: a blocked sibling makes selectRunnableTask return awaiting_user
+    // with blockers, which is somewhere to go — a loud state whose remedy is
+    // unblock_tasks. Refusing it was wrong three ways at once: it blocked a path
+    // that worked, it said "no other work remains" with a blocked task sitting
+    // there, and it named retry_failed when unblock_tasks is the fix. The guard
+    // exists to stop resume re-offering skip_failed forever, and it does not
+    // re-offer it here.
+    await withProject('skip-blocked-sibling', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, 'start 1.1');
+      await step(basePath, {
+        current_task: null,
+        phases: [{ id: 1, lifecycle: 'failed', todo: [
+          { id: '1.1', lifecycle: 'failed' },
+          { id: '1.2', lifecycle: 'blocked', blocked_reason: 'waiting on an API key' },
+        ] }],
+      }, 'fail 1.1, block 1.2');
+      await walkModes(basePath, ['failed']);
+
+      const result = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+      assert.ok(!result.error,
+        `skip_failed refused while a blocked task was waiting: ${result.code}: ${result.message}`);
+      assert.equal(result.recovery_applied, 'skip_failed');
+      assert.equal(result.workflow_mode, 'awaiting_user',
+        'the blocked task should now be the thing the workflow is waiting on');
+      assert.ok((result.blockers || []).some(b => b.id === '1.2'),
+        'the response must name the blocked task, since unblock_tasks is the remedy');
+
+      // And the failure still stands on the record — skipping is not accepting.
+      const state = await read({ basePath });
+      assert.equal(state.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'failed');
+    });
+  });
+
   it('refuses skip_failed when the tasks left in the phase are not actually runnable', async () => {
     // Second try at the same bug. Scoping the guard to the current phase was
     // necessary and not sufficient: it still asked "is there a task here that is
