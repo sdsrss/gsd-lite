@@ -17,6 +17,20 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+// Shared with install.js and uninstall.js: edits settings.json hook entries at
+// hook granularity, so a matcher group GSD shares with another tool survives.
+//
+// Loaded lazily and guarded. A require at module scope kills the whole hook
+// when hooks/lib is missing — a partial install, or this file copied on its
+// own — and a SessionStart hook that throws on every session is worse than the
+// duplicate registration it exists to clean up. Callers handle null.
+function loadRemoveHookEntry() {
+  try {
+    return require('./lib/hook-registry.cjs').removeHookEntry;
+  } catch {
+    return null;
+  }
+}
 const settingsPath = path.join(claudeDir, 'settings.json');
 
 // ── Phase 0: Orphan self-cleanup ──
@@ -163,6 +177,7 @@ function cleanupOrphan() {
   } catch { /* best effort */ }
 
   // 2. settings.json — mirror uninstall.js logic.
+  const removeHookEntry = loadRemoveHookEntry();
   try {
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     let changed = false;
@@ -193,17 +208,10 @@ function cleanupOrphan() {
         ['SessionStart', 'gsd-session-init'],
         ['Stop', 'gsd-session-stop'],
       ]) {
-        if (Array.isArray(settings.hooks[hookType])) {
-          const before = settings.hooks[hookType].length;
-          settings.hooks[hookType] = settings.hooks[hookType].filter(e =>
-            !e.hooks?.some(h => h.command?.includes(identifier)));
-          if (settings.hooks[hookType].length < before) changed = true;
-          if (settings.hooks[hookType].length === 0) delete settings.hooks[hookType];
-        } else if (typeof settings.hooks[hookType] === 'string'
-            && settings.hooks[hookType].includes(identifier)) {
-          delete settings.hooks[hookType];
-          changed = true;
-        }
+        // Fourth call site of the same removal. It edits at hook granularity
+        // through the shared helper for the same reason as the other three: a
+        // matcher group GSD shares with another tool is that tool's group too.
+        if (removeHookEntry?.(settings.hooks, hookType, identifier)) changed = true;
       }
     }
     if (changed) atomicWriteJson(settingsPath, settings);
@@ -268,9 +276,9 @@ setTimeout(() => process.exit(0), 4000).unref();
   const runningFromPluginCache =
     !!process.env.CLAUDE_PLUGIN_ROOT ||
     __dirname.startsWith(path.join(claudeDir, 'plugins', 'cache') + path.sep);
-  if (runningFromPluginCache) {
+  const removeHookEntry = loadRemoveHookEntry();
+  if (runningFromPluginCache && removeHookEntry) {
     try {
-      const { removeHookEntry } = require('./lib/hook-registry.cjs');
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       let deduped = false;
       for (const [hookType, identifier] of [
