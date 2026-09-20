@@ -124,6 +124,14 @@ function atomicWrite(filePath, content) {
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
+  // Carry the destination's permissions over. The temp is created 0600 on
+  // purpose — nothing should be able to read a half-written settings.json — but
+  // keeping that mode past the rename silently tightens the user's own file
+  // from 644 to 600 the first time GSD touches it. A file that does not exist
+  // yet keeps 0600.
+  try {
+    fs.chmodSync(tmp, fs.statSync(filePath).mode & 0o777);
+  } catch { /* new file, or stat/chmod unavailable — 0600 stands */ }
   try {
     fs.renameSync(tmp, filePath);
   } catch (err) {

@@ -61,6 +61,41 @@ describe('install and uninstall scripts', () => {
     }
   });
 
+  it("leaves another tool's legacy hooks.StatusLine entry alone", async () => {
+    // A StatusLine key under `hooks` was GSD's own historical mistake, and the
+    // cleanup for it used to delete the key whatever it held. Its two sibling
+    // call sites in uninstall.js and gsd-session-init.cjs both check ownership
+    // first; this is the same class as removing a whole matcher group to get at
+    // one hook in it.
+    const { home, claudeDir } = await makeClaudeHome('gsd-install-foreign-statusline-');
+    try {
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        hooks: { StatusLine: 'node /opt/othertool/statusline.js' },
+      }, null, 2));
+      runScript('install.js', home);
+      const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
+      assert.equal(settings.hooks.StatusLine, 'node /opt/othertool/statusline.js',
+        "another tool's StatusLine hook must survive our legacy cleanup");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('still clears our own legacy hooks.StatusLine entry', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-install-own-statusline-');
+    try {
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        hooks: { StatusLine: 'node /home/x/.claude/hooks/gsd-statusline.cjs' },
+      }, null, 2));
+      runScript('install.js', home);
+      const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
+      assert.equal(settings.hooks.StatusLine, undefined,
+        'our own legacy entry should still be cleaned up');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('preserves existing non-gsd hooks during install', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-install-existing-');
     try {
