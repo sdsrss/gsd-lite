@@ -25,6 +25,47 @@ import {
 export const RECOVERY_OPTIONS = ['retry_failed', 'skip_failed', 'replan'];
 
 /**
+ * The running task resumeExecutingTask would pick back up, or null.
+ *
+ * Pulled out so the scheduler and the recovery guard cannot hold different
+ * opinions about it. They did, and it cost three revisions.
+ */
+function findResumableRunningTask(phase, state) {
+  const running = state.current_task
+    ? getTaskById(phase, state.current_task)
+    : (phase?.todo || []).find((t) => t.lifecycle === 'running');
+  return running?.lifecycle === 'running' ? running : null;
+}
+
+/**
+ * Will resume find anything to do in this phase? The single source of truth.
+ *
+ * resumeExecutingTask asks two questions in order — is a task already running
+ * (it re-dispatches that first), and then what does selectRunnableTask say — and
+ * applyRecovery's skip_failed guard has to reach the same answer or it refuses a
+ * recovery that would have worked. It refused three times, each revision getting
+ * a hand-maintained second opinion wrong in a new place: plan-wide instead of
+ * per-phase, then a lifecycle filter, then selectRunnableTask alone, which is
+ * only the second half of the question and cannot see a `running` sibling at all.
+ *
+ * Worse than refusing: the failed-mode response kept advertising skip_failed
+ * afterwards, so resume offered an option that failed every time — the
+ * advertisement-with-no-handler defect this release exists to close, reappearing
+ * inside the fix for it.
+ *
+ * One function, two callers. The remaining duplication is that resume asks the
+ * question by doing it while this asks by predicting; removing that is tracked
+ * separately.
+ */
+function phaseHasWork(phase, state) {
+  if (!phase) return false;
+  if (findResumableRunningTask(phase, state)) return true;
+  const selection = selectRunnableTask(phase, state);
+  if (!selection || selection.error === true) return false;
+  return !!selection.task || !!selection.mode;
+}
+
+/**
  * Apply a user's recovery decision to a stuck workflow.
  *
  * Called only when resume's own response offered `recovery_options` — see the
@@ -145,10 +186,7 @@ async function applyRecovery(state, basePath, recovery) {
     // here, and rewriting a narrower proxy was the second one.
     const currentPhase = getCurrentPhase(state);
     const selection = currentPhase ? selectRunnableTask(currentPhase, state) : null;
-    const runnableHere = !!selection
-      && selection.error !== true
-      && (!!selection.task || !!selection.mode);
-    if (!runnableHere) {
+    if (!phaseHasWork(currentPhase, state)) {
       const strandedElsewhere = phases.some((phase) => phase.id !== currentPhase?.id
         && phase.lifecycle !== 'accepted'
         && (phase.todo || []).some((t) => t.lifecycle !== 'accepted' && t.lifecycle !== 'failed'));
@@ -290,12 +328,12 @@ async function resumeExecutingTask(state, basePath) {
     };
   }
 
-  // Find the running task — either from current_task or by scanning (orphan recovery)
-  const runningTask = state.current_task
-    ? getTaskById(phase, state.current_task)
-    : (phase.todo || []).find(t => t.lifecycle === 'running');
+  // Find the running task — either from current_task or by scanning (orphan
+  // recovery). Shared with the skip_failed guard so the two cannot disagree
+  // about whether this phase has somewhere to go.
+  const runningTask = findResumableRunningTask(phase, state);
 
-  if (runningTask?.lifecycle === 'running') {
+  if (runningTask) {
     const isRetrying = (runningTask.retry_count || 0) > 0;
     const persistError = await persist(basePath, {
       workflow_mode: 'executing_task',
