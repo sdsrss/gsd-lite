@@ -60,7 +60,8 @@ function pluginServesHooks(claudeDir, scriptDir, hookType) {
     const registry = JSON.parse(
       fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8'),
     );
-    pluginId = Object.keys(registry.plugins ?? {}).find(k => k === 'gsd@gsd' || k.startsWith('gsd@'));
+    const ids = Object.keys(registry.plugins ?? {}).filter(k => k === 'gsd@gsd' || k.startsWith('gsd@'));
+    pluginId = ids.includes('gsd@gsd') ? 'gsd@gsd' : ids[0];
     if (!pluginId) return false;
     const record = registry.plugins[pluginId];
     entry = Array.isArray(record) ? record[0] : record;
@@ -97,17 +98,48 @@ function pluginServesHooks(claudeDir, scriptDir, hookType) {
   // Hooks (0) is the state 0.9.0 shipped in, and back then the settings.json
   // registration is what kept those users working. So check the manifest
   // actually declares the hook we implement, and run whenever it does not.
-  if (!entry.installPath) return false;
+  //
+  // installPath is not reliably the copy that runs: with a marketplace added
+  // from a local directory, Claude Code runs the plugin out of that source
+  // directory and records the cache. So check every manifest we can identify
+  // and stand down only if they all declare the hook — any one of them broken
+  // means the copy that runs might be the broken one.
+  const roots = [entry.installPath];
   try {
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(entry.installPath, 'hooks', 'hooks.json'), 'utf8'),
-    );
-    if (!manifest.hooks?.[hookType]?.length) return false;
+    const source = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+      .extraKnownMarketplaces?.[pluginId.slice(pluginId.indexOf('@') + 1)]?.source;
+    if (source?.path) roots.push(source.path);
+  } catch { /* no marketplace record — installPath is all we have */ }
+
+  let checked = 0;
+  for (const root of roots) {
+    if (!root) continue;
+    const manifestPath = path.join(root, 'hooks', 'hooks.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    if (!declaresHook(manifestPath, hookType)) return false;
+    checked += 1;
+  }
+  return checked > 0;
+}
+
+/**
+ * Does this hooks.json actually register a command for `hookType`?
+ *
+ * Counting matcher groups is not enough: `[{matcher:"*", hooks:[]}]`,
+ * `[{matcher:"*"}]` and a bare string all have a truthy length or pass a
+ * presence test while registering nothing, and `claude plugin details` reports
+ * `Hooks (3)` for some of them — so it is not a usable cross-check either.
+ * Require a command we can see.
+ */
+function declaresHook(manifestPath, hookType) {
+  try {
+    const entries = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).hooks?.[hookType];
+    if (!Array.isArray(entries)) return false;
+    return entries.some(entry =>
+      Array.isArray(entry?.hooks) && entry.hooks.some(h => typeof h?.command === 'string' && h.command.trim()));
   } catch {
     return false;
   }
-
-  return true;
 }
 
 /** realpath when it resolves, the path as given when it does not. */

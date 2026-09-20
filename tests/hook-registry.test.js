@@ -53,6 +53,12 @@ async function markPluginInstalled(claudeDir, { id = 'gsd@gsd', version = '0.10.
     await writeFile(manifestPath, '{ "hooks": { not json');
   } else if (manifest === 'empty') {
     await writeFile(manifestPath, JSON.stringify({ hooks: {} }));
+  } else if (manifest === 'no-commands') {
+    await writeFile(manifestPath, JSON.stringify({ hooks: { SessionStart: [{ matcher: '*', hooks: [] }] } }));
+  } else if (manifest === 'no-hooks-key') {
+    await writeFile(manifestPath, JSON.stringify({ hooks: { SessionStart: [{ matcher: '*' }] } }));
+  } else if (manifest === 'string-value') {
+    await writeFile(manifestPath, JSON.stringify({ hooks: { SessionStart: 'node something.cjs' } }));
   } else if (manifest === 'sessionstart-only') {
     const real = JSON.parse(await readFile(join(PROJECT_ROOT, 'hooks', 'hooks.json'), 'utf-8'));
     await writeFile(manifestPath, JSON.stringify({ hooks: { SessionStart: real.hooks.SessionStart } }));
@@ -323,6 +329,9 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
     ['malformed', 'its hooks.json does not parse'],
     ['missing', 'its hooks.json is absent'],
     ['empty', 'its hooks.json declares no hooks'],
+    ['no-commands', 'its matcher group carries no commands'],
+    ['no-hooks-key', 'its matcher group has no hooks array at all'],
+    ['string-value', 'its hook type holds a bare string'],
   ]) {
     it(`runs when the plugin is installed and enabled but ${label}`, async () => {
       const { home, claudeDir } = await makeClaudeHome('gsd-standdown-broken-');
@@ -384,6 +393,29 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
       }
     });
   }
+
+  it('runs when the marketplace source the plugin runs from is broken', async () => {
+    // A marketplace added from a local directory runs the plugin out of that
+    // source directory while installed_plugins.json records the cache. Checking
+    // only installPath reads a healthy manifest for a copy that is not the one
+    // Claude Code loaded.
+    const { home, claudeDir } = await makeClaudeHome('gsd-standdown-mktsrc-');
+    const source = await mkdtemp(join(tmpdir(), 'gsd-standdown-mktdir-'));
+    try {
+      await markPluginInstalled(claudeDir);           // cache manifest: healthy
+      await mkdir(join(source, 'hooks'), { recursive: true });
+      await writeFile(join(source, 'hooks', 'hooks.json'), '{ broken');
+      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+        extraKnownMarketplaces: { gsd: { source: { source: 'directory', path: source } } },
+      }));
+      await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
+      assert.equal(existsSync(ranMarker(claudeDir)), true,
+        'the copy that actually runs is broken, so this one must not stand down');
+    } finally {
+      await rm(source, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 
   it('stands down for the plugin installed from another marketplace', async () => {
     // The registry id is marketplace-qualified. A fork or mirror installs as
