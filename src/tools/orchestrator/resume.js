@@ -130,13 +130,28 @@ async function applyRecovery(state, basePath, recovery) {
     // task as not-accepted, so a phase holding one never completes and
     // current_phase never advances past it. Later-phase work is unreachable, not
     // a reason to proceed.
+    // Ask the question resumeExecutingTask asks, rather than a proxy for it. The
+    // first version of this guard filtered lifecycles — "neither accepted nor
+    // failed" — which is looser than selectRunnableTask in every direction that
+    // matters: a pending task whose `requires` names the failed task, one over
+    // its retry budget, one carrying a blocked_reason. Each satisfied the filter,
+    // none of them can run, and resume went straight back to offering
+    // skip_failed. A dependent of the failed task is the ordinary shape of that,
+    // not an edge case. Using a proxy predicate instead of the consumer's own was
+    // the original bug here; doing it again one level down is still it.
     const currentPhase = getCurrentPhase(state);
-    const runnableHere = (currentPhase?.todo || [])
-      .some((t) => t.lifecycle !== 'accepted' && t.lifecycle !== 'failed');
+    const selection = currentPhase ? selectRunnableTask(currentPhase, state) : null;
+    const runnableHere = !!selection?.task || selection?.mode === 'trigger_review';
     if (!runnableHere) {
       const strandedElsewhere = phases.some((phase) => phase.id !== currentPhase?.id
         && phase.lifecycle !== 'accepted'
         && (phase.todo || []).some((t) => t.lifecycle !== 'accepted' && t.lifecycle !== 'failed'));
+      // selectRunnableTask already worked out why each task cannot run. Passing
+      // that through turns "cannot proceed" into something the caller can act on
+      // without going to read state.json by hand.
+      const stuckHere = (selection?.diagnostics || [])
+        .map((d) => `${d.id} (${d.reasons.join(', ')})`)
+        .join('; ');
       return {
         error: true,
         code: ERROR_CODES.TRANSITION_ERROR,
@@ -145,6 +160,7 @@ async function applyRecovery(state, basePath, recovery) {
             ? 'and nothing else in that phase can run. Later phases still hold work, but the phase cannot be '
               + 'accepted while these sit there, so that work is unreachable from here. '
             : 'and no other work remains, so there is nothing to continue with. ')
+          + (stuckHere ? `Blocked here: ${stuckHere}. ` : '')
           + 'Use retry_failed to requeue them, or replan to change the plan.',
         failed_tasks: skippedTasks,
         recovery_options: RECOVERY_OPTIONS.filter((o) => o !== 'skip_failed'),

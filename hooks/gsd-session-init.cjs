@@ -18,6 +18,8 @@ const {
   atomicWrite,
   atomicWriteJson,
   atomicWriteThroughLink,
+  readJsonOwned,
+  readThroughLink,
 } = require('./lib/atomic-write.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -330,13 +332,13 @@ setTimeout(() => process.exit(0), 4000).unref();
       const progress = getProgress(state);
       if (progress) {
         // Check for .session-end marker (previous non-graceful exit)
+        // Ours, written by the Stop hook through atomicWrite — so the rename
+        // semantics make a link there an obstruction, and readJsonOwned's refusal
+        // matches the writer. existsSync + readFileSync did not: a FIFO passed
+        // existsSync and then blocked SessionStart forever, which stops the
+        // session from starting at all. The try/catch could never have helped.
         const markerPath = path.join(gsdDir, '.session-end');
-        let sessionEndInfo = null;
-        try {
-          if (fs.existsSync(markerPath)) {
-            sessionEndInfo = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
-          }
-        } catch { /* skip */ }
+        const sessionEndInfo = readJsonOwned(markerPath);
 
         // Everything rendered below comes verbatim from the repo's own
         // .gsd/state.json and .gsd/.session-end. The status block lands in
@@ -404,10 +406,13 @@ setTimeout(() => process.exit(0), 4000).unref();
         // README). The block is idempotent (marker-delimited replace).
         if (!process.env.GSD_NO_CLAUDEMD_STATUS) {
           try {
-            let content = '';
-            try {
-              content = fs.readFileSync(claudeMdPath, 'utf8');
-            } catch { /* file doesn't exist yet — will create */ }
+            // readThroughLink, not readMarker: a symlinked CLAUDE.md is supported
+            // and atomicWriteThroughLink writes through it, so reading one as
+            // absent would make the block below treat '' as the whole file and
+            // write that through the link over the real contents. Following the
+            // link and rejecting only what it lands on keeps read and write
+            // agreeing, and stops a FIFO here from hanging SessionStart.
+            const content = readThroughLink(claudeMdPath) ?? '';
 
             const { begin: beginIdx, end: endIdx } = findStatusBlock(content);
 
@@ -434,8 +439,14 @@ setTimeout(() => process.exit(0), 4000).unref();
       // No active GSD project — clean up stale CLAUDE.md block if it exists
       try {
         const claudeMdPath = path.join(cwd, 'CLAUDE.md');
-        const content = fs.readFileSync(claudeMdPath, 'utf8');
-        const { begin: beginIdx, end: endIdx } = findStatusBlock(content);
+        // Same guard as the write path above, and for the same reason: this is a
+        // repo-controlled path, a FIFO here blocks SessionStart, and the enclosing
+        // catch cannot catch a read that never returns. Absent is a null now, not
+        // an ENOENT to fall out of the block on.
+        const content = readThroughLink(claudeMdPath);
+        const { begin: beginIdx, end: endIdx } = content === null
+          ? { begin: -1, end: -1 }
+          : findStatusBlock(content);
         if (beginIdx !== -1 && endIdx !== -1) {
           // Remove the block, collapsing only the blank lines the removal itself
           // left behind at the splice point — blank runs elsewhere in the file

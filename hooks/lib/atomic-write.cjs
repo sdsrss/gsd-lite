@@ -119,6 +119,33 @@ function readMarker(filePath, encoding = 'utf8') {
  * an exception. Both were live bugs, a release apart. Centralising the check is
  * what stops the next call site from reintroducing either one.
  */
+/**
+ * Read a file that may legitimately BE a symlink, following it — or return null.
+ *
+ * The read counterpart to atomicWriteThroughLink, and it has to be separate from
+ * readMarker because the two kinds of path have opposite link semantics. A marker
+ * file is ours and its writer renames onto it, which replaces a link — so a link
+ * there is an obstruction and readMarker refuses it. A project CLAUDE.md is the
+ * user's: a dotfiles or shared-repo setup symlinks it deliberately,
+ * atomicWriteThroughLink writes through it on purpose, and refusing to READ one
+ * would be worse than not guarding at all. The caller would see empty content,
+ * treat that as the whole file, and write its generated block through the link
+ * over the real contents.
+ *
+ * So stat, which follows the link, and read only if what it lands on is a regular
+ * file. `stat` on a FIFO returns; `open` on one does not, which is the whole
+ * problem. Same lstat/open race caveat as readMarker, and the same reasoning: a
+ * swap loses a read, not a write.
+ */
+function readThroughLink(filePath, encoding = 'utf8') {
+  try {
+    if (!fs.statSync(filePath).isFile()) return null;
+    return fs.readFileSync(filePath, encoding);
+  } catch {
+    return null;
+  }
+}
+
 function readJsonOwned(filePath) {
   const raw = readMarker(filePath);
   if (raw === null) return null;
@@ -173,6 +200,7 @@ function atomicWriteThroughLink(filePath, content, root) {
 module.exports = {
   readMarker,
   readJsonOwned,
+  readThroughLink,
   atomicWrite,
   atomicWriteJson,
   atomicWriteThroughLink,

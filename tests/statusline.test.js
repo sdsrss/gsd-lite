@@ -409,6 +409,41 @@ describe('statusline: non-numeric context percentage', () => {
     }
   });
 
+  // Dropping the try/catch around the state.json block traded a caught TypeError
+  // for a silent one: `phases` present but not an array made `.find` throw, the
+  // outer handler swallowed it, and the throw happened BEFORE the bridge write
+  // and the .context-health write — so a malformed field took out the whole
+  // statusline plus both side effects. .context-health feeds the awaiting_clear
+  // resume gate and the bridge feeds the exhaustion warnings, so the cost of
+  // this is context tracking going quiet, which nothing reports.
+  it('still renders and still writes the bridge when phases is not an array', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-statusline-badphases-'));
+    try {
+      const gsdDir = join(root, '.gsd');
+      await mkdir(gsdDir, { recursive: true });
+      await writeFile(join(gsdDir, 'state.json'), JSON.stringify({
+        schema_version: 'v1', project: 'p', workflow_mode: 'executing_task',
+        current_phase: 1, current_task: '1.1', total_phases: 1, phases: 'oops',
+      }));
+
+      const sid = `badphases-${Date.now()}`;
+      const out = runHook({
+        session_id: sid,
+        model: { display_name: 'Test' },
+        workspace: { current_dir: root },
+        context_window: { remaining_percentage: 44 },
+      }).stdout;
+
+      assert.match(out, /\d+%/, 'the statusline did not render');
+      assert.equal(existsSync(join(tmpdir(), `gsd-ctx-${sid}.json`)), true,
+        'the bridge file was never written, so context warnings are dead for this session');
+      assert.equal(existsSync(join(gsdDir, '.context-health')), true,
+        '.context-health was never written, so the awaiting_clear resume gate has nothing to read');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   // Same failure, one path over. The guard above landed on the marker files and
   // left .gsd/state.json on a bare readFileSync, which a hostile checkout
   // controls just as directly — and the statusline reads it on every render.

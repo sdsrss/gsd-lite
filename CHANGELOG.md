@@ -36,11 +36,15 @@ Minor, not patch: `orchestrator-resume` gains a `recovery` parameter.
 
 `skip_failed` refuses rather than reporting a success it did not achieve. It
 means "leave these failed and get on with the rest", so it needs a rest to get
-on with — and that is decided per phase, not per plan: a phase holding a failed
-task can never be accepted, so `current_phase` never advances past it and work
-sitting in a later phase cannot be reached from there. The refusal says which of
-the two cases you are in, because "no other work remains" would read as wrong to
-anyone looking at a pending phase 2.
+on with, and that question is now asked exactly the way the scheduler asks it.
+Two things it gets right that a looser check did not: the rest has to be in the
+*current* phase, because a phase holding a failed task can never be accepted and
+`current_phase` never advances past it, so later-phase work cannot be reached
+from there; and a task only counts if it can actually run, which a pending task
+whose dependency is the failed one cannot. The refusal tells you which case you
+are in and names what is blocking each remaining task, because "no other work
+remains" reads as wrong to anyone looking at a pending phase 2, and so does
+refusing with no reason given.
 
 `recovery` can no longer be sent alongside `unblock_tasks` or `confirm_review`.
 They are three different ways to resolve a hold, the combination is refused as
@@ -86,18 +90,29 @@ Reads of those files are guarded too. A symlink pointing at a fifo made
 `readFileSync` block forever rather than fail, so a repository shipping one at
 `.gsd/.context-health` hung the statusline on every render — and since the read
 happens before the write decision, no amount of write-side hardening touched
-it. The guard covers `.gsd/state.json` as well, which is read on every render
-and which a checkout controls just as directly; a fifo there hung the statusline
-the same way.
+it. The guard covers every read on a path a checkout controls, not just the one
+that was reported: `.gsd/state.json`, read on every render; `.gsd/.session-end`
+and the project `CLAUDE.md`, both read by SessionStart. Those last two were the
+worse ones — a fifo at either hung the session before it started.
 
-Every one of those reads now goes through a single helper that returns nothing
-unless the file is a regular file that parsed to a plain object. Both halves
-earned their place. `JSON.parse(null)` returns null instead of throwing, so a
-`try`/`catch` around the parse never fires and the caller adopts the null.
-And `typeof [] === 'object'`, so an array planted at the context monitor's
-debounce path in the shared temp directory was adopted as state — assigning the
-counter to it works, `JSON.stringify` drops it again, and the warning was
-suppressed for the rest of the session by a single write of `[]`.
+Two different guards, because the two kinds of path have opposite link
+semantics. Files GSD owns are written by a rename, which replaces a symlink, so
+a link on one is an obstruction and the reader refuses it. A project `CLAUDE.md`
+is yours — a dotfiles or shared-repo setup symlinks it deliberately and the
+writer follows it on purpose — so its reader follows the link too and rejects
+only what the link lands on. Reading that one as absent would have been worse
+than not guarding it: the hook would have treated empty as the whole file and
+written its status block through the link over your contents.
+
+The reads of GSD's own files also go through one helper that returns nothing
+unless the bytes parsed to a plain object. Both halves earned their place.
+`JSON.parse(null)` returns null instead of throwing, so a `try`/`catch` around
+the parse never fires and the caller adopts the null. And `typeof [] ===
+'object'`, so an array planted at the context monitor's debounce path in the
+shared temp directory was adopted as state — assigning the counter to it works,
+`JSON.stringify` drops it again, and the warning was suppressed for the rest of
+the session by a single write of `[]`. That closes the cheapest way to silence
+the context warning, not the whole class: see Known issues below.
 
 Releases are also signed and verified *before* `npm publish` rather than after.
 A signing key that no longer paired with the public key embedded in the client

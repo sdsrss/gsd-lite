@@ -48,8 +48,16 @@ process.stdin.on('end', () => {
     if (state) {
       hasGsd = true;
       if (state.current_task && state.current_phase) {
-        const phase = (state.phases || []).find(p => p.id === state.current_phase);
-        const t = phase?.todo?.find(t => t.id === state.current_task);
+        // Every field here is repo-controlled, and this block no longer sits in a
+        // try/catch — so a `phases` that is present but not an array must not
+        // throw. It used to, and the outer handler caught it: the statusline went
+        // blank AND the bridge and .context-health writes below were skipped,
+        // which takes out the exhaustion warning and the awaiting_clear resume
+        // gate with no sign that anything happened.
+        const phases = Array.isArray(state.phases) ? state.phases : [];
+        const phase = phases.find(p => p?.id === state.current_phase);
+        const todo = Array.isArray(phase?.todo) ? phase.todo : [];
+        const t = todo.find(x => x?.id === state.current_task);
         if (typeof t?.name === 'string') {
           const name = t.name.length > 40 ? t.name.substring(0, 40) + '...' : t.name;
           task = `${t.id} ${name}`;
