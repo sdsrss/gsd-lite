@@ -233,11 +233,12 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       }
     }
 
-    // Guard: reject workflow_mode changes FROM terminal states
+    // Guard: reject workflow_mode changes FROM the terminal state. `failed` used
+    // to be listed here too, which made it unescapable — WORKFLOW_TRANSITIONS now
+    // carries its outgoing edges and is the single gate for them.
     if (updates.workflow_mode) {
       const currentMode = state.workflow_mode;
-      if ((currentMode === 'completed' || currentMode === 'failed')
-          && updates.workflow_mode !== currentMode) {
+      if (currentMode === 'completed' && updates.workflow_mode !== currentMode) {
         return { error: true, code: ERROR_CODES.TERMINAL_STATE, message: `Cannot change workflow_mode from terminal state '${currentMode}'` };
       }
     }
@@ -778,8 +779,10 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
     if (loaded.error) return loaded.error;
     const state = loaded.state;
 
-    // Guard: only allow patching in non-terminal states
-    if (state.workflow_mode === 'completed' || state.workflow_mode === 'failed') {
+    // Guard: only allow patching in non-terminal states. `failed` is patchable on
+    // purpose — `replan` recovery exists to rewrite the plan that failed, and
+    // refusing here left that option with nothing to edit.
+    if (state.workflow_mode === 'completed') {
       return { error: true, code: ERROR_CODES.TERMINAL_STATE, message: `Cannot patch plan in terminal state '${state.workflow_mode}'` };
     }
 

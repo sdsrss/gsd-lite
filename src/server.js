@@ -196,6 +196,11 @@ const TOOLS = [
           enum: ['confirm', 'reject'],
           description: 'Resolve a pending L3 human-confirmation hold: "confirm" accepts the held task(s), "reject" sends them back for rework. Only acts when workflow_mode is awaiting_user with an active human_confirmation review.',
         },
+        recovery: {
+          type: 'string',
+          enum: ['retry_failed', 'skip_failed', 'replan'],
+          description: 'Resolve a held workflow — workflow_mode "failed", or "awaiting_user" carrying a review stage such as review_retry_exhausted. "retry_failed" requeues the failed tasks with a fresh retry budget and clears an exhausted phase-review counter; "skip_failed" leaves them failed and continues with the remaining runnable work; "replan" returns to planning so the plan can be rewritten. These are the same values resume reports in recovery_options.',
+        },
       },
     },
   },

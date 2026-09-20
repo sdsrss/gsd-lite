@@ -18,20 +18,25 @@ export const WORKFLOW_MODES = [
 ];
 
 // Valid workflow_mode transitions — unlisted transitions are rejected by validateStateUpdate.
-// Terminal states (completed, failed) are guarded separately by the FROM-terminal check in state-update.
+// `completed` is the only terminal state; the FROM-terminal check in state-update
+// guards it. `failed` is a hold, not a grave: the debugger routes a whole workflow
+// there on a single `architecture_concern: true`, and with no outgoing edge the
+// only ways out were state-init force:true (which destroys the plan) or editing
+// state.json by hand. The two edges below are what resume's long-advertised
+// recovery_options drive.
 export const WORKFLOW_TRANSITIONS = {
   planning:                 ['executing_task', 'paused_by_user'],
   executing_task:           ['planning', 'reviewing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'failed'],
   reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'failed'],
   reviewing_phase:          ['executing_task', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'completed', 'failed'],
-  awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required'],
+  awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required', 'planning'],
   awaiting_clear:           ['executing_task', 'paused_by_user'],
   paused_by_user:           ['executing_task', 'awaiting_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'reviewing_task', 'reviewing_phase'],
   reconcile_workspace:      ['executing_task', 'paused_by_user'],
   replan_required:          ['executing_task', 'paused_by_user'],
   research_refresh_needed:  ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user'],
   completed:                [],  // terminal — guarded by FROM-terminal check
-  failed:                   [],  // terminal — guarded by FROM-terminal check
+  failed:                   ['executing_task', 'planning'],  // recoverable via resume `recovery`
 };
 
 export const TASK_LIFECYCLE = {
