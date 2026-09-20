@@ -145,6 +145,10 @@ describe('state tools', () => {
     });
 
     it('rejects workflow_mode change from failed to paused_by_user', async () => {
+      // Still rejected, but by WORKFLOW_TRANSITIONS rather than the FROM-terminal
+      // guard: `failed` is a hold with two exits now (executing_task, planning),
+      // not a state nothing leaves. Pausing a failed workflow is not one of them —
+      // there is nothing to resume until a recovery decision is made.
       const dir = await (await import('node:fs/promises')).mkdtemp(join((await import('node:os')).tmpdir(), 'gsd-terminal-'));
       try {
         await init({
@@ -154,11 +158,13 @@ describe('state tools', () => {
         });
         await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: dir });
         await update({ updates: { phases: [{ id: 1, lifecycle: 'failed', todo: [{ id: '1.1', lifecycle: 'failed' }] }] }, basePath: dir });
-        await update({ updates: { workflow_mode: 'failed' }, basePath: dir });
-        // Now try to change to paused_by_user — should be rejected
+        const entered = await update({ updates: { workflow_mode: 'failed' }, basePath: dir });
+        assert.ok(!entered.error, `setup: could not reach failed — ${entered.message}`);
+
         const result = await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
         assert.equal(result.error, true);
-        assert.match(result.message, /terminal state/);
+        assert.match(result.message, /Invalid workflow_mode transition/);
+        assert.equal((await read({ basePath: dir })).workflow_mode, 'failed');
       } finally {
         await (await import('node:fs/promises')).rm(dir, { recursive: true, force: true });
       }

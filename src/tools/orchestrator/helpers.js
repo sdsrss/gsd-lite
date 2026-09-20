@@ -20,7 +20,12 @@ const MAX_PHASE_REVIEW_RETRY = 5;
 // contracts live in agents/*.md (executor/reviewer/researcher/debugger); this
 // duplicate was removed so there is a single source of truth.
 
-function isTerminalWorkflowMode(workflowMode) {
+// Modes in which preflight must not run. `completed` is terminal. `failed` is
+// not terminal any more — it has recovery edges — but it is still held for a
+// user decision, and preflight's overrides (reconcile_workspace, replan_required,
+// research_refresh_needed) are not reachable from it. Running preflight there
+// would only produce a VALIDATION_FAILED on every resume.
+function skipsPreflight(workflowMode) {
   return workflowMode === 'completed' || workflowMode === 'failed';
 }
 
@@ -111,7 +116,7 @@ async function detectPlanDrift(basePath, storedHashes) {
 }
 
 async function evaluatePreflight(state, basePath) {
-  if (isTerminalWorkflowMode(state.workflow_mode)) {
+  if (skipsPreflight(state.workflow_mode)) {
     return { override: null };
   }
 
@@ -420,7 +425,7 @@ export {
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
   MAX_PHASE_REVIEW_RETRY,
-  isTerminalWorkflowMode,
+  skipsPreflight,
   parseTimestamp,
   readContextHealth,
   collectExpiredResearch,

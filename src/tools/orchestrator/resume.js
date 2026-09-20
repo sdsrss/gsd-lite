@@ -18,6 +18,104 @@ import {
   tryAutoUnblock,
 } from './helpers.js';
 
+// The options resume reports in `recovery_options`. This array is the single
+// source for both the advertisement and the accepted values, so the two cannot
+// drift apart again — they were never connected before: nothing read the
+// options back, which made the advertisement the entire feature.
+export const RECOVERY_OPTIONS = ['retry_failed', 'skip_failed', 'replan'];
+
+/**
+ * Apply a user's recovery decision to a stuck workflow.
+ *
+ * Reachable from two places that both mean "this cannot proceed without a
+ * person": workflow_mode `failed`, and an `awaiting_user` hold carrying a
+ * current_review stage. Both used to be dead ends — `failed` had no outgoing
+ * transition, and the review hold was quietly cleared by tryAutoUnblock on the
+ * next resume with the retry counter still climbing.
+ *
+ * - retry_failed: failed tasks return to the queue with a fresh retry budget,
+ *   and a phase held for exhausted review retries gets its counter zeroed. A
+ *   reset that did not happen would send the task straight back over the limit.
+ * - skip_failed: the failures stay on the record and the workflow moves on to
+ *   whatever else can still run. Marking them accepted would be a lie, and the
+ *   phase cannot be accepted while they sit there — which is correct.
+ * - replan: hand the plan back to the planner. state-patch works in `failed`
+ *   now so there is something to edit.
+ */
+async function applyRecovery(state, basePath, recovery) {
+  const phases = state.phases || [];
+
+  if (recovery === 'replan') {
+    const persistError = await persist(basePath, {
+      workflow_mode: 'planning',
+      current_task: null,
+      current_review: null,
+    });
+    if (persistError) return persistError;
+    return {
+      success: true,
+      action: 'recovery_applied',
+      recovery,
+      workflow_mode: 'planning',
+      message: 'Workflow returned to planning. Revise the plan, then resume.',
+    };
+  }
+
+  const phasePatches = [];
+  const retriedTasks = [];
+  const skippedTasks = [];
+
+  for (const phase of phases) {
+    const patch = { id: phase.id };
+    let touched = false;
+
+    if (phase.lifecycle === 'failed') {
+      patch.lifecycle = 'active';
+      touched = true;
+    }
+
+    // A phase parked by review-retry exhaustion carries a counter that is already
+    // at the limit. Clearing the hold without clearing the counter just reruns
+    // the exhaustion on the next review.
+    if (recovery === 'retry_failed' && (phase.phase_review?.retry_count || 0) > 0) {
+      patch.phase_review = { ...phase.phase_review, status: 'pending', retry_count: 0 };
+      touched = true;
+    }
+
+    const failed = (phase.todo || []).filter((t) => t.lifecycle === 'failed');
+    if (failed.length > 0) {
+      if (recovery === 'retry_failed') {
+        patch.todo = failed.map((t) => ({ id: t.id, lifecycle: 'pending', retry_count: 0 }));
+        touched = true;
+        retriedTasks.push(...failed.map((t) => t.id));
+      } else {
+        skippedTasks.push(...failed.map((t) => t.id));
+      }
+    }
+
+    if (touched) phasePatches.push(patch);
+  }
+
+  const persistError = await persist(basePath, {
+    workflow_mode: 'executing_task',
+    current_task: null,
+    current_review: null,
+    ...(phasePatches.length > 0 ? { phases: phasePatches } : {}),
+  });
+  if (persistError) return persistError;
+
+  return {
+    success: true,
+    action: 'recovery_applied',
+    recovery,
+    workflow_mode: 'executing_task',
+    ...(recovery === 'retry_failed' ? { retried_tasks: retriedTasks } : { skipped_tasks: skippedTasks }),
+    message: recovery === 'retry_failed'
+      ? `Recovery applied: ${retriedTasks.length} task(s) requeued with a fresh retry budget.`
+      : `Recovery applied: ${skippedTasks.length} task(s) left failed; continuing with the remaining work.`,
+  };
+}
+
 /**
  * Build a compact display-ready summary from state and response.
  * Included in every successful resumeWorkflow response to avoid redundant state reads.
@@ -272,7 +370,7 @@ async function resumeExecutingTask(state, basePath) {
         last_failure_summary: t.last_failure_summary || null,
         debug_context: t.debug_context || null,
       })),
-      recovery_options: ['retry_failed', 'skip_failed', 'replan'],
+      recovery_options: RECOVERY_OPTIONS,
       message: `Phase ${phase.id} has ${failedTasks.length} failed task(s) and no runnable work; a recovery decision is required.`,
     };
   }
@@ -292,7 +390,7 @@ async function resumeExecutingTask(state, basePath) {
   };
 }
 
-export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks, confirm_review } = {}) {
+export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks, confirm_review, recovery } = {}) {
   if (_depth >= MAX_RESUME_DEPTH) {
     return { error: true, message: `resumeWorkflow recursive depth limit exceeded (max ${MAX_RESUME_DEPTH})` };
   }
@@ -368,6 +466,42 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
         unblocked: patches.map(p => p.id),
         ...(skipped.length > 0 ? { unblock_skipped: skipped } : {}),
       };
+    }
+  }
+
+  // Apply a recovery decision before preflight, for the same reason confirm_review
+  // runs here: preflight persists a workflow_mode of its own, and it must not get
+  // to overwrite a state the user has just resolved.
+  if (recovery !== undefined && recovery !== null) {
+    if (!RECOVERY_OPTIONS.includes(recovery)) {
+      return {
+        error: true,
+        code: ERROR_CODES.INVALID_INPUT,
+        message: `recovery must be one of ${RECOVERY_OPTIONS.join(', ')} (got ${JSON.stringify(recovery)})`,
+      };
+    }
+    // `human_confirmation` is deliberately NOT recoverable this way. It is the
+    // L3 sign-off gate (audit R-03/H3) and has its own channel in confirm_review;
+    // letting the generic door clear it would accept an L3 task with no human
+    // saying yes, which is the exact failure the gate exists to prevent.
+    const stage = state.current_review?.stage;
+    const held = state.workflow_mode === 'failed'
+      || (state.workflow_mode === 'awaiting_user' && !!stage && stage !== 'human_confirmation');
+    if (!held) {
+      return {
+        error: true,
+        code: ERROR_CODES.TRANSITION_ERROR,
+        message: stage === 'human_confirmation'
+          ? 'An L3 human-confirmation hold is resolved with confirm_review: "confirm" or "reject", not recovery.'
+          : `recovery is only accepted while the workflow is held (workflow_mode 'failed', or 'awaiting_user' with an active review); current mode is '${state.workflow_mode}'`,
+      };
+    }
+    if (_depth === 0) {
+      const applied = await applyRecovery(state, basePath, recovery);
+      if (applied.error) return applied;
+      const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
+      if (resumed.error) return resumed;
+      return { ...resumed, recovery_applied: recovery };
     }
   }
 
@@ -474,6 +608,28 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
             blockers: [],
             current_review: state.current_review,
             message: 'Direction drift detected; user decision is required before execution can continue',
+          };
+          break;
+        }
+
+        // Any other named stage is still a hold. Only two were recognised above,
+        // so everything else — `review_retry_exhausted` most importantly — fell
+        // into tryAutoUnblock, which finds no blocked task, writes the mode back
+        // to executing_task and recurses. The phase goes straight back into the
+        // review it just failed for the fifth time, with retry_count still
+        // climbing, and "user intervention required" never required anything.
+        // Treating the whole class as a hold also means a stage added later
+        // cannot be silently cleared by a resume that has not been taught it.
+        if (state.current_review?.stage) {
+          result = {
+            success: true,
+            action: 'await_manual_intervention',
+            workflow_mode: 'awaiting_user',
+            phase_id: state.current_review.scope_id ?? state.current_phase,
+            current_review: state.current_review,
+            recovery_options: RECOVERY_OPTIONS,
+            message: `Workflow is held at review stage '${state.current_review.stage}' and needs a user decision. `
+              + `Resolve it by resuming with one of: ${RECOVERY_OPTIONS.join(', ')}.`,
           };
           break;
         }
@@ -596,7 +752,7 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
           workflow_mode: state.workflow_mode,
           failed_phases: failedPhases,
           failed_tasks: failedTasks,
-          recovery_options: ['retry_failed', 'skip_failed', 'replan'],
+          recovery_options: RECOVERY_OPTIONS,
           message: 'Workflow is in failed state. Recovery options available.',
         };
         break;
