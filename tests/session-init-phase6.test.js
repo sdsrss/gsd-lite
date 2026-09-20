@@ -25,7 +25,7 @@ async function setupEnv(root, stateOverrides = {}, claudeMdContent = '') {
   for (const f of ['gsd-session-init.cjs', 'gsd-statusline.cjs', 'gsd-auto-update.cjs']) {
     cpSync(join(HOOKS_DIR, f), join(pluginRoot, 'hooks', f));
   }
-  cpSync(join(HOOKS_DIR, 'lib', 'gsd-finder.cjs'), join(pluginRoot, 'hooks', 'lib', 'gsd-finder.cjs'));
+  cpSync(join(HOOKS_DIR, 'lib'), join(pluginRoot, 'hooks', 'lib'), { recursive: true });
 
   // Write state.json
   const state = {
@@ -301,7 +301,7 @@ describe('session init Phase 6: stale block removal touches only the splice poin
       const pluginRoot = join(root, 'plugin');
       await mkdir(join(pluginRoot, 'hooks', 'lib'), { recursive: true });
       cpSync(join(HOOKS_DIR, 'gsd-session-init.cjs'), join(pluginRoot, 'hooks', 'gsd-session-init.cjs'));
-      cpSync(join(HOOKS_DIR, 'lib', 'gsd-finder.cjs'), join(pluginRoot, 'hooks', 'lib', 'gsd-finder.cjs'));
+      cpSync(join(HOOKS_DIR, 'lib'), join(pluginRoot, 'hooks', 'lib'), { recursive: true });
       runSessionInit(projectDir, pluginRoot, home);
       runSessionInit(projectDir, pluginRoot, home); // idempotent
       return readFileSync(join(projectDir, 'CLAUDE.md'), 'utf8');

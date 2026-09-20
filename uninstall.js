@@ -98,7 +98,7 @@ export function main() {
   const hookLibDir = join(CLAUDE_DIR, 'hooks', 'lib');
   if (existsSync(hookLibDir)) {
     // Only remove GSD-owned files, not other plugins' libs
-    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs']) {
+    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs']) {
       const fullPath = join(hookLibDir, libFile);
       if (existsSync(fullPath)) {
         rmSync(fullPath);

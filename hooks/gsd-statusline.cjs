@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { findGsdDir } = require('./lib/gsd-finder.cjs');
+const { atomicWriteMarker } = require('./lib/atomic-write.cjs');
 
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
@@ -71,24 +72,19 @@ process.stdin.on('end', () => {
             if (existing.remaining_percentage === remaining && existing.has_gsd === hasGsd) needsWrite = false;
           } catch { /* no existing file */ }
           if (needsWrite) {
-            // R-23: unique tmp name (pid+timestamp) so concurrent statusline
-            // processes don't race on a shared `.tmp` and corrupt the bridge —
-            // matches the atomic-write naming used across the codebase (utils.js).
-            const tmpBridge = `${bridgePath}.${process.pid}-${Date.now()}.tmp`;
-            try {
-              fs.writeFileSync(tmpBridge, JSON.stringify({
-                session_id: session,
-                remaining_percentage: remaining,
-                used_pct: used,
-                has_gsd: hasGsd,
-                timestamp: Math.floor(Date.now() / 1000),
-              }));
-              fs.renameSync(tmpBridge, bridgePath);
-            } catch (writeErr) {
-              // Unique tmp names don't self-overwrite, so clean up on failure.
-              try { fs.unlinkSync(tmpBridge); } catch { /* ignore */ }
-              throw writeErr;
-            }
+            // R-23 made the tmp name unique (pid+timestamp) so concurrent
+            // statusline processes would not race on a shared `.tmp`. Unique is
+            // not the same as unguessable: os.tmpdir() is world-writable on a
+            // shared host, and both components are derivable, so another local
+            // user could plant a symlink and have writeFileSync follow it.
+            // atomicWriteMarker adds the random suffix and the O_EXCL open.
+            atomicWriteMarker(bridgePath, JSON.stringify({
+              session_id: session,
+              remaining_percentage: remaining,
+              used_pct: used,
+              has_gsd: hasGsd,
+              timestamp: Math.floor(Date.now() / 1000),
+            }));
           }
         } catch (e) {
           if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: bridge write failed: ${e.message}\n`);
@@ -106,10 +102,12 @@ process.stdin.on('end', () => {
             if (current === String(remaining)) needsHealthWrite = false;
           } catch { /* file doesn't exist yet */ }
           if (needsHealthWrite) {
+            // Same predictable-temp problem as the bridge above, but inside
+            // `.gsd/`, which a cloned repository controls outright. The refusal
+            // on a symlinked .context-health also protects the readFileSync a
+            // few lines up, which would otherwise resolve the link.
             fs.mkdirSync(gsdDir, { recursive: true });
-            const tmpHealth = path.join(gsdDir, `.context-health.${process.pid}-${Date.now()}.tmp`);
-            fs.writeFileSync(tmpHealth, String(remaining));
-            fs.renameSync(tmpHealth, healthPath);
+            atomicWriteMarker(healthPath, String(remaining));
           }
         } catch (e) {
           if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: context-health write failed: ${e.message}\n`);
