@@ -165,16 +165,15 @@ describe('Driven plugin E2E: /plugin install → MCP tools → statusLine', { ti
     assert.ok(installOutput.includes('installed successfully'), 'installer reports success');
   });
 
-  it('wires statusLine only, leaving all 3 hook types to the plugin hooks.json', () => {
-    // statusLine is a top-level settings.json key that a plugin cannot write,
-    // so install.js still owns it. The three hooks are the opposite case: the
-    // plugin system loads them from the cache, so registering them here as well
-    // would run each one twice per event.
+  it('wires statusLine + all 3 hook types, and the cache hooks.json declares them too', () => {
+    // Both registrations exist on purpose. The ~/.claude/hooks copies stand
+    // down while the plugin's are live, so nothing fires twice; and because
+    // they are still registered, GSD keeps working after `/plugin uninstall`.
     assert.ok(settings.statusLine?.command?.includes('gsd-statusline'), 'statusLine registered');
     const hasHook = (t, id) => settings.hooks?.[t]?.some(e => e.hooks?.some(h => h.command?.includes(id)));
-    assert.ok(!hasHook('SessionStart', 'gsd-session-init'), 'SessionStart not duplicated in settings.json');
-    assert.ok(!hasHook('PostToolUse', 'gsd-context-monitor'), 'PostToolUse not duplicated in settings.json');
-    assert.ok(!hasHook('Stop', 'gsd-session-stop'), 'Stop not duplicated in settings.json');
+    assert.ok(hasHook('SessionStart', 'gsd-session-init'), 'SessionStart wired in settings.json');
+    assert.ok(hasHook('PostToolUse', 'gsd-context-monitor'), 'PostToolUse wired in settings.json');
+    assert.ok(hasHook('Stop', 'gsd-session-stop'), 'Stop wired in settings.json');
 
     const cacheHooks = JSON.parse(readFileSync(join(cacheRoot, 'hooks', 'hooks.json'), 'utf8'));
     for (const [type, id] of [['SessionStart', 'gsd-session-init'], ['PostToolUse', 'gsd-context-monitor'], ['Stop', 'gsd-session-stop']]) {

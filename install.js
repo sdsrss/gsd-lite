@@ -12,7 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const _require = createRequire(import.meta.url);
 const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
-const { removeHookEntry, upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
+const { upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -22,12 +22,11 @@ const HOOK_FILES = ['gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-context-
 
 // Hook registration config: hookType → { file identifier, matcher, timeout? }
 //
-// Plugin installs do NOT use this: the plugin system loads hooks/hooks.json out
-// of the plugin cache instead, and a settings.json copy alongside it would fire
-// every hook twice. hooks/hooks.json must therefore declare the same three
-// hooks with the same matchers and timeouts — tests/plugin-manifest.test.js pins
-// that, and the plugin branch below deregisters any settings.json entry an
-// earlier npx/manual install left behind.
+// hooks/hooks.json declares the same three hooks for plugin installs and must
+// stay in sync with this list — tests/plugin-manifest.test.js pins matcher and
+// timeout across the two. Both registrations can be live at once: the copies
+// under ~/.claude/hooks stand down while the plugin's are serving, so nothing
+// fires twice and nothing has to be deleted to achieve that.
 export const HOOK_REGISTRY = [
   { hookType: 'SessionStart', identifier: 'gsd-session-init', matcher: 'startup|clear|compact', timeout: 5 },
   { hookType: 'PostToolUse', identifier: 'gsd-context-monitor', matcher: '*' },
@@ -90,20 +89,6 @@ function registerHookEntry(hooks, { hookType, identifier, matcher, timeout }) {
   });
   if (!registered) log(`  ! Preserved existing ${hookType} hook`);
   return registered;
-}
-
-/**
- * Drop a previously registered GSD hook entry from settings.json.
- *
- * Used only on the plugin path, where hooks/hooks.json in the plugin cache is
- * the live registration: an entry left here by an earlier npx/manual install
- * would run the same hook a second time on every event.
- *
- * Returns true only when an entry was actually removed, so the caller reports
- * what happened rather than inferring it from having reached this line.
- */
-function unregisterHookEntry(hooks, { hookType, identifier }) {
-  return removeHookEntry(hooks, hookType, identifier);
 }
 
 /**
@@ -358,24 +343,21 @@ export function main() {
     const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
     let statusLineRegistered = registerStatusLine(settings, statuslinePath);
 
-    // Hooks are registered in exactly one place, chosen by install method.
-    // Plugin installs are served by hooks/hooks.json inside the plugin cache, so
-    // writing them here too would fire every hook twice per event; npx/manual
-    // installs have no plugin cache, so settings.json is the only route. Either
-    // way, deregister the other path's leftovers — a user who moves between
-    // install methods otherwise accumulates one live copy and one stale one.
+    // Register hooks here whatever the install method, including when the
+    // plugin is also present. That looks like it would double-fire, and the
+    // hooks themselves are what prevent it: the copies under ~/.claude/hooks
+    // stand down while the plugin's own registration is live (pluginServesHooks
+    // in hooks/lib/hook-registry.cjs).
+    //
+    // Deregistering here instead — which this installer did briefly — strands
+    // the user. The settings.json registration is the only GSD code that still
+    // runs after `/plugin uninstall`, since the plugin's hooks stop loading with
+    // it. Remove that and a complete npx install sits on disk with nothing
+    // registered anywhere, nothing able to notice, and no message saying so.
     let hooksRegistered = false;
-    let hooksUnregistered = 0;
     if (!settings.hooks) settings.hooks = {};
     for (const config of HOOK_REGISTRY) {
-      if (isPluginInstall) {
-        if (unregisterHookEntry(settings.hooks, config)) hooksUnregistered += 1;
-      } else if (registerHookEntry(settings.hooks, config)) {
-        hooksRegistered = true;
-      }
-    }
-    if (hooksUnregistered > 0) {
-      log(`  ✓ Removed ${hooksUnregistered} settings.json hook entr${hooksUnregistered === 1 ? 'y' : 'ies'} (plugin hooks.json handles registration)`);
+      if (registerHookEntry(settings.hooks, config)) hooksRegistered = true;
     }
 
     const tmpSettings = settingsPath + `.${process.pid}-${Date.now()}.tmp`;

@@ -12,6 +12,61 @@
 
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+
+/**
+ * Should this copy of a GSD hook stand down because the plugin is serving it?
+ *
+ * Both install paths register the same three hooks: the plugin system loads
+ * hooks/hooks.json out of the plugin cache, and install.js writes settings.json.
+ * A user who has both gets every hook twice, from two different versions.
+ *
+ * The obvious fix — delete one registration — is wrong here, and this comment
+ * is the reason. After `/plugin uninstall` the plugin's hooks stop loading, so
+ * the settings.json registration is the only GSD code that still runs. Anything
+ * that removed it also removed the only execution that could ever notice and
+ * repair the state, stranding a complete npx install on disk with nothing
+ * registered anywhere and no message saying so. So neither registration is
+ * removed; the redundant one stands down while the other is live, and comes
+ * straight back when it isn't.
+ *
+ * Suppression is deliberately conservative: anything unreadable or ambiguous
+ * returns false. Running twice is a visible annoyance; running zero times is
+ * silent, and silence is the failure mode with no feedback loop.
+ *
+ * @param {string} claudeDir  resolved CLAUDE_CONFIG_DIR / ~/.claude
+ * @param {string} scriptDir  the calling hook's __dirname
+ */
+function pluginServesHooks(claudeDir, scriptDir) {
+  // We ARE the plugin's copy — we are the live registration, never stand down.
+  if (process.env.CLAUDE_PLUGIN_ROOT) return false;
+  if (scriptDir?.startsWith(path.join(claudeDir, 'plugins', 'cache') + path.sep)) {
+    return false;
+  }
+
+  // We are the ~/.claude/hooks copy an npx/manual install wrote.
+  let installed = false;
+  try {
+    const registry = JSON.parse(
+      fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8'),
+    );
+    installed = !!registry.plugins?.['gsd@gsd'];
+  } catch {
+    return false; // no registry, or unreadable — we are all there is
+  }
+  if (!installed) return false;
+
+  // Installed but disabled means hooks.json is not loaded, so we are still the
+  // only registration. Only an explicit false disables — a missing key is on.
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'));
+    if (settings.enabledPlugins?.['gsd@gsd'] === false) return false;
+  } catch { /* unreadable settings — treat the plugin as enabled */ }
+
+  return true;
+}
+
 /** Hook identifiers GSD owns, current and legacy. */
 const GSD_HOOK_IDENTIFIERS = Object.freeze([
   'gsd-session-init',
@@ -91,4 +146,4 @@ function upsertHookEntry(hooks, { hookType, identifier, matcher, command, timeou
   return true;
 }
 
-module.exports = { GSD_HOOK_IDENTIFIERS, removeHookEntry, upsertHookEntry };
+module.exports = { GSD_HOOK_IDENTIFIERS, pluginServesHooks, removeHookEntry, upsertHookEntry };

@@ -1,22 +1,24 @@
 // Editing settings.json hooks without destroying other tools' hooks.
 //
 // Claude Code groups hooks by matcher, and several tools routinely share a
-// group. Three call sites — install.js registering, install.js deregistering on
-// the plugin path, uninstall.js removing — each edited at GROUP granularity and
-// each silently deleted any co-located hook. They now share
+// group. Four call sites — install.js registering, uninstall.js removing, and
+// the orphan cleanup inside gsd-session-init.cjs — each edited at GROUP
+// granularity and each silently deleted any co-located hook. They now share
 // hooks/lib/hook-registry.cjs; these tests pin the shared behaviour and then
-// re-check it through all three call sites, because a correct helper that one
-// call site bypasses is not a fix.
+// re-check it through the call sites, because a correct helper that one call
+// site bypasses is not a fix.
 //
-// The second half covers the duplicate-registration case the plugin path
-// creates: a user who ran `npx gsd-lite install` and then installed the plugin
-// has both registrations live and every hook fires twice.
+// The second half covers the duplicate-registration case: a user who ran
+// `npx gsd-lite install` and then installed the plugin has both registrations.
+// Neither is deleted — the redundant copy stands down instead, because the
+// settings.json registration is the only GSD code that survives a
+// `/plugin uninstall` and removing it strands the user silently.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { cpSync } from 'node:fs';
+import { cpSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -119,7 +121,7 @@ describe('hook-registry: edits at hook granularity, not matcher-group granularit
 });
 
 describe('hook-registry: every call site goes through it', () => {
-  it('install.js on the plugin path removes ours and keeps the other tool\'s', async () => {
+  it('install.js keeps the other tool\'s hook when refreshing ours', async () => {
     const { home, claudeDir } = await makeClaudeHome('gsd-hookreg-install-');
     try {
       await markPluginInstalled(claudeDir);
@@ -132,8 +134,8 @@ describe('hook-registry: every call site goes through it', () => {
       const settings = await readSettings(claudeDir);
       const commands = (settings.hooks?.PostToolUse || []).flatMap(e => e.hooks.map(h => h.command));
       assert.ok(commands.includes(FOREIGN.command), '/opt/othertool/audit.js must survive');
-      assert.ok(!commands.some(c => c.includes('gsd-context-monitor')),
-        'our entry is served by the plugin hooks.json and must not remain here');
+      assert.equal(commands.filter(c => c.includes('gsd-context-monitor')).length, 1,
+        'ours is refreshed exactly once, not duplicated and not dropped');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -191,81 +193,117 @@ describe('every hooks/lib file is on the uninstall list', () => {
   });
 });
 
-describe('plugin-path session removes duplicate settings.json registrations', () => {
-  /**
-   * Stage a cache copy of the plugin's hooks and run gsd-session-init.cjs from
-   * it, which is what the plugin system does. `from` picks whether the hook
-   * runs as the plugin's copy or as an npx install's ~/.claude/hooks copy.
-   */
-  async function runSessionInit(claudeDir, from) {
-    const hookDir = from === 'plugin'
-      ? join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd', '0.10.0', 'hooks')
-      : join(claudeDir, 'hooks');
-    await mkdir(hookDir, { recursive: true });
-    for (const item of ['gsd-session-init.cjs', 'lib']) {
-      cpSync(join(PROJECT_ROOT, 'hooks', item), join(hookDir, item), { recursive: true });
+describe('the ~/.claude/hooks copies stand down while the plugin serves', () => {
+  // Both install paths register the same three hooks. Rather than deleting one
+  // registration — which strands the user, because the settings.json one is the
+  // only GSD code that survives `/plugin uninstall` — the redundant copy exits
+  // early. Each hook carries its own guard, so each is checked here: covering
+  // two of three is how this class of bug keeps coming back.
+
+  /** Stage a hook plus lib/ at `dir` and run it; returns {stdout, cwd}. */
+  async function runHook(script, dir, claudeDir, { project } = {}) {
+    await mkdir(dir, { recursive: true });
+    for (const item of [script, 'lib']) {
+      cpSync(join(PROJECT_ROOT, 'hooks', item), join(dir, item), { recursive: true });
     }
-    const cwd = await mkdtemp(join(tmpdir(), 'gsd-hookreg-proj-'));
+    const cwd = project || await mkdtemp(join(tmpdir(), 'gsd-standdown-proj-'));
     try {
-      execFileSync('node', [join(hookDir, 'gsd-session-init.cjs')], {
+      const stdout = execFileSync('node', [join(dir, script)], {
         cwd,
-        // CLAUDE_PLUGIN_ROOT deliberately unset: the path check has to carry
-        // this on its own, so the fix does not rest on an env var we cannot
-        // verify from a test.
         env: { ...process.env, HOME: join(claudeDir, '..'), CLAUDE_CONFIG_DIR: claudeDir, CLAUDE_PLUGIN_ROOT: '' },
         encoding: 'utf-8',
         timeout: 30000,
+        input: JSON.stringify({ session_id: 'standdown-session' }),
       });
+      return { stdout };
     } finally {
-      await rm(cwd, { recursive: true, force: true });
+      if (!project) await rm(cwd, { recursive: true, force: true });
     }
   }
 
-  const duplicatedSettings = () => ({
-    hooks: {
-      SessionStart: [{ matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: 'node "/home/x/.claude/hooks/gsd-session-init.cjs"' }] }],
-      PostToolUse: [{ matcher: '*', hooks: [FOREIGN, OURS] }],
-      Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'node "/home/x/.claude/hooks/gsd-session-stop.cjs"' }] }],
-    },
-  });
+  const userHooks = (claudeDir) => join(claudeDir, 'hooks');
+  const cacheHooks = (claudeDir) => join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd', '0.10.0', 'hooks');
+  const ranMarker = (claudeDir) => join(claudeDir, 'gsd', 'runtime', 'last-cleanup');
 
-  it('clears the npx-era entries when the hook runs from the plugin cache', async () => {
-    const { home, claudeDir } = await makeClaudeHome('gsd-hookreg-dedupe-');
+  for (const [label, setup, shouldRun] of [
+    ['plugin installed and enabled', async (d) => { await markPluginInstalled(d); }, false],
+    ['no plugin installed', async () => {}, true],
+    ['plugin installed but disabled', async (d) => {
+      await markPluginInstalled(d);
+      await writeFile(join(d, 'settings.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
+    }, true],
+    ['plugin registry unreadable', async (d) => {
+      await mkdir(join(d, 'plugins'), { recursive: true });
+      await writeFile(join(d, 'plugins', 'installed_plugins.json'), '{ not json');
+    }, true],
+  ]) {
+    it(`session-init from ~/.claude/hooks ${shouldRun ? 'runs' : 'stands down'} — ${label}`, async () => {
+      const { home, claudeDir } = await makeClaudeHome('gsd-standdown-init-');
+      try {
+        await setup(claudeDir);
+        await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
+        assert.equal(existsSync(ranMarker(claudeDir)), shouldRun,
+          shouldRun
+            ? 'this copy is the only registration there is — it must run'
+            : "the plugin's copy is live; running here would fire the hook twice");
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('session-init from the plugin cache always runs', async () => {
+    const { home, claudeDir } = await makeClaudeHome('gsd-standdown-cache-');
     try {
       await markPluginInstalled(claudeDir);
-      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify(duplicatedSettings(), null, 2));
-
-      await runSessionInit(claudeDir, 'plugin');
-
-      const settings = await readSettings(claudeDir);
-      const entries = Object.values(settings.hooks || {}).flat();
-      const commands = entries.flatMap(e => (Array.isArray(e?.hooks) ? e.hooks.map(h => h.command) : []));
-      for (const id of ['gsd-session-init', 'gsd-context-monitor', 'gsd-session-stop']) {
-        assert.ok(!commands.some(c => c.includes(id)),
-          `${id} still registered in settings.json — it would fire twice per event`);
-      }
-      assert.ok(commands.includes(FOREIGN.command), 'the other tool\'s hook must survive the dedupe');
+      await runHook('gsd-session-init.cjs', cacheHooks(claudeDir), claudeDir);
+      assert.equal(existsSync(ranMarker(claudeDir)), true,
+        "the plugin's own copy is the live registration and must never stand down");
     } finally {
       await rm(home, { recursive: true, force: true });
     }
   });
 
-  it('leaves settings.json alone for an npx-only install', async () => {
-    const { home, claudeDir } = await makeClaudeHome('gsd-hookreg-npxonly-');
-    try {
-      // No plugin registered, and the hook runs from ~/.claude/hooks — these
-      // settings.json entries are the only live registration. Removing them
-      // would disable the hooks outright.
-      const original = duplicatedSettings();
-      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify(original, null, 2));
+  it('context-monitor stands down under the plugin and warns without it', async () => {
+    for (const [pluginPresent, expectWarning] of [[true, false], [false, true]]) {
+      const { home, claudeDir } = await makeClaudeHome('gsd-standdown-ctx-');
+      try {
+        if (pluginPresent) await markPluginInstalled(claudeDir);
+        const bridge = join(tmpdir(), 'gsd-ctx-standdown-session.json');
+        await writeFile(bridge, JSON.stringify({
+          remaining_percentage: 20, used_pct: 80, timestamp: Math.floor(Date.now() / 1000), has_gsd: true,
+        }));
+        try {
+          const { stdout } = await runHook('gsd-context-monitor.cjs', userHooks(claudeDir), claudeDir);
+          assert.equal(stdout.includes('CONTEXT CRITICAL'), expectWarning,
+            `plugin present=${pluginPresent}: warning expected=${expectWarning}`);
+        } finally {
+          await rm(bridge, { force: true });
+          await rm(join(tmpdir(), 'gsd-ctx-standdown-session-warned.json'), { force: true });
+        }
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    }
+  });
 
-      await runSessionInit(claudeDir, 'user');
-
-      const settings = await readSettings(claudeDir);
-      assert.deepEqual(settings.hooks, original.hooks,
-        'an npx-only install must keep its settings.json registrations');
-    } finally {
-      await rm(home, { recursive: true, force: true });
+  it('session-stop stands down under the plugin and writes the marker without it', async () => {
+    for (const [pluginPresent, expectMarker] of [[true, false], [false, true]]) {
+      const { home, claudeDir } = await makeClaudeHome('gsd-standdown-stop-');
+      const project = await mkdtemp(join(tmpdir(), 'gsd-standdown-stopproj-'));
+      try {
+        if (pluginPresent) await markPluginInstalled(claudeDir);
+        await mkdir(join(project, '.gsd'), { recursive: true });
+        await writeFile(join(project, '.gsd', 'state.json'), JSON.stringify({
+          project: 'demo', workflow_mode: 'executing_task', current_phase: 1, phases: [],
+        }));
+        await runHook('gsd-session-stop.cjs', userHooks(claudeDir), claudeDir, { project });
+        assert.equal(existsSync(join(project, '.gsd', '.session-end')), expectMarker,
+          `plugin present=${pluginPresent}: .session-end expected=${expectMarker}`);
+      } finally {
+        await rm(project, { recursive: true, force: true });
+        await rm(home, { recursive: true, force: true });
+      }
     }
   });
 });

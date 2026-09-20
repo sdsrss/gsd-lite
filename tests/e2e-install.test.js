@@ -361,14 +361,12 @@ describe('Layer A: plugin install E2E', () => {
     assert.ok(settings.statusLine.command.includes('gsd-statusline'));
   });
 
-  it('registers no hooks in settings.json — the plugin hooks.json serves them', async () => {
+  it('still registers all 3 hook types in settings.json', async () => {
+    // The plugin's hooks.json registers them too. They do not double-fire:
+    // these ~/.claude/hooks copies stand down while the plugin is serving, and
+    // keeping them registered is what lets GSD survive `/plugin uninstall`.
     const settings = await readSettings(claudeDir);
-    for (const identifier of ['gsd-session-init', 'gsd-context-monitor', 'gsd-session-stop']) {
-      const found = Object.values(settings.hooks || {}).flat()
-        .find(e => e?.hooks?.some(h => h.command?.includes(identifier)));
-      assert.equal(found, undefined,
-        `${identifier} in settings.json would run alongside the plugin's own copy`);
-    }
+    assertSettingsHooks(settings);
   });
 
   it('installs all files to correct locations', async () => {
