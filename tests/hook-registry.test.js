@@ -43,7 +43,30 @@ async function makeClaudeHome(prefix) {
  * picks what that file contains, because "installed" and "serving hooks" are
  * different things and the guard has to tell them apart.
  */
-async function markPluginInstalled(claudeDir, { id = 'gsd@gsd', version = '0.10.0', manifest = 'real' } = {}) {
+async function mergeSettings(claudeDir, patch) {
+  const file = join(claudeDir, 'settings.json');
+  let current = {};
+  try { current = JSON.parse(await readFile(file, 'utf-8')); } catch { /* no file yet */ }
+  await writeFile(file, JSON.stringify({
+    ...current,
+    ...patch,
+    ...(patch.enabledPlugins ? { enabledPlugins: { ...current.enabledPlugins, ...patch.enabledPlugins } } : {}),
+  }));
+}
+
+async function markPluginInstalled(claudeDir, {
+  id = 'gsd@gsd',
+  version = '0.10.0',
+  manifest = 'real',
+  // Claude Code writes an explicit `enabledPlugins[id] = true` when it installs
+  // a plugin, so the fixture does too. The guard requires that explicit yes, and
+  // a fixture that omitted it would be testing a state the product never
+  // produces while hiding the one it does (a project-scope install, where the
+  // key lands in some other project's settings).
+  enabled = true,
+  scope = 'user',
+  projectPath,
+} = {}) {
   const installPath = join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd', version);
   await mkdir(join(installPath, 'hooks'), { recursive: true });
   const manifestPath = join(installPath, 'hooks', 'hooks.json');
@@ -65,8 +88,9 @@ async function markPluginInstalled(claudeDir, { id = 'gsd@gsd', version = '0.10.
   } // 'missing' → write nothing
   await mkdir(join(claudeDir, 'plugins'), { recursive: true });
   await writeFile(join(claudeDir, 'plugins', 'installed_plugins.json'), JSON.stringify({
-    plugins: { [id]: [{ version, installPath }] },
+    plugins: { [id]: [{ version, installPath, scope, ...(projectPath ? { projectPath } : {}) }] },
   }));
+  if (enabled) await mergeSettings(claudeDir, { enabledPlugins: { [id]: true } });
 }
 
 const readSettings = async (claudeDir) =>
@@ -405,14 +429,80 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
       await markPluginInstalled(claudeDir);           // cache manifest: healthy
       await mkdir(join(source, 'hooks'), { recursive: true });
       await writeFile(join(source, 'hooks', 'hooks.json'), '{ broken');
-      await writeFile(join(claudeDir, 'settings.json'), JSON.stringify({
+      // Merge, so the enabledPlugins entry markPluginInstalled wrote survives —
+      // clobbering it would make this pass because the plugin looks unenabled
+      // rather than because the manifest it runs from is broken.
+      await mergeSettings(claudeDir, {
         extraKnownMarketplaces: { gsd: { source: { source: 'directory', path: source } } },
-      }));
+      });
       await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
       assert.equal(existsSync(ranMarker(claudeDir)), true,
         'the copy that actually runs is broken, so this one must not stand down');
     } finally {
       await rm(source, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('runs when nothing anywhere says the plugin is enabled', async () => {
+    // Absence is not consent. The guard used to stand down unless it found a key
+    // that was explicitly NOT true, so "no enabledPlugins entry at all" read as
+    // enabled. That is exactly the shape of a `--scope project` install into a
+    // different project: the registry says installed, the key is written into
+    // that project's settings and nowhere else, and in every other project the
+    // plugin does not load while this copy politely steps aside. Zero hooks, no
+    // file saying disabled, nothing printed — the silent failure the design
+    // comment in this module says must never happen.
+    const { home, claudeDir } = await makeClaudeHome('gsd-standdown-noconsent-');
+    try {
+      await markPluginInstalled(claudeDir, { enabled: false });
+      await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir);
+      assert.equal(existsSync(ranMarker(claudeDir)), true,
+        'no settings file enables the plugin, so this copy must not assume it is serving');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('runs when the plugin is scoped to a different project', async () => {
+    // A project-scoped record only serves the project it names. Reading record[0]
+    // and ignoring `scope`/`projectPath` made every other project stand down for
+    // a plugin that never loads there.
+    const { home, claudeDir } = await makeClaudeHome('gsd-standdown-otherproj-');
+    const theirs = await mkdtemp(join(tmpdir(), 'gsd-standdown-theirs-'));
+    const ours = await mkdtemp(join(tmpdir(), 'gsd-standdown-ours-'));
+    try {
+      await markPluginInstalled(claudeDir, { scope: 'project', projectPath: theirs, enabled: false });
+      await mkdir(join(theirs, '.claude'), { recursive: true });
+      await writeFile(join(theirs, '.claude', 'settings.json'),
+        JSON.stringify({ enabledPlugins: { 'gsd@gsd': true } }));
+
+      await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir, { project: ours });
+      assert.equal(existsSync(ranMarker(claudeDir)), true,
+        'the plugin is installed for another project, so it serves nothing here');
+    } finally {
+      await rm(ours, { recursive: true, force: true });
+      await rm(theirs, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('stands down for a project-scoped plugin inside the project it serves', async () => {
+    // The other half: inside its own project the plugin does load, and running
+    // both copies fires every hook twice.
+    const { home, claudeDir } = await makeClaudeHome('gsd-standdown-ownproj-');
+    const project = await mkdtemp(join(tmpdir(), 'gsd-standdown-ownproj-dir-'));
+    try {
+      await markPluginInstalled(claudeDir, { scope: 'project', projectPath: project, enabled: false });
+      await mkdir(join(project, '.claude'), { recursive: true });
+      await writeFile(join(project, '.claude', 'settings.json'),
+        JSON.stringify({ enabledPlugins: { 'gsd@gsd': true } }));
+
+      await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir, { project });
+      assert.equal(existsSync(ranMarker(claudeDir)), false,
+        'this is the project the plugin is installed for — its hooks are live here');
+    } finally {
+      await rm(project, { recursive: true, force: true });
       await rm(home, { recursive: true, force: true });
     }
   });
