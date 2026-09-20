@@ -1,0 +1,34 @@
+# Global git config for the test suite only, pointed at by GIT_CONFIG_GLOBAL in
+# tests/git-sandbox.cjs. It is NOT read by anyone's real git: the env var is set
+# by the npm test scripts and nothing else.
+#
+# Why it exists (issue #9): `git commit` forks `git maintenance run --auto
+# --detach`, a background process that is still writing inside .git when a
+# fixture's finally-block removes the temp repo. The recursive rm lists
+# .git/objects/pack, the detached process adds an entry, rmdir returns
+# ENOTEMPTY, and a random one of the nine git fixtures fails in teardown rather
+# than on an assertion. Turning the writer off is the root-cause fix; retrying
+# the rm would only widen the window we tolerate.
+#
+# GIT_CONFIG_GLOBAL rather than a fixture HOME because several suites override
+# HOME for their own reasons (tests/cli.test.js, tests/e2e-install.test.js) and
+# would silently drop a HOME-based config.
+[gc]
+	auto = 0
+	autoDetach = false
+
+[maintenance]
+	auto = false
+
+# An identity so a fixture that forgets `git config user.*` fails on its own
+# assertion rather than on "Please tell me who you are", and no signing, so a
+# developer's global commit.gpgsign cannot break the suite.
+[user]
+	name = GSD Test
+	email = test@example.com
+
+[commit]
+	gpgsign = false
+
+[tag]
+	gpgsign = false
