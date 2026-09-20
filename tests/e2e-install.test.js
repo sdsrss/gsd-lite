@@ -88,7 +88,7 @@ async function assertInstallTree(claudeDir, { userScope = true } = {}) {
   }
 
   // Hook libs
-  for (const lib of ['gsd-finder.cjs', 'semver-sort.cjs', 'statusline-composite.cjs']) {
+  for (const lib of ['gsd-finder.cjs', 'semver-sort.cjs', 'statusline-composite.cjs', 'hook-registry.cjs']) {
     const s = await stat(join(claudeDir, 'hooks', 'lib', lib));
     assert.ok(s.isFile(), `Hook lib ${lib} should exist`);
   }
@@ -132,7 +132,7 @@ function assertSettingsHooks(settings) {
 
 function assertHooksLoadable(claudeDir) {
   const _require = createRequire(import.meta.url);
-  for (const h of ['gsd-finder.cjs', 'semver-sort.cjs', 'statusline-composite.cjs']) {
+  for (const h of ['gsd-finder.cjs', 'semver-sort.cjs', 'statusline-composite.cjs', 'hook-registry.cjs']) {
     const mod = _require(join(claudeDir, 'hooks', 'lib', h));
     assert.ok(mod, `Hook lib ${h} should be loadable`);
   }
@@ -149,7 +149,7 @@ async function assertCleanUninstall(claudeDir) {
     assert.ok(!existsSync(join(claudeDir, 'hooks', h)), `hooks/${h} should be removed`);
   }
   // Hook libs should not exist
-  for (const lib of ['gsd-finder.cjs', 'semver-sort.cjs', 'statusline-composite.cjs']) {
+  for (const lib of ['gsd-finder.cjs', 'semver-sort.cjs', 'statusline-composite.cjs', 'hook-registry.cjs']) {
     assert.ok(!existsSync(join(claudeDir, 'hooks', 'lib', lib)), `hooks/lib/${lib} should be removed`);
   }
   // settings.json should have no GSD entries
