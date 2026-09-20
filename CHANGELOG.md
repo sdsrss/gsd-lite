@@ -35,6 +35,12 @@ still runs after `/plugin uninstall`, so removing it left a complete npx
 install on disk with nothing registered, nothing able to notice, and no
 message saying so.
 
+Seeing `Hooks (3)` from `claude plugin details gsd` *and* three entries in
+`settings.json` is correct, not a double registration — only one of the two
+copies executes. If your `~/.claude/hooks/*.cjs` are still from 0.9.0 they have
+no stand-down check yet and will fire alongside the plugin until the next
+update refreshes them; `npx gsd-lite install` ends it immediately.
+
 To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
 0.9.0 and skip the update.
 
