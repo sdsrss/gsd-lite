@@ -6,6 +6,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
@@ -382,7 +383,10 @@ describe('Edge 9: Executor context with missing/partial data', () => {
     state.phases[0].todo[0].retry_count = 1;
     const ctx = buildExecutorContext(state, '1.1', 1);
     assert.ok(!ctx.error);
-    assert.ok(ctx.workflows.includes('workflows/debugging.md'));
+    assert.ok(
+      ctx.workflows.some(w => w.endsWith('/debugging.md') && existsSync(w)),
+      `expected a resolvable path to debugging.md, got ${JSON.stringify(ctx.workflows)}`,
+    );
   });
 
   it('9.4 Context includes research workflow when research_basis present', async () => {
@@ -390,7 +394,10 @@ describe('Edge 9: Executor context with missing/partial data', () => {
     state.phases[0].todo[0].research_basis = ['d1'];
     const ctx = buildExecutorContext(state, '1.1', 1);
     assert.ok(!ctx.error);
-    assert.ok(ctx.workflows.includes('workflows/research.md'));
+    assert.ok(
+      ctx.workflows.some(w => w.endsWith('/research.md') && existsSync(w)),
+      `expected a resolvable path to research.md, got ${JSON.stringify(ctx.workflows)}`,
+    );
   });
 });
 

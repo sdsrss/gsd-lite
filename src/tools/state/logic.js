@@ -2,7 +2,7 @@
 
 import { dirname, join } from 'node:path';
 import { writeFile, rename, unlink, open } from 'node:fs/promises';
-import { ensureDir, writeJson, getStatePath, fsyncDir } from '../../utils.js';
+import { ensureDir, writeJson, getStatePath, fsyncDir, shippedDocPath } from '../../utils.js';
 import {
   DEP_GATES,
   TASK_LIFECYCLE,
@@ -309,9 +309,17 @@ export function buildExecutorContext(state, taskId, phaseId) {
     .filter(Boolean);
 
   const project_conventions = 'CLAUDE.md';
-  const workflows = ['workflows/tdd-cycle.md', 'workflows/deviation-rules.md'];
-  if ((task.retry_count || 0) > 0) workflows.push('workflows/debugging.md');
-  if ((task.research_basis || []).length > 0) workflows.push('workflows/research.md');
+  // Absolute, via shippedDocPath: the executor reads these with the user's
+  // project as its working directory, where a relative path finds nothing.
+  // Each arm is its own push — a fix applied to only the default pair would
+  // leave the retry and research arms broken the same way, so they all route
+  // through the same resolver.
+  const workflows = [
+    shippedDocPath('workflows', 'tdd-cycle.md'),
+    shippedDocPath('workflows', 'deviation-rules.md'),
+  ];
+  if ((task.retry_count || 0) > 0) workflows.push(shippedDocPath('workflows', 'debugging.md'));
+  if ((task.research_basis || []).length > 0) workflows.push(shippedDocPath('workflows', 'research.md'));
   const constraints = {
     retry_count: task.retry_count || 0,
     level: task.level || 'L1',

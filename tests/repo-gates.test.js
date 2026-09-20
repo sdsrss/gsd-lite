@@ -190,6 +190,50 @@ describe('repo gates — the release workflow signs before it publishes', () => 
   });
 });
 
+describe('repo gates — the prompt layer never hands an agent a bare relative doc path', () => {
+  // An agent runs with the USER'S project as its working directory. A path like
+  // `references/questioning.md` resolves there, finds nothing, and the
+  // instruction silently does not happen — the executor never reads the TDD and
+  // anti-rationalization workflows that are the product's whole point.
+  //
+  // It is not fixable by picking a better relative path either: install.js puts
+  // npx-mode copies at ~/.claude/references/gsd/ while the plugin system serves
+  // <root>/references/, so the same file sits at different depths and no single
+  // relative string is right for both.
+  //
+  // This gate is the deliverable. The individual rewrites are not: this class
+  // has come back in this repo every time a fix landed at a call site instead of
+  // in something that fails loudly when the next one appears.
+  const promptFiles = execFileSync('git', ['ls-files', 'commands/*.md', 'agents/*.md', 'workflows/*.md', 'references/*.md'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).split('\n').filter(Boolean);
+
+  it('finds prompt files to check', () => {
+    // Vacuity guard: an empty corpus would satisfy the assertion below without
+    // reading anything.
+    assert.ok(promptFiles.length >= 20, `expected the shipped prompt layer, found ${promptFiles.length} files`);
+  });
+
+  it('no prompt file names a bare relative references/ or workflows/ path', () => {
+    const offenders = [];
+    for (const file of promptFiles) {
+      const lines = readFileSync(join(repoRoot, file), 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        // Only backticked paths: prose that merely says the word "workflows"
+        // is not an instruction to read a file. A path reached through the
+        // server's `docs` map is written `<docs.workflows>/x.md` and does not
+        // match, which is the point — the gate accepts the resolved form.
+        for (const m of line.matchAll(/`((?:references|workflows)\/[A-Za-z0-9._-]+\.md)`/g)) {
+          offenders.push(`${file}:${i + 1} → ${m[1]}`);
+        }
+      });
+    }
+    assert.deepEqual(offenders, [],
+      `these resolve against the user's project, where they do not exist. Take the absolute path from the health tool's \`docs\` map instead:\n  ${offenders.join('\n  ')}`);
+  });
+});
+
 describe('repo gates — actions are pinned to commit SHAs', () => {
   // A floating tag is mutable by the action's owner: `@v5` can point at
   // different code tomorrow, and whatever it points at runs inside this repo's

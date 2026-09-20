@@ -1,10 +1,43 @@
 import { readFile, writeFile, rename, mkdir, unlink, stat, open } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 
 const execFileAsync = promisify(execFileCb);
+
+/**
+ * Absolute path to this package's own root, derived from this file's location
+ * rather than from cwd or an environment variable.
+ *
+ * The server process always runs from the install root in BOTH install modes:
+ * the plugin manifest launches `${CLAUDE_PLUGIN_ROOT}/launcher.js`, and
+ * launcher.js resolves its own __dirname before importing src/server.js. So
+ * this is correct under the plugin system and under npx/manual alike, with no
+ * dependency on CLAUDE_PLUGIN_ROOT — which is unset in npx mode (see
+ * hooks/lib/hook-registry.cjs, which uses that absence as the mode detector).
+ */
+export const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+
+/**
+ * Resolve a doc that ships inside this package (references/, workflows/) to an
+ * absolute path.
+ *
+ * Every path handed to an agent goes through here. Agents run with the USER'S
+ * project as their working directory, so a relative path resolves against a
+ * directory that holds none of these files — and the two install modes put
+ * them at different depths (`<root>/references/x.md` under the plugin system,
+ * `~/.claude/references/gsd/x.md` under npx), so no single relative string can
+ * be right for both. Resolving centrally is what keeps the next caller from
+ * repeating that.
+ *
+ * @param {...string} segments path segments below the package root
+ * @returns {string} absolute path
+ */
+export function shippedDocPath(...segments) {
+  return join(PACKAGE_ROOT, ...segments);
+}
 
 const _gsdDirCache = new Map();
 

@@ -129,7 +129,7 @@
 进入执行主循环。phase = 管理边界，task = 执行边界。
 
 <execution_loop>
-参考 `references/execution-loop.md` 获取完整 9 步执行循环规范 (11.1-11.9) 及依赖门槛语义。
+参考 `<docs.references>/execution-loop.md` (路径由 `health` 工具的 `docs.references` 给出；本文件的同级 references/ 目录) 获取完整 9 步执行循环规范 (11.1-11.9) 及依赖门槛语义。
 
 编排器必须严格按照该参考文档中的步骤顺序执行:
 加载 phase → 选择 task → 构建上下文 → 派发 executor → 处理结果 → 审查 → phase handoff → 批量更新 → 上下文检查
