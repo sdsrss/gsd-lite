@@ -257,7 +257,11 @@ describe('session stop hook — hostile .gsd/ contents', () => {
     }
   });
 
-  it('refuses to write when .session-end itself is a symlink', async () => {
+  it('evicts a symlink planted at .session-end instead of writing through it', async () => {
+    // Refusing here was the earlier behaviour and it was wrong in the direction
+    // that matters: the rename never followed the link anyway, so refusing added
+    // no safety and handed a hostile checkout a way to disable the crash marker
+    // permanently by planting one.
     const root = await mkdtemp(join(tmpdir(), 'gsd-stop-sym-'));
     try {
       const pluginRoot = await setupPluginRoot(root);
@@ -269,9 +273,11 @@ describe('session stop hook — hostile .gsd/ contents', () => {
 
       runStopHook(projectDir, pluginRoot);
 
-      assert.equal(readFileSync(secretPath, 'utf8'), 'untouched');
-      // Left exactly as found: refusing beats replacing someone else's link.
-      assert.equal(lstatSync(join(gsdDir, '.session-end')).isSymbolicLink(), true);
+      assert.equal(readFileSync(secretPath, 'utf8'), 'untouched', 'wrote through the planted link');
+      assert.equal(lstatSync(join(gsdDir, '.session-end')).isSymbolicLink(), false,
+        'the link survived, so the marker is pinned for good');
+      const marker = JSON.parse(readFileSync(join(gsdDir, '.session-end'), 'utf8'));
+      assert.equal(marker.workflow_mode_was, 'executing_task');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { writeFileSync, unlinkSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -442,6 +442,33 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
       assert.ok(output.hookSpecificOutput, 'Should have hookSpecificOutput');
       assert.equal(output.hookSpecificOutput.hookEventName, 'PostToolUse');
       assert.ok(typeof output.hookSpecificOutput.additionalContext === 'string');
+    } finally {
+      cleanupSession(sid);
+    }
+  });
+
+  // The debounce file is bookkeeping. The warning is the product. Anything that
+  // stops the first must not stop the second — and a refusal to write it is not
+  // hypothetical: the path is `$TMPDIR/gsd-ctx-<session>-warned.json`, and on a
+  // shared host `ls /tmp/gsd-ctx-*` hands anyone the session id.
+  it('still emits the warning when the debounce file cannot be written', () => {
+    const sid = nextSessionId();
+    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
+    writeBridgeFile(sid, {
+      remaining_percentage: 20,
+      used_pct: 80,
+      has_gsd: true,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+    try {
+      // A dangling link: refused by atomicWriteMarker, and unwritable anyway.
+      symlinkSync(join(tmpdir(), `gsd-ctx-${sid}-nonexistent-target`), warnPath);
+
+      const result = runHook({ session_id: sid });
+      assert.notEqual(result.stdout.trim(), '',
+        'a symlink on the debounce path silently swallowed the context warning');
+      const output = JSON.parse(result.stdout);
+      assert.match(output.hookSpecificOutput.additionalContext, /CONTEXT CRITICAL/);
     } finally {
       cleanupSession(sid);
     }

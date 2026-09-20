@@ -56,35 +56,23 @@ function atomicWriteJson(filePath, value) {
 }
 
 /**
- * Write a file GSD owns outright — a marker or cache entry under `.gsd/` or in
- * the temp dir — refusing to act at all if the destination is a symlink.
+ * Why there is no "refuse if the destination is a symlink" variant.
  *
- * The rename in atomicWrite already replaces a planted link rather than writing
- * through it, so this is not what stops the write-through. It stops the two
- * things the rename does not: a reader that resolves the link first (the
- * statusline reads .context-health before deciding to rewrite it, and a link to
- * a fifo or a multi-gigabyte file turns that read into a hang or a balloon),
- * and the silent replacement of a link someone put there deliberately. For
- * these paths a symlink is never legitimate, so refusing is strictly better
- * than resolving.
+ * An earlier version of this module had one, and used it for every GSD-owned
+ * marker: .gsd/.session-end, .gsd/.context-health, and the two bookkeeping files
+ * in the temp dir. It was the wrong instinct. atomicWrite never writes THROUGH a
+ * planted link — the temp file is opened O_EXCL under a random name and the
+ * rename replaces the link rather than following it — so refusing bought no
+ * safety at all. What it bought was a denial of service: a link planted at any
+ * of those paths could not be replaced, so it pinned the file forever. Planting
+ * one at the statusline bridge froze the reported context percentage; at the
+ * context monitor's debounce path it silenced every exhaustion warning for that
+ * session. Both self-healed before the change and stopped self-healing after it.
+ *
+ * So these paths use atomicWrite and let the rename evict whatever is there.
+ * Callers that read one of these files first already wrap the read in try/catch
+ * and treat a bad value as absent.
  */
-function atomicWriteMarker(filePath, content) {
-  let st;
-  try {
-    st = fs.lstatSync(filePath);
-  } catch { /* does not exist — the common path */ }
-  if (st?.isSymbolicLink()) {
-    throw Object.assign(
-      new Error(`refusing to write ${filePath}: it is a symlink`),
-      { code: 'GSD_SYMLINK_REFUSED' },
-    );
-  }
-  atomicWrite(filePath, content);
-}
-
-function atomicWriteMarkerJson(filePath, value) {
-  atomicWriteMarker(filePath, JSON.stringify(value, null, 2) + '\n');
-}
 
 /**
  * Atomically rewrite a text file, writing *through* a symlink rather than over
@@ -127,7 +115,5 @@ function atomicWriteThroughLink(filePath, content, root) {
 module.exports = {
   atomicWrite,
   atomicWriteJson,
-  atomicWriteMarker,
-  atomicWriteMarkerJson,
   atomicWriteThroughLink,
 };

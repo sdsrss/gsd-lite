@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { findGsdDir } = require('./lib/gsd-finder.cjs');
-const { atomicWriteMarker } = require('./lib/atomic-write.cjs');
+const { atomicWrite } = require('./lib/atomic-write.cjs');
 
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
@@ -77,8 +77,9 @@ process.stdin.on('end', () => {
             // not the same as unguessable: os.tmpdir() is world-writable on a
             // shared host, and both components are derivable, so another local
             // user could plant a symlink and have writeFileSync follow it.
-            // atomicWriteMarker adds the random suffix and the O_EXCL open.
-            atomicWriteMarker(bridgePath, JSON.stringify({
+            // atomicWrite adds the random suffix and the O_EXCL open, and its
+            // rename evicts a planted link rather than being blocked by it.
+            atomicWrite(bridgePath, JSON.stringify({
               session_id: session,
               remaining_percentage: remaining,
               used_pct: used,
@@ -103,11 +104,9 @@ process.stdin.on('end', () => {
           } catch { /* file doesn't exist yet */ }
           if (needsHealthWrite) {
             // Same predictable-temp problem as the bridge above, but inside
-            // `.gsd/`, which a cloned repository controls outright. The refusal
-            // on a symlinked .context-health also protects the readFileSync a
-            // few lines up, which would otherwise resolve the link.
+            // `.gsd/`, which a cloned repository controls outright.
             fs.mkdirSync(gsdDir, { recursive: true });
-            atomicWriteMarker(healthPath, String(remaining));
+            atomicWrite(healthPath, String(remaining));
           }
         } catch (e) {
           if (process.env.GSD_DEBUG) process.stderr.write(`gsd-statusline: context-health write failed: ${e.message}\n`);
