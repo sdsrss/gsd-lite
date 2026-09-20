@@ -104,6 +104,15 @@ only what the link lands on. Reading that one as absent would have been worse
 than not guarding it: the hook would have treated empty as the whole file and
 written its status block through the link over your contents.
 
+**A `CLAUDE.md` the hook cannot read is now left alone.** "Not there" and "could
+not read it" were the same answer to the code: it started from an empty string,
+generated the status block, and renamed that over the file. A `CLAUDE.md` with
+its permissions set to 000 lost its contents that way — 40 bytes of notes
+replaced by 178 bytes of generated block, exit 0, nothing said. Nothing there is
+safe to create over; something there that cannot be read is not. A fifo or a
+directory at that path still gets replaced, which is right, since neither holds
+anything anyone can lose.
+
 The reads of GSD's own files also go through one helper that returns nothing
 unless the bytes parsed to a plain object. Both halves earned their place.
 `JSON.parse(null)` returns null instead of throwing, so a `try`/`catch` around
