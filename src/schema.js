@@ -142,6 +142,19 @@ export const CANONICAL_FIELDS = [
   'evidence',
 ];
 
+/**
+ * What `state-read` will filter on. Deliberately NOT the same set as
+ * CANONICAL_FIELDS, which is the WRITE allowlist: `_version` is the optimistic
+ * concurrency token, so callers read it to pass as `expectedVersion` but must
+ * never set it, and `update()` rejecting it is correct.
+ *
+ * Derived from CANONICAL_FIELDS rather than restated, so a field added there
+ * becomes readable in the same edit. A second hand-written list is the shape
+ * that drifted twice in this repo before DEP_GATES and phaseReviewSatisfied()
+ * collapsed it.
+ */
+export const READABLE_FIELDS = [...CANONICAL_FIELDS, '_version'];
+
 function validateResearchSourcesArray(sources, errors, path = 'sources') {
   if (!Array.isArray(sources)) {
     errors.push(`${path} must be array`);

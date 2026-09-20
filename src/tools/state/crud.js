@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGsdDir, getGitHead, isPlainObject, clearGsdDirCache } from '../../utils.js';
 import {
   CANONICAL_FIELDS,
+  READABLE_FIELDS,
   DEP_GATES,
   TASK_LEVELS,
   isDepGateAllowed,
@@ -178,12 +179,37 @@ export async function read({ fields, basePath = process.cwd(), validate = false 
   }
 
   if (fields && Array.isArray(fields) && fields.length > 0) {
+    // Three different things used to come back as `{}`: a misspelled name, a
+    // name that is valid but not in this state, and a field that is genuinely
+    // empty. A caller reading `{}` concludes the field is empty, which is the
+    // one of the three it is not — and migration leaves most canonical fields
+    // off an older state, so "valid but absent" is common, not theoretical.
+    //
+    // Unknown names are refused the same way update() refuses non-canonical
+    // keys, against READABLE_FIELDS — which is not the write allowlist, since
+    // `_version` is read to be passed back as expectedVersion and must never
+    // be written.
+    const unreadable = fields.filter((key) => !READABLE_FIELDS.includes(key));
+    if (unreadable.length > 0) {
+      return {
+        error: true,
+        code: ERROR_CODES.INVALID_INPUT,
+        message: `Unreadable fields rejected: ${unreadable.join(', ')}. Readable: ${READABLE_FIELDS.join(', ')}`,
+      };
+    }
+
     const filtered = {};
+    const absent = [];
     for (const key of fields) {
       if (key in state) {
         filtered[key] = state[key];
+      } else {
+        absent.push(key);
       }
     }
+    // Only when non-empty: a marker present on every response is noise the
+    // caller learns to skip, and then it is not a signal any more.
+    if (absent.length > 0) filtered._absent = absent;
     return filtered;
   }
 
