@@ -221,9 +221,23 @@ describe('session init reads repo-controlled paths without blocking', () => {
 
   function runInit({ home, claudeDir, project }) {
     // execFileSync throws ETIMEDOUT on a hang, which is the failure under test.
+    //
+    // PLUGIN_AUTO_UPDATE must be '1', not '0'. `shouldSkipUpdateCheck` tests
+    // `=== '1'` (hooks/gsd-auto-update.cjs), so '0' is indistinguishable from
+    // unset and the check RUNS — which is what '0' used to say here, reading
+    // like "off" while meaning "on". Session-init phase 5 spawns the updater
+    // detached and unrefs it, so execFileSync returns while that child is still
+    // writing into <home>/.claude/gsd/runtime/; withProject then removes home
+    // underneath it and teardown dies with ENOTEMPTY, at random, in whichever
+    // case loses the race. With '1' the child returns before any filesystem
+    // write (the skip is checked ahead of withFileLock, which is what creates
+    // the state dir). The sibling suite above already passes '1'.
+    //
+    // None of these cases exercise the updater — they are about session-init
+    // not hanging on a fifo or a symlink — so suppressing it costs no coverage.
     return execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
       cwd: project,
-      env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '0' },
+      env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' },
       encoding: 'utf8',
       timeout: 6000,
     });
