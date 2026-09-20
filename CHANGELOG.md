@@ -2,6 +2,98 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+**A project can no longer paint itself into a corner, and a failed update can no
+longer break the one you have.** This is the P0 and the eight P1 findings from
+the 2026-09-20 audit, which read the whole codebase looking for states the
+orchestrator could reach and not leave.
+
+Minor, not patch: `orchestrator-resume` gains a `recovery` parameter.
+
+**Three ordinary things used to end a project permanently.**
+
+- A debugger result with `architecture_concern: true` put the whole workflow in
+  `failed`, which had no outgoing transition, refused every mode change, and
+  refused plan patches. The only exits were `state-init force:true` — which
+  destroys the plan — and editing `state.json` by hand. Meanwhile resume
+  advertised `recovery_options: ['retry_failed','skip_failed','replan']` that
+  nothing in the codebase read. Those three options now work, through
+  `orchestrator-resume recovery:'…'`. `retry_failed` requeues the failed tasks
+  with a fresh retry budget; `skip_failed` leaves them failed and continues with
+  whatever can still run; `replan` returns to planning.
+- Editing the plan and committing while in `replan_required` made every
+  subsequent resume fail. Preflight detected the moved HEAD and tried to write
+  `reconcile_workspace`, which that mode's transition whitelist rejected — so
+  nothing was written, the condition stayed, and the next resume hit the same
+  wall. Every non-terminal mode now reaches all four modes preflight can impose.
+- Phase review failing five times parked the workflow in `awaiting_user` and
+  said user intervention was required, but resume recognised only two review
+  stages and everything else fell through to auto-unblock, which cleared the
+  hold and went straight back into the same review with the retry counter still
+  climbing. Any named review stage is now a real hold, cleared only by an
+  explicit `recovery`, which also resets the counter.
+
+**Background updates can no longer leave you without a working GSD.** `install.js`
+wiped the runtime directory and ran `npm ci` about a hundred lines later, so any
+dependency install that could not finish — no network, a registry error — left
+`~/.claude/gsd` with new source and no `node_modules`, and the MCP server threw
+`ERR_MODULE_NOT_FOUND` on every start after that. It was also permanent and
+silent: the new `package.json` was written before `npm ci`, so the version check
+read the new number off the broken install and concluded it was already up to
+date, and the notification file was only ever written on success. The installer
+now builds into a staging directory and swaps at the end, so a failure leaves
+the previous runtime untouched and the next check retries by itself. **You do
+not need to do anything.** If an earlier update already broke your runtime, run
+`npx gsd-lite install` once.
+
+A failed update now prints a line at session start instead of nothing.
+
+**Hooks stop standing down when the plugin is not actually serving them.** The
+guard treated a missing `enabledPlugins` entry as "enabled", which is exactly
+what `/plugin install --scope project` produces in every *other* project: the
+plugin does not load there, the `~/.claude/hooks` copy stepped aside anyway, and
+the result was zero hooks with nothing on disk saying so. An explicit `true` is
+now required, and a project-scoped record only counts inside the project it
+names.
+
+**Security.** The Stop hook, the statusline and the context monitor wrote through
+predictable temp filenames — `.gsd/.session-end.<pid>.tmp` and two in the shared
+temp directory. A repository (or, for the temp-directory ones, another local
+user) could pre-create those paths as symlinks and have the hook write through
+them. 0.9.0 fixed this for the SessionStart hook but left the hardened helper
+inline in that file; it now lives in `hooks/lib/atomic-write.cjs` and all four
+hooks use it.
+
+Releases are also signed and verified *before* `npm publish` rather than after.
+A signing key that no longer paired with the public key embedded in the client
+used to mean npm got the version permanently, the job then failed, and
+auto-update clients — which read GitHub Releases, not npm — never saw that
+release or any later one.
+
+**Also fixed**
+
+- Executor and debugger results for a task that already checkpointed are
+  rejected instead of cancelling the review in progress and recording a retry
+  against work that had not failed.
+- Blockers had three different shapes across the tool schema, the reader and the
+  executor contract, so `blocked_reason` always fell back to the task summary
+  and `unblock_condition` was always null despite three commands promising to
+  show them.
+- `reviewer.md` now states that `spec_passed`/`quality_passed` are rework
+  switches, not grades — a `false` with no task named makes the server mark
+  every completed task in the phase for revalidation.
+- The "start over" option in `/gsd:start` and `/gsd:prd` needs `force: true`,
+  which the `state-init` template never mentioned, so it returned `STATE_EXISTS`
+  and did nothing.
+- `resume.md` no longer asks the model to redo the preflight the server has
+  already done and persisted, and the action table no longer treats the first
+  sighting of a moved HEAD as a full stop while treating the second as
+  automatic.
+- A CI step named "Check coverage threshold" could not fail: it shelled out to
+  `c8`, which is not on `PATH` inside `run:`, and exited 0 every time. The real
+  gate is c8's own `--check-coverage` in `test:coverage`.
+
 ## [0.10.0] - 2026-09-20
 
 **A plugin install now actually installs the hooks.** Found by running the
