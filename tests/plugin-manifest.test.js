@@ -128,6 +128,18 @@ describe('plugin manifest: advertised inventory matches the tree', () => {
     assert.equal(claimed, actual, `README claims ${claimed} MCP tools, server.js defines ${actual}`);
   });
 
+  it('names only test files that exist, in text that ships to users', () => {
+    // hooks/hooks.json is copied into the plugin cache verbatim, so a wrong
+    // filename in its description reaches users, not just contributors. Both it
+    // and install.js pointed at tests/plugin-hooks.test.js, which never existed.
+    for (const file of ['hooks/hooks.json', 'install.js']) {
+      const source = readFileSync(join(root, file), 'utf-8');
+      for (const [, named] of source.matchAll(/(tests\/[\w.-]+\.test\.js)/g)) {
+        assert.ok(existsSync(join(root, named)), `${file} names ${named}, which does not exist`);
+      }
+    }
+  });
+
   it('keeps package.json, plugin.json and marketplace.json on one version', () => {
     assert.equal(pluginJson.version, packageJson.version);
     for (const entry of marketplaceJson.plugins) {

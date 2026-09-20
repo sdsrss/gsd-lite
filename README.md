@@ -131,9 +131,16 @@ checks. Run these commands inside a Claude Code session, then restart it.
 
 One thing the plugin system cannot do for us: `statusLine` is a top-level
 `settings.json` setting, and a plugin may not write there — so the progress
-StatusLine stays off on a plugin-only install. Add it with `npx gsd-lite install`
-(safe to run alongside the plugin; it detects the plugin and skips everything the
-plugin already serves), and `npx gsd-lite uninstall` takes it back out.
+StatusLine stays off on a plugin-only install. Add it with `npx gsd-lite install`,
+which is safe to run alongside the plugin: it detects the plugin and skips
+everything the plugin already serves, registering only the StatusLine and the
+hook scripts it needs.
+
+To remove just the StatusLine afterwards, delete the `statusLine` key from
+`~/.claude/settings.json`. Do not reach for `npx gsd-lite uninstall` for that —
+it removes everything GSD installed, the plugin cache, the marketplace entry and
+the `enabledPlugins` registration included, so you would be uninstalling the
+plugin as well.
 
 ### Method 2: npx
 

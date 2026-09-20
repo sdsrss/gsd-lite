@@ -25,7 +25,7 @@ const HOOK_FILES = ['gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-context-
 // Plugin installs do NOT use this: the plugin system loads hooks/hooks.json out
 // of the plugin cache instead, and a settings.json copy alongside it would fire
 // every hook twice. hooks/hooks.json must therefore declare the same three
-// hooks with the same matchers and timeouts — tests/plugin-hooks.test.js pins
+// hooks with the same matchers and timeouts — tests/plugin-manifest.test.js pins
 // that, and the plugin branch below deregisters any settings.json entry an
 // earlier npx/manual install left behind.
 export const HOOK_REGISTRY = [
