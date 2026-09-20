@@ -44,6 +44,27 @@ function logRemoved(msg) {
   log(`  ✓ ${msg}`);
 }
 
+// The other half of the same state. Files are deleted before the registrations
+// that point at them are removed, so a swallowed registry failure leaves hooks
+// registered at paths that no longer exist — every session then runs a command
+// that is not there. The closing line and the exit code are both derived from
+// {removedCount, problems} at the end of main(): one state, two readings of it,
+// so they cannot disagree the way they did when the message was printed
+// unconditionally and the exit code was whatever fell out of control flow.
+const problems = [];
+function logProblem(what, hint) {
+  problems.push({ what, hint });
+  log(`  ! ${what}`);
+  if (hint) log(`    ${hint}`);
+}
+
+// A registry file that is not there is not a failure — there is nothing to
+// deregister. Anything else (unparseable, unwritable, unreadable) is, because
+// the entry survives and we have already deleted what it points at.
+function isAbsent(err) {
+  return err && (err.code === 'ENOENT' || err.code === 'ENOTDIR');
+}
+
 // Prefer the shared helper — a unique temp name is not an unguessable one, and
 // this writes settings.json. The inline fallback stays because hooks/lib may be
 // gone by the time an orphan cleanup runs this, and an uninstaller that throws
@@ -80,6 +101,10 @@ function removeDir(path, label) {
 
 export function main() {
   log('GSD-Lite Uninstaller\n');
+  // Both halves of the summary are module state, so a second call in one
+  // process (cli.js imports this) must not inherit the first call's tally.
+  removedCount = 0;
+  problems.length = 0;
 
   // Without this, a wrong CLAUDE_CONFIG_DIR — a typo, or an unset one under
   // sudo/systemd/CI where HOME differs — removes nothing, reports success, and
@@ -91,14 +116,23 @@ export function main() {
   }
 
   // Clean up GSD entry from composite statusLine registry before removing files
+  const compositeLib = join(CLAUDE_DIR, 'hooks', 'lib', 'statusline-composite.cjs');
   try {
     const _require = createRequire(import.meta.url);
-    const compositeLib = join(CLAUDE_DIR, 'hooks', 'lib', 'statusline-composite.cjs');
     if (existsSync(compositeLib)) {
       const { removeProvider } = _require(compositeLib);
       if (removeProvider()) logRemoved('Removed GSD from composite statusLine registry');
     }
-  } catch { /* best effort */ }
+  } catch (err) {
+    // Same reasoning as the registry files: a leftover entry here points at a
+    // statusline file this run is about to delete, so it is not "best effort".
+    if (!isAbsent(err)) {
+      logProblem(
+        `Could not remove GSD from the composite statusLine registry: ${err.message}`,
+        `It still names a file this run deletes: ${compositeLib}`,
+      );
+    }
+  }
 
   log('Removing files...');
 
@@ -148,7 +182,10 @@ export function main() {
         atomicWriteSync(filePath, JSON.stringify(data, null, 2) + '\n');
         logRemoved(`Removed '${key}' from ${label}`);
       }
-    } catch {}
+    } catch (err) {
+      if (isAbsent(err)) return;
+      logProblem(`Could not remove '${key}' from ${label}: ${err.message}`, `Edit it by hand: ${filePath}`);
+    }
   }
   function removeNestedEntry(filePath, parentKey, key, label) {
     try {
@@ -158,7 +195,10 @@ export function main() {
         atomicWriteSync(filePath, JSON.stringify(data, null, 2) + '\n');
         logRemoved(`Removed '${key}' from ${label}`);
       }
-    } catch {}
+    } catch (err) {
+      if (isAbsent(err)) return;
+      logProblem(`Could not remove '${key}' from ${label}: ${err.message}`, `Edit it by hand: ${filePath}`);
+    }
   }
   for (const name of ['gsd', 'gsd-lite']) {
     removeJsonEntry(join(pluginsDir, 'known_marketplaces.json'), name, 'known_marketplaces.json');
@@ -210,8 +250,10 @@ export function main() {
         // The shared helper is the only correct remover — an inline retry here
         // is how the group-granularity bug got written three times. Say so
         // rather than leaving the caller to infer it from a silent success.
-        log('  ! hooks/lib/hook-registry.cjs not found — settings.json hook entries left in place');
-        log(`    Remove them by hand, or reinstall and uninstall again: ${settingsPath}`);
+        logProblem(
+          'hooks/lib/hook-registry.cjs not found — settings.json hook entries left in place',
+          `Remove them by hand, or reinstall and uninstall again: ${settingsPath}`,
+        );
       } else {
         for (const [hookType, identifier] of [
           ['PostToolUse', 'gsd-context-monitor'],
@@ -227,13 +269,34 @@ export function main() {
       atomicWriteSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
       logRemoved('MCP server + hooks + plugin entries deregistered from settings.json');
     }
-  } catch {}
-
-  if (removedCount === 0) {
-    log(`\nNothing to remove — no GSD-Lite files or registrations found in ${CLAUDE_DIR}.`);
-    return;
+  } catch (err) {
+    if (!isAbsent(err)) {
+      logProblem(
+        `Could not deregister from settings.json: ${err.message}`,
+        `The hook and MCP entries still point at files this run deleted. Fix the file and run this again: ${settingsPath}`,
+      );
+    }
   }
-  log('\n✓ GSD-Lite uninstalled.');
+
+  // One state, read twice — closing line and exit code. The previous attempt at
+  // this was reverted for having them drift apart again (7b39ae0): it printed a
+  // new message and still exited 0, and it reported removals on a run that had
+  // removed nothing.
+  const summary = { removed: removedCount, problems };
+  if (problems.length > 0) {
+    log(`\n! GSD-Lite is only partly uninstalled — ${problems.length} step(s) did not finish:`);
+    for (const p of problems) log(`    - ${p.what}`);
+    log('  Anything still registered keeps firing every session, at paths this run deleted.');
+    log('  Deal with the cause and run this again.');
+  } else if (removedCount === 0) {
+    log(`\nNothing to remove — no GSD-Lite files or registrations found in ${CLAUDE_DIR}.`);
+  } else {
+    log('\n✓ GSD-Lite uninstalled.');
+  }
+  // Raise only. Forcing 0 on the happy path would let this erase a failure some
+  // other part of the process already recorded — the quiet direction again.
+  if (problems.length > 0) process.exitCode = 1;
+  return summary;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
