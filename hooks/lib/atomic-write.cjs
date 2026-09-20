@@ -6,9 +6,14 @@
 // `writeFileSync(<predictable>.tmp)` + rename, so the same class of bug was
 // still shipping in two files — which is what moving it here fixes. Requiring
 // it is deliberate rather than guarded: falling back to a plain write would
-// silently restore the vulnerability, and every caller already requires
-// ./gsd-finder.cjs at module scope, so a missing hooks/lib is not a new
-// failure mode.
+// silently restore the vulnerability, and there is no safe degradation.
+//
+// That does make it a hard dependency. For gsd-statusline, gsd-session-stop and
+// gsd-auto-update it is not a NEW one — each already required gsd-finder or
+// semver-sort at module scope. gsd-context-monitor is the exception: it had no
+// module-scope lib dependency before, and gained one here. install.js therefore
+// copies hooks/lib before the hook scripts, so an interrupted install leaves
+// old-hooks-with-new-lib (which works) rather than new-hooks-with-no-lib.
 
 const fs = require('node:fs');
 const path = require('node:path');

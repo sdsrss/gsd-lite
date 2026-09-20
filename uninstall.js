@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Plugin uninstaller for GSD-Lite
 
-import { existsSync, rmSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, rmSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, chmodSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -50,9 +51,24 @@ function logRemoved(msg) {
 // carefully.
 function atomicWriteSync(filePath, content) {
   if (_sharedAtomicWrite) return _sharedAtomicWrite(filePath, content);
-  const tmp = filePath + `.${process.pid}-${Date.now()}.tmp`;
-  writeFileSync(tmp, content);
-  renameSync(tmp, filePath);
+  // Mirror the shared helper rather than the pattern it replaced: a unique name
+  // is not an unguessable one, and a fallback that quietly reinstates
+  // writeFileSync-onto-a-predictable-path is the old bug wearing a new name.
+  const tmp = `${filePath}.gsd-tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  let fd;
+  try {
+    fd = openSync(tmp, 'wx', 0o600);
+    writeFileSync(fd, content);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+  try { chmodSync(tmp, statSync(filePath).mode & 0o777); } catch { /* new file — 0600 stands */ }
+  try {
+    renameSync(tmp, filePath);
+  } catch (err) {
+    try { rmSync(tmp, { force: true }); } catch { /* best effort */ }
+    throw err;
+  }
 }
 
 function removeDir(path, label) {
