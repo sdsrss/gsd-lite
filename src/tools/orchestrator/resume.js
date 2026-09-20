@@ -113,6 +113,28 @@ async function applyRecovery(state, basePath, recovery) {
     if (touched) phasePatches.push(patch);
   }
 
+  // skip_failed means "leave these failed and get on with the rest". When there
+  // is no rest, it achieves nothing — and saying so is the whole point. It used
+  // to report success, change not one field, and leave resume re-issuing the
+  // same prompt: five calls in a row all returned recovery_applied:'skip_failed'
+  // with the task still failed. A phase holding a failed task can never be
+  // accepted, so that loop had no exit. Refusing here is the loud failure; the
+  // false success was the quiet one.
+  if (recovery === 'skip_failed') {
+    const somethingLeft = phases.some((phase) => phase.lifecycle !== 'accepted'
+      && (phase.todo || []).some((t) => t.lifecycle !== 'accepted' && t.lifecycle !== 'failed'));
+    if (!somethingLeft) {
+      return {
+        error: true,
+        code: ERROR_CODES.TRANSITION_ERROR,
+        message: `skip_failed cannot proceed: ${skippedTasks.length} task(s) failed and no other work remains, `
+          + 'so there is nothing to continue with. Use retry_failed to requeue them, or replan to change the plan.',
+        failed_tasks: skippedTasks,
+        recovery_options: RECOVERY_OPTIONS.filter((o) => o !== 'skip_failed'),
+      };
+    }
+  }
+
   const persistError = await persist(basePath, {
     workflow_mode: 'executing_task',
     current_task: null,
@@ -407,7 +429,7 @@ async function resumeExecutingTask(state, basePath) {
   };
 }
 
-export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks, confirm_review, recovery } = {}) {
+async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks, confirm_review, recovery } = {}) {
   if (_depth >= MAX_RESUME_DEPTH) {
     return { error: true, message: `resumeWorkflow recursive depth limit exceeded (max ${MAX_RESUME_DEPTH})` };
   }
@@ -817,54 +839,6 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
     }
   }
 
-  // Apply a recovery decision, if one was passed and the workflow is actually
-  // asking for it.
-  //
-  // The rule is one line: `recovery` is accepted exactly when this resume would
-  // have offered `recovery_options`. Deriving it from the response rather than
-  // from workflow_mode is what makes it correct in both directions.
-  //
-  // The first version gated on `workflow_mode === 'failed'` (plus an awaiting_user
-  // hold), which missed the site that fires far more often: a phase with a failed
-  // task and no runnable work returns await_recovery_decision while still in
-  // `executing_task`, because the debugger only escalates to `failed` on
-  // `architecture_concern: true`. All three advertised options were rejected
-  // there — the advertisement-with-no-handler bug this release is named for,
-  // reproduced at the more common of its two sites. It also meant `skip_failed`
-  // moved the workflow from `failed` into `executing_task` and out of the one
-  // mode where recovery worked, stranding the project for good while reporting
-  // success.
-  //
-  // Reading it off the response also gets the dangerous cases right for free:
-  // a live dispatch returns dispatch_executor and an L3 sign-off returns
-  // awaiting_human_confirmation. Neither carries recovery_options, so neither
-  // can be cleared through this door — the L3 gate keeps confirm_review as its
-  // only channel without needing to be named here.
-  if (recovery && _depth === 0) {
-    if (!result?.recovery_options) {
-      return {
-        error: true,
-        code: ERROR_CODES.TRANSITION_ERROR,
-        message: `recovery is only accepted when resume offers recovery_options; this workflow returned '${result?.action}' (workflow_mode '${result?.workflow_mode ?? state.workflow_mode}').`
-          + (state.current_review?.stage === 'human_confirmation'
-            ? ' An L3 human-confirmation hold is resolved with confirm_review: "confirm" or "reject".'
-            : ''),
-      };
-    }
-    // Re-read rather than reusing the snapshot from the top of this function:
-    // producing `result` can itself persist (the recovery-decision branch clears
-    // current_task, the awaiting_user branch writes through tryAutoUnblock), so
-    // that snapshot's _version is already behind and applyRecovery's optimistic
-    // lock would reject its own caller's write as a conflict.
-    const current = await read({ basePath });
-    if (current.error) return current;
-    const applied = await applyRecovery(current, basePath, recovery);
-    if (applied.error) return applied;
-    const resumed = await resumeWorkflow({ basePath, _depth: _depth + 1 });
-    if (resumed.error) return resumed;
-    return { ...resumed, recovery_applied: recovery };
-  }
-
   // Attach display-ready summary to all successful responses
   if (result?.success && !result.summary) {
     const summary = _buildResumeSummary(state, result);
@@ -876,4 +850,71 @@ export async function resumeWorkflow({ basePath = process.cwd(), _depth = 0, unb
   }
 
   return result;
+}
+
+/**
+ * Resume the workflow, applying a recovery decision when one was asked for.
+ *
+ * The recovery gate lives out here, wrapping every return path, because that is
+ * the only way the rule it implements can actually hold: `recovery` is accepted
+ * exactly when this resume offered `recovery_options`.
+ *
+ * One honest limit on the rule. `awaiting_user(human_confirmation) →
+ * executing_task → failed` carries the stage into the `failed` branch, which
+ * offers recovery_options without consulting it, so recovery IS accepted there
+ * and clears current_review. That is a defence-in-depth gap, not an acceptance
+ * bypass: the task stays `checkpointed`, and the gate that actually enforces L3
+ * sign-off is level-driven in reviewer.js, so the next phase review re-raises
+ * it. Preserving the field here was tried and does nothing — resumeExecutingTask
+ * clears current_review on every dispatch path anyway, which is also why a
+ * plain state-update already clears it on main. The field is a hold marker, not
+ * the gate.
+ *
+ * Inside _resumeWorkflow the rule was true of the paths that reach the bottom of
+ * the function and false of the ones that do not. `unblock_tasks`,
+ * `confirm_review` and the awaiting_user auto-unblock branch all return early —
+ * and the auto-unblock branch can return `await_recovery_decision` WITH
+ * `recovery_options` after recursing. So a user answering the prompt the
+ * response printed had their answer dropped under a success: the
+ * advertisement-with-no-handler bug this release is named for, at a third site,
+ * introduced by the fix for the first two. A gate placed anywhere inside a
+ * function with early returns is a gate on some of them.
+ */
+export async function resumeWorkflow(args = {}) {
+  const { basePath = process.cwd(), _depth = 0, recovery } = args;
+
+  // Validate the value before anything runs, so a bad one cannot ride along
+  // with unblock_tasks or confirm_review and be dropped as a no-op.
+  if (recovery !== undefined && recovery !== null && !RECOVERY_OPTIONS.includes(recovery)) {
+    return {
+      error: true,
+      code: ERROR_CODES.INVALID_INPUT,
+      message: `recovery must be one of ${RECOVERY_OPTIONS.join(', ')} (got ${JSON.stringify(recovery)})`,
+    };
+  }
+
+  const result = await _resumeWorkflow(args);
+  if (!recovery || _depth !== 0 || result?.error) return result;
+
+  if (!result?.recovery_options) {
+    return {
+      error: true,
+      code: ERROR_CODES.TRANSITION_ERROR,
+      message: `recovery is only accepted when resume offers recovery_options; this workflow returned '${result?.action}' (workflow_mode '${result?.workflow_mode}').`
+        + (result?.action === 'awaiting_human_confirmation'
+          ? ' An L3 human-confirmation hold is resolved with confirm_review: "confirm" or "reject".'
+          : ''),
+    };
+  }
+
+  // Re-read rather than reusing _resumeWorkflow's snapshot: producing the result
+  // can itself persist, so that snapshot's _version is already behind and
+  // applyRecovery's optimistic lock would reject its own caller's write.
+  const current = await read({ basePath });
+  if (current.error) return current;
+  const applied = await applyRecovery(current, basePath, recovery);
+  if (applied.error) return applied;
+  const resumed = await _resumeWorkflow({ basePath, _depth: _depth + 1 });
+  if (resumed.error) return resumed;
+  return { ...resumed, recovery_applied: recovery };
 }

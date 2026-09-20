@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, unlinkSync, symlinkSync, lstatSync, readFileSync } from 'node:fs';
+import { writeFileSync, unlinkSync, symlinkSync, lstatSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -496,6 +496,30 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
       assert.equal(readFileSync(decoy, 'utf8'), 'planted', 'the decoy was written through');
     } finally {
       try { unlinkSync(decoy); } catch {}
+      cleanupSession(sid);
+    }
+  });
+
+  it('still emits the warning when the debounce path is unwritable', () => {
+    // The symlink case no longer exercises the try/catch — atomicWrite evicts the
+    // link and succeeds — so the guard added for it had no test reaching it. A
+    // directory at the destination is a write that genuinely cannot complete:
+    // rename onto it fails, and the warning must still come out.
+    const sid = nextSessionId();
+    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
+    writeBridgeFile(sid, {
+      remaining_percentage: 20,
+      used_pct: 80,
+      has_gsd: true,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+    try {
+      mkdirSync(warnPath, { recursive: true });
+      const result = runHook({ session_id: sid });
+      assert.notEqual(result.stdout.trim(), '', 'an unwritable debounce path swallowed the warning');
+      assert.match(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, /CONTEXT CRITICAL/);
+    } finally {
+      try { rmSync(warnPath, { recursive: true, force: true }); } catch {}
       cleanupSession(sid);
     }
   });

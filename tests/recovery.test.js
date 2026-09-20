@@ -207,7 +207,10 @@ describe('resume recovery parameter', () => {
     assert.equal(probe.workflow_mode, 'executing_task', 'setup: this site fires without entering failed');
   }
 
-  for (const option of ['retry_failed', 'skip_failed', 'replan']) {
+  // skip_failed is excluded here on purpose: enterStuckWhileExecuting leaves
+  // nothing else runnable, which is exactly the state where skipping achieves
+  // nothing — covered by its own test below.
+  for (const option of ['retry_failed', 'replan']) {
     it(`accepts ${option} at the executing_task recovery site`, async () => {
       await withProject(`stuck-exec-${option}`, async (basePath) => {
         await enterStuckWhileExecuting(basePath);
@@ -219,26 +222,43 @@ describe('resume recovery parameter', () => {
     });
   }
 
-  it('leaves a way out after skip_failed', async () => {
-    // skip_failed used to move the workflow from `failed` into executing_task —
-    // out of the only mode where recovery was accepted — so the project was
-    // stranded with resume repeating the same unanswerable prompt forever, after
-    // reporting success.
-    // The trap needs no runnable work left: with something still to run,
-    // skip_failed does what it says and resume dispatches it. It is the
-    // nothing-left case that used to strand the project.
-    await withProject('skip-not-a-trap', async (basePath) => {
+  it('accepts skip_failed when other work can still run', async () => {
+    await withProject('skip-with-work-left', async (basePath) => {
       await walkModes(basePath, ['executing_task']);
-      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' }] }] }, 'start both');
-      await step(basePath, { current_task: null, phases: [{ id: 1, lifecycle: 'failed', todo: [{ id: '1.1', lifecycle: 'failed' }, { id: '1.2', lifecycle: 'accepted' }] }] }, 'fail 1.1, accept 1.2');
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, 'start 1.1');
+      await step(basePath, { current_task: null, phases: [{ id: 1, lifecycle: 'failed', todo: [{ id: '1.1', lifecycle: 'failed' }] }] }, 'fail 1.1');
+      await walkModes(basePath, ['failed']);
+
+      const result = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+      assert.ok(!result.error, `${result.code}: ${result.message}`);
+      assert.equal(result.recovery_applied, 'skip_failed');
+
+      const state = await read({ basePath });
+      // The failure stays on the record; 1.2 is what gets picked up.
+      assert.equal(state.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'failed');
+      assert.equal(result.task_id, '1.2');
+    });
+  });
+
+  it('stays recoverable after a skip_failed that did continue', async () => {
+    // skip_failed used to move the workflow out of the only mode where recovery
+    // was accepted, stranding the project. Recovery is keyed on the response
+    // now, so a state that still needs a decision still offers one.
+    await withProject('skip-then-recover', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, 'start 1.1');
+      await step(basePath, { current_task: null, phases: [{ id: 1, lifecycle: 'failed', todo: [{ id: '1.1', lifecycle: 'failed' }] }] }, 'fail 1.1');
       await walkModes(basePath, ['failed']);
 
       const skipped = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
       assert.ok(!skipped.error, `${skipped.code}: ${skipped.message}`);
 
+      // 1.2 is running now; finish it so the phase runs out of work again.
+      await step(basePath, { current_task: null, phases: [{ id: 1, todo: [{ id: '1.2', lifecycle: 'accepted' }] }] }, 'accept 1.2');
+
       const retry = await resumeWorkflow({ basePath, recovery: 'retry_failed' });
       assert.ok(!retry.error,
-        `after skip_failed the workflow could not be recovered at all: ${retry.code}: ${retry.message}`);
+        `the workflow became unrecoverable after skip_failed: ${retry.code}: ${retry.message}`);
       assert.equal(retry.recovery_applied, 'retry_failed');
     });
   });
@@ -281,6 +301,50 @@ describe('resume recovery parameter', () => {
       const after = (await read({ basePath })).phases.find(p => p.id === 1).phase_review;
       assert.deepEqual(after, before,
         'an accepted phase had its review record reset — that is finished history');
+    });
+  });
+
+  it('applies recovery from the awaiting_user auto-unblock path', async () => {
+    // awaiting_user with no review stage and no blocked tasks falls through to
+    // tryAutoUnblock, which persists executing_task and RECURSES — and that
+    // branch returned early, skipping the gate. The response said
+    // await_recovery_decision and carried recovery_options, the user answered,
+    // and the answer was dropped under a success. Third site of the same bug,
+    // introduced by the fix for the first two; the gate now wraps every return.
+    await withProject('recover-autounblock', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' }] }] }, 'start both');
+      await step(basePath, { current_task: null, phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'failed' }, { id: '1.2', lifecycle: 'accepted' }] }] }, 'fail 1.1');
+      await step(basePath, { workflow_mode: 'awaiting_user', current_review: null }, 'to awaiting_user');
+
+      const result = await resumeWorkflow({ basePath, recovery: 'retry_failed' });
+      assert.ok(!result.error, `${result.code}: ${result.message}`);
+      assert.equal(result.recovery_applied, 'retry_failed', 'the answer was dropped under a success');
+
+      const task = (await read({ basePath })).phases[0].todo.find(t => t.id === '1.1');
+      assert.notEqual(task.lifecycle, 'failed', 'nothing was actually requeued');
+    });
+  });
+
+  it('refuses skip_failed when there is nothing left to skip to', async () => {
+    // Reported success and changed nothing: five consecutive calls each returned
+    // recovery_applied:'skip_failed' with the task still failed and resume still
+    // asking. A phase holding a failed task can never be accepted, so the loop
+    // had no exit.
+    await withProject('skip-nothing-left', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }, { id: '1.2', lifecycle: 'running' }] }] }, 'start both');
+      await step(basePath, { current_task: null, phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'failed' }, { id: '1.2', lifecycle: 'accepted' }] }] }, 'fail 1.1, accept 1.2');
+
+      const result = await resumeWorkflow({ basePath, recovery: 'skip_failed' });
+      assert.equal(result.error, true, 'skip_failed reported success while doing nothing');
+      assert.equal(result.code, 'TRANSITION_ERROR');
+      assert.deepEqual(result.recovery_options, ['retry_failed', 'replan'],
+        'the refusal should name the options that do work');
+
+      // ...and the ones it names must actually work from here.
+      const retry = await resumeWorkflow({ basePath, recovery: 'retry_failed' });
+      assert.ok(!retry.error, `${retry.code}: ${retry.message}`);
     });
   });
 
