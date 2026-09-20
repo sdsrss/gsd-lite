@@ -2,6 +2,61 @@
 
 All notable changes to this project are documented here.
 
+## [0.11.2] - 2026-09-20
+
+**`gsd uninstall` could report success after leaving your hooks registered.**
+It deletes the hook files first and deregisters them second, and every registry
+edit sat in a bare `catch`. A `settings.json` it could not parse therefore
+produced: files gone, hook and MCP entries still registered at paths that no
+longer exist, `✓ GSD-Lite uninstalled.`, exit 0. Every session after that ran a
+hook command that was not on disk, and the only line you read said it had
+finished. The same silence covered `known_marketplaces.json`,
+`installed_plugins.json`, the composite statusLine registry, and a missing
+`hook-registry.cjs` helper.
+
+The closing line and the exit code now come off one object, so they cannot
+disagree: everything removed → exit 0 and the success line; nothing installed →
+exit 0 and "Nothing to remove"; any step that did not finish → exit 1, naming
+each one and what it leaves behind. A registry file that is simply absent stays
+a non-event. An earlier attempt at this was reverted for printing a new message
+and still exiting 0 (7b39ae0), which is why the two are now read from the same
+field rather than kept in step by hand.
+
+**A plan could be accepted and then never finish.** A task dependency gated on
+`phase_complete` — `{kind: 'task', id: '1.1', gate: 'phase_complete'}` — passed
+all three authoring paths (`state-init`, `state-patch add_task`, `state-patch
+add_dependency`) and was refused by the scheduler on every call. The task never
+became runnable, so the phase never reached all-accepted, so `current_phase`
+never moved past it. The plan was valid, the project could not be finished, and
+the only ways out were `replan` or editing `state.json` by hand.
+
+Gates are per dependency kind, and the three authoring paths each checked them
+against one flat set. The vocabulary now lives beside the scheduler semantics
+it was read off — a task dependency takes `checkpoint` or `accepted`, a phase
+dependency also takes `phase_complete` — and both sides import it. This is a
+patch, not a breaking change: the pair it now rejects at authoring time is the
+one that could never run.
+
+Writing the test for that turned up a second hole in the same place: a gate
+outside the vocabulary, or a dependency kind that is neither `task` nor
+`phase`, fell through every branch of the scheduler and was treated as
+*satisfied* — silently dropping the ordering the plan asked for. Those arrive
+only from a hand-edited or foreign-version `state.json`, which is exactly when
+a quiet answer is worst. Unresolvable now means unsatisfied, and `resume` says
+the task can never run as written instead of describing a wait that will not
+end.
+
+**Also**
+
+- The test suite no longer fails at random on Node 20. `git commit` forks
+  `git maintenance run --auto --detach`, which was still writing inside `.git`
+  when a fixture removed its temp repo — `ENOTEMPTY`, in whichever of the nine
+  git fixtures lost the race (#9). Every git the suite runs now reads a fixture
+  config with `gc.auto=0`, so there is no background writer to race.
+- The linter covers `cli.js`, `install.js`, `uninstall.js`, `launcher.js` and
+  `scripts/**` for the first time — the files a user runs before anything else
+  works, and where the last three reverted bugs lived.
+
 ## [0.11.1] - 2026-09-20
 
 **`skip_failed` refused when a sibling task was still running, and resume kept
