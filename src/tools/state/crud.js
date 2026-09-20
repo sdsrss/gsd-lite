@@ -23,7 +23,7 @@ import {
   loadState,
   withStateLock,
 } from './constants.js';
-import { propagateInvalidation, propagateCrossPhaseInvalidation } from './logic.js';
+import { phaseReviewSatisfied, propagateInvalidation, propagateCrossPhaseInvalidation } from './logic.js';
 
 /**
  * Compute SHA-256 content hashes for an array of file paths.
@@ -512,12 +512,10 @@ export async function phaseComplete({
       };
     }
 
-    const allTasksAutoAccepted = phase.lifecycle === 'active'
-      && phase.todo?.length > 0 && phase.todo.every(t => t.lifecycle === 'accepted');
-    const reviewPassed = phase.phase_review?.status === 'accepted'
-      || phase.phase_handoff.required_reviews_passed === true
-      || allTasksAutoAccepted;
-    if (!reviewPassed) {
+    // phaseReviewSatisfied carries the all-tasks-accepted clause this gate used
+    // to spell out inline, including the lifecycle condition on it — see its
+    // doc comment in logic.js for why each part is there.
+    if (!phaseReviewSatisfied(phase)) {
       return {
         error: true,
         code: ERROR_CODES.HANDOFF_GATE,
@@ -579,7 +577,12 @@ export async function phaseComplete({
 
     // Apply transition
     phase.lifecycle = 'accepted';
-    phase.phase_handoff.required_reviews_passed = reviewPassed;
+    // Reaching here means the gate above passed — it returns HANDOFF_GATE
+    // otherwise — so record that, rather than re-deriving it. Re-deriving would
+    // now answer differently: lifecycle has just become 'accepted', which
+    // retires the all-tasks-accepted clause, and a phase that completed through
+    // it would write back `false`.
+    phase.phase_handoff.required_reviews_passed = true;
     phase.phase_handoff.tests_passed = testsPassed;
     if (direction_ok !== undefined) {
       phase.phase_handoff.direction_ok = direction_ok;

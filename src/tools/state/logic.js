@@ -24,6 +24,36 @@ import {
 } from './constants.js';
 
 /**
+ * Has this phase's review requirement been met?
+ *
+ * One rule, three callers — the zero-task branch below, `phaseComplete`'s
+ * handoff gate in crud.js, and resume.js's auto-completion. It used to be
+ * written out three times and the copies had already diverged: two carried an
+ * all-tasks-accepted clause, one did not, and only crud.js required
+ * `lifecycle === 'active'` on it.
+ *
+ *  - A recorded, accepted phase review satisfies it, as does the reviewer's own
+ *    `required_reviews_passed` flag.
+ *  - So does "every task accepted, no review ever started": L0 tasks auto-accept
+ *    without an individual review, so `required_reviews_passed` stays false and
+ *    the phase could otherwise never complete (bee5ce2).
+ *  - Once a review is in flight (lifecycle 'reviewing') that no longer applies.
+ *    A review someone started has to finish; auto-accepting would discard it.
+ *  - A zero-task phase has nothing to accept, so only the recorded forms count.
+ *    Without the length check an empty milestone would pass vacuously — every
+ *    task in an empty list is accepted.
+ */
+export function phaseReviewSatisfied(phase) {
+  if (!phase) return false;
+  if (phase.phase_review?.status === 'accepted') return true;
+  if (phase.phase_handoff?.required_reviews_passed === true) return true;
+  const todo = phase.todo || [];
+  return phase.lifecycle === 'active'
+    && todo.length > 0
+    && todo.every(t => t.lifecycle === 'accepted');
+}
+
+/**
  * Select the next runnable task from a phase, respecting dependency gates.
  * Returns { task } if a runnable task is found,
  * { mode: 'trigger_review' } if all remaining are checkpointed,
@@ -43,9 +73,7 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
   // makes the resume loop oscillate forever (review accepts → resume → review again)
   // because an empty phase never reaches the normal all-accepted completion path.
   if (phase.todo.length === 0) {
-    const reviewPassed = phase.phase_review?.status === 'accepted'
-      || phase.phase_handoff?.required_reviews_passed === true;
-    return reviewPassed ? { task: undefined, diagnostics: [] } : { mode: 'trigger_review' };
+    return phaseReviewSatisfied(phase) ? { task: undefined, diagnostics: [] } : { mode: 'trigger_review' };
   }
 
   const runnableTasks = [];

@@ -1,4 +1,4 @@
-import { ERROR_CODES, read, selectRunnableTask } from '../state/index.js';
+import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask } from '../state/index.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
 import { join } from 'node:path';
 import { unlink } from 'node:fs/promises';
@@ -433,15 +433,19 @@ async function resumeExecutingTask(state, basePath) {
 
   // P0-1: Auto phase completion — when all tasks accepted and review passed,
   // signal complete_phase instead of going idle
-  const allAccepted = phase.todo.length > 0 && phase.todo.every(t => t.lifecycle === 'accepted');
-  const reviewPassed = phase.phase_review?.status === 'accepted'
-    || phase.phase_handoff?.required_reviews_passed === true
-    || allAccepted;
-  // Zero-task phase (empty milestone) is complete-able once its vacuous review passed —
-  // otherwise it can never satisfy the all-tasks-accepted condition and stalls.
-  const emptyPhaseDone = phase.todo.length === 0
-    && (phase.phase_review?.status === 'accepted' || phase.phase_handoff?.required_reviews_passed === true);
-  if ((allAccepted && reviewPassed) || emptyPhaseDone) {
+  // Every task done (or none to do, for an empty milestone), and the phase's
+  // review requirement met — the same predicate phaseComplete's handoff gate
+  // uses, so this cannot advertise a completion that the next call refuses.
+  //
+  // The old form asked `allAccepted && reviewPassed` where reviewPassed itself
+  // included allAccepted, so the review half could not change the answer: it
+  // read as a check and was not one. It landed on the right answer anyway,
+  // because selectRunnableTask returns trigger_review above whenever a phase
+  // review is still outstanding — a guard that is correct only as long as
+  // another function was consulted first, which is the shape of #10. This one
+  // asks the question itself.
+  const workDone = phase.todo.length === 0 || phase.todo.every(t => t.lifecycle === 'accepted');
+  if (workDone && phaseReviewSatisfied(phase)) {
     // Auto-advance phase lifecycle to 'reviewing' if currently 'active'
     // (mirrors trigger_review path at line 480-482)
     if (phase.lifecycle === 'active') {
