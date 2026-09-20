@@ -493,7 +493,7 @@ export function main() {
     // StatusLine is a top-level setting that the plugin system (hooks.json)
     // cannot manage. Always register, regardless of install method.
     const statuslinePath = join(CLAUDE_DIR, 'hooks', 'gsd-statusline.cjs');
-    let statusLineRegistered = registerStatusLine(settings, statuslinePath);
+    const statusLineRegistered = registerStatusLine(settings, statuslinePath);
 
     // Register hooks here whatever the install method, including when the
     // plugin is also present. That looks like it would double-fire, and the

@@ -9,8 +9,8 @@
   "scripts": {
     "test": "node --require ./tests/git-sandbox.cjs --test tests/*.test.js",
     "test:coverage": "c8 --check-coverage --lines 80 --branches 75 --reporter=text --reporter=lcov node --require ./tests/git-sandbox.cjs --test tests/*.test.js",
-    "lint": "biome check src/ tests/ hooks/",
-    "lint:fix": "biome check --write src/ tests/ hooks/",
+    "lint": "biome check src/ tests/ hooks/ cli.js install.js uninstall.js launcher.js scripts/",
+    "lint:fix": "biome check --write src/ tests/ hooks/ cli.js install.js uninstall.js launcher.js scripts/",
     "start": "node src/server.js",
     "version": "node scripts/sync-versions.js && git add .claude-plugin/plugin.json .claude-plugin/marketplace.json",
     "prepare": "[ -d .git ] && ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit || true",
