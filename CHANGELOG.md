@@ -36,15 +36,18 @@ Minor, not patch: `orchestrator-resume` gains a `recovery` parameter.
 
 `skip_failed` refuses rather than reporting a success it did not achieve. It
 means "leave these failed and get on with the rest", so it needs a rest to get
-on with, and that question is now asked exactly the way the scheduler asks it.
-Two things it gets right that a looser check did not: the rest has to be in the
-*current* phase, because a phase holding a failed task can never be accepted and
-`current_phase` never advances past it, so later-phase work cannot be reached
-from there; and a task only counts if it can actually run, which a pending task
-whose dependency is the failed one cannot. The refusal tells you which case you
-are in and names what is blocking each remaining task, because "no other work
-remains" reads as wrong to anyone looking at a pending phase 2, and so does
-refusing with no reason given.
+on with, and the question it asks now is whether resume would just come back
+asking the same thing — which is the loop it exists to prevent. Two things
+follow. The rest has to be in the *current* phase, because a phase holding a
+failed task can never be accepted and `current_phase` never advances past it, so
+later-phase work cannot be reached from there. And a task that is merely waiting
+on you still counts as somewhere to go: a blocked sibling puts the workflow into
+`awaiting_user` with the blockers listed, which you clear with `unblock_tasks`.
+What does not count is a task nothing can move — a pending one whose dependency
+is the task that just failed. The refusal tells you which case you are in and
+names what is holding each remaining task, because "no other work remains" reads
+as wrong to anyone looking at a pending phase 2, and so does refusing with no
+reason given.
 
 `recovery` can no longer be sent alongside `unblock_tasks` or `confirm_review`.
 They are three different ways to resolve a hold, the combination is refused as
