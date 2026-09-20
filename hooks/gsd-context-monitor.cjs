@@ -22,6 +22,7 @@
 const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite, readJsonOwned } = require('./lib/atomic-write.cjs');
+const { bridgePaths } = require('./lib/ctx-bridge.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -57,8 +58,13 @@ process.stdin.on('end', () => {
     const sessionId = String(rawSessionId).replace(/[^a-zA-Z0-9_-]/g, '');
     if (!sessionId) process.exit(0);
 
-    const tmpDir = os.tmpdir();
-    const metricsPath = path.join(tmpDir, `gsd-ctx-${sessionId}.json`);
+    // Same helper the statusline writes through — the two are separate
+    // processes and a second copy of this path expression is a disagreement
+    // waiting to happen. Null means there is nowhere private to keep it, in
+    // which case there is no bridge to read.
+    const paths = bridgePaths(sessionId);
+    if (!paths) process.exit(0);
+    const metricsPath = paths.metrics;
 
     // readJsonOwned folds all four ways this can go wrong — missing, not a regular
     // file, unparseable, or parsed to a non-object — into a single null. Absence
@@ -89,7 +95,7 @@ process.stdin.on('end', () => {
     }
 
     // Debounce logic
-    const warnPath = path.join(tmpDir, `gsd-ctx-${sessionId}-warned.json`);
+    const warnPath = paths.warned;
     let warnData = { callsSinceWarn: 0, lastLevel: null };
 
     // Only a plain object is adopted. An array passed the old `typeof` check and

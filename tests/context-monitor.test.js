@@ -1,9 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, unlinkSync, symlinkSync, lstatSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from "node:module";
+
+// The same helper the hooks use to locate the bridge: a test that rebuilds the
+// path itself cannot notice the two drifting apart, which is what moving the
+// files out of the shared temp directory (#8) would otherwise have risked.
+const { bridgePaths } = createRequire(import.meta.url)("../hooks/lib/ctx-bridge.cjs");
 
 const HOOK_PATH = join(import.meta.dirname, '..', 'hooks', 'gsd-context-monitor.cjs');
 
@@ -30,7 +35,7 @@ function runHook(inputData, opts = {}) {
  * Write a bridge metrics file for a given session ID.
  */
 function writeBridgeFile(sessionId, metrics) {
-  const bridgePath = join(tmpdir(), `gsd-ctx-${sessionId}.json`);
+  const bridgePath = bridgePaths(sessionId).metrics;
   writeFileSync(bridgePath, JSON.stringify(metrics));
   return bridgePath;
 }
@@ -39,8 +44,8 @@ function writeBridgeFile(sessionId, metrics) {
  * Clean up bridge + warned files for a session.
  */
 function cleanupSession(sessionId) {
-  const bridgePath = join(tmpdir(), `gsd-ctx-${sessionId}.json`);
-  const warnPath = join(tmpdir(), `gsd-ctx-${sessionId}-warned.json`);
+  const bridgePath = bridgePaths(sessionId).metrics;
+  const warnPath = bridgePaths(sessionId).warned;
   try { unlinkSync(bridgePath); } catch {}
   try { unlinkSync(warnPath); } catch {}
 }
@@ -399,7 +404,7 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
 
   it('handles malformed bridge file JSON gracefully', () => {
     const sid = nextSessionId();
-    const bridgePath = join(tmpdir(), `gsd-ctx-${sid}.json`);
+    const bridgePath = bridgePaths(sid).metrics;
     writeFileSync(bridgePath, 'not valid json');
     try {
       const result = runHook({ session_id: sid });
@@ -453,7 +458,7 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
   // shared host `ls /tmp/gsd-ctx-*` hands anyone the session id.
   it('still emits the warning when the debounce file cannot be written', () => {
     const sid = nextSessionId();
-    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
+    const warnPath = bridgePaths(sid).warned;
     writeBridgeFile(sid, {
       remaining_percentage: 20,
       used_pct: 80,
@@ -463,7 +468,7 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
     try {
       // A dangling link. It is evicted by the write now, but the point of this
       // test is the warning: whatever the debounce file does, it must still fire.
-      symlinkSync(join(tmpdir(), `gsd-ctx-${sid}-nonexistent-target`), warnPath);
+      symlinkSync(join(bridgePaths(sid).dir, `gsd-ctx-${sid}-nonexistent-target`), warnPath);
 
       const result = runHook({ session_id: sid });
       assert.notEqual(result.stdout.trim(), '',
@@ -480,8 +485,8 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
     // link must not survive. Pinning it would silence the debounce reset and
     // leave a path an attacker controls sitting in the temp dir indefinitely.
     const sid = nextSessionId();
-    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
-    const decoy = join(tmpdir(), `gsd-ctx-${sid}-decoy.json`);
+    const warnPath = bridgePaths(sid).warned;
+    const decoy = join(bridgePaths(sid).dir, `gsd-ctx-${sid}-decoy.json`);
     writeFileSync(decoy, 'planted');
     writeBridgeFile(sid, {
       remaining_percentage: 20,
@@ -506,7 +511,7 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
     // directory at the destination is a write that genuinely cannot complete:
     // rename onto it fails, and the warning must still come out.
     const sid = nextSessionId();
-    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
+    const warnPath = bridgePaths(sid).warned;
     writeBridgeFile(sid, {
       remaining_percentage: 20,
       used_pct: 80,
@@ -532,7 +537,7 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
     // advance the debounce: self-sustaining suppression of the warning, from a
     // single write, on a path `ls /tmp/gsd-ctx-*` hands to any local user.
     const sid = nextSessionId();
-    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
+    const warnPath = bridgePaths(sid).warned;
     writeBridgeFile(sid, {
       remaining_percentage: 20,
       used_pct: 80,

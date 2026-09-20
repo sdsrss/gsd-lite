@@ -5,9 +5,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
 const { findGsdDir } = require('./lib/gsd-finder.cjs');
 const { atomicWrite, readMarker, readJsonOwned } = require('./lib/atomic-write.cjs');
+const { bridgePaths } = require('./lib/ctx-bridge.cjs');
 
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
@@ -77,7 +77,14 @@ process.stdin.on('end', () => {
       // Write bridge file for context-monitor PostToolUse hook (skip if remaining unchanged)
       if (session) {
         try {
-          const bridgePath = path.join(os.tmpdir(), `gsd-ctx-${session}.json`);
+          // One helper decides where this lives, because the reader is a
+          // different process (gsd-context-monitor.cjs) and the two used to
+          // hold separate copies of the same path expression. It also keeps
+          // the file out of the shared temp directory entirely — see
+          // hooks/lib/ctx-bridge.cjs for why that matters (#8).
+          const paths = bridgePaths(session);
+          if (!paths) throw new Error('no private directory for the context bridge');
+          const bridgePath = paths.metrics;
           let needsWrite = true;
           // Anything unreadable, unparseable or not object-shaped comes back null
           // and leaves needsWrite true, so the obstruction is rewritten rather
@@ -85,13 +92,12 @@ process.stdin.on('end', () => {
           const existing = readJsonOwned(bridgePath);
           if (existing && existing.remaining_percentage === remaining && existing.has_gsd === hasGsd) needsWrite = false;
           if (needsWrite) {
-            // R-23 made the tmp name unique (pid+timestamp) so concurrent
-            // statusline processes would not race on a shared `.tmp`. Unique is
-            // not the same as unguessable: os.tmpdir() is world-writable on a
-            // shared host, and both components are derivable, so another local
-            // user could plant a symlink and have writeFileSync follow it.
-            // atomicWrite adds the random suffix and the O_EXCL open, and its
-            // rename evicts a planted link rather than being blocked by it.
+            // atomicWrite rather than writeFileSync: the temp name is random
+            // and opened O_EXCL, and the rename evicts a planted link instead
+            // of following it. That mattered most when this file lived in the
+            // shared temp directory; the directory is private now, so it is
+            // defence in depth against our own leftovers and against a
+            // same-user process, not the only thing standing in the way.
             atomicWrite(bridgePath, JSON.stringify({
               session_id: session,
               remaining_percentage: remaining,

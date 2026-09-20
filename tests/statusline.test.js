@@ -5,6 +5,12 @@ import { existsSync, lstatSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from "node:module";
+
+// The same helper the hooks use to locate the bridge: a test that rebuilds the
+// path itself cannot notice the two drifting apart, which is what moving the
+// files out of the shared temp directory (#8) would otherwise have risked.
+const { bridgePaths } = createRequire(import.meta.url)("../hooks/lib/ctx-bridge.cjs");
 
 const HOOK_PATH = join(import.meta.dirname, '..', 'hooks', 'gsd-statusline.cjs');
 
@@ -14,7 +20,7 @@ const HOOK_PATH = join(import.meta.dirname, '..', 'hooks', 'gsd-statusline.cjs')
 const bridgeSessions = new Set();
 function clearBridgeFiles() {
   for (const id of bridgeSessions) {
-    try { rmSync(join(tmpdir(), `gsd-ctx-${id}.json`), { force: true }); } catch { /* best effort */ }
+    try { rmSync(bridgePaths(id).metrics, { force: true }); } catch { /* best effort */ }
   }
   bridgeSessions.clear();
 }
@@ -178,7 +184,7 @@ describe('gsd-statusline ancestor traversal', () => {
 
     // Use unique session ID to avoid stale bridge file from previous runs
     const sessionId = `test-bridge-ancestor-${Date.now()}`;
-    const bridgePath = join(tmpdir(), `gsd-ctx-${sessionId}.json`);
+    const bridgePath = bridgePaths(sessionId).metrics;
     // Clean up any pre-existing bridge file
     try { await rm(bridgePath); } catch {}
 
@@ -358,8 +364,8 @@ describe('statusline: non-numeric context percentage', () => {
   it('evicts a symlink planted at the bridge path instead of honouring it', () => {
     const sid = `sym-${Date.now()}`;
     bridgeSessions.add(sid);
-    const bridgePath = join(tmpdir(), `gsd-ctx-${sid}.json`);
-    const decoy = join(tmpdir(), `gsd-ctx-${sid}-decoy.json`);
+    const bridgePath = bridgePaths(sid).metrics;
+    const decoy = join(bridgePaths(sid).dir, `gsd-ctx-${sid}-decoy.json`);
     try {
       writeFileSync(decoy, JSON.stringify({ remaining_percentage: 99, has_gsd: false }));
       symlinkSync(decoy, bridgePath);
@@ -435,7 +441,7 @@ describe('statusline: non-numeric context percentage', () => {
       }).stdout;
 
       assert.match(out, /\d+%/, 'the statusline did not render');
-      assert.equal(existsSync(join(tmpdir(), `gsd-ctx-${sid}.json`)), true,
+      assert.equal(existsSync(bridgePaths(sid).metrics), true,
         'the bridge file was never written, so context warnings are dead for this session');
       assert.equal(existsSync(join(gsdDir, '.context-health')), true,
         '.context-health was never written, so the awaiting_clear resume gate has nothing to read');
