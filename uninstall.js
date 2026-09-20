@@ -19,15 +19,17 @@ const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 // always exists when there is anything to uninstall.
 const _uninstallRequire = createRequire(import.meta.url);
 const _selfDir = dirname(fileURLToPath(import.meta.url));
-const { removeHookEntry } = (() => {
+function _requireHookLib(file) {
   for (const candidate of [
-    join(_selfDir, 'hooks', 'lib', 'hook-registry.cjs'),
-    join(CLAUDE_DIR, 'hooks', 'lib', 'hook-registry.cjs'),
+    join(_selfDir, 'hooks', 'lib', file),
+    join(CLAUDE_DIR, 'hooks', 'lib', file),
   ]) {
     if (existsSync(candidate)) return _uninstallRequire(candidate);
   }
   return {};
-})();
+}
+const { removeHookEntry } = _requireHookLib('hook-registry.cjs');
+const { atomicWrite: _sharedAtomicWrite } = _requireHookLib('atomic-write.cjs');
 
 function log(msg) { console.log(msg); }
 
@@ -41,7 +43,13 @@ function logRemoved(msg) {
   log(`  ✓ ${msg}`);
 }
 
+// Prefer the shared helper — a unique temp name is not an unguessable one, and
+// this writes settings.json. The inline fallback stays because hooks/lib may be
+// gone by the time an orphan cleanup runs this, and an uninstaller that throws
+// on a missing helper leaves more behind than one that writes slightly less
+// carefully.
 function atomicWriteSync(filePath, content) {
+  if (_sharedAtomicWrite) return _sharedAtomicWrite(filePath, content);
   const tmp = filePath + `.${process.pid}-${Date.now()}.tmp`;
   writeFileSync(tmp, content);
   renameSync(tmp, filePath);
