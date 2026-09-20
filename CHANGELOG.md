@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [0.10.0] - 2026-09-19
+## [0.10.0] - 2026-09-20
 
 **A plugin install now actually installs the hooks.** Found by running the
 install → use → update → self-heal → uninstall path as a new user would, against
@@ -48,8 +48,8 @@ To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
   no Stop hook: no project status injection, no context monitoring, no crash
   marker, no update checks. `claude plugin details gsd` reported `Hooks (0)`
   while the README promised the opposite. `hooks/hooks.json` declares the three
-  hooks again, and `install.js` now *deregisters* its `settings.json` copies when
-  it detects a plugin install, so exactly one registration is live either way.
+  hooks again. Both install paths keep their registrations; the redundant copy
+  stands down at runtime, so exactly one of them fires.
 - **The repository's own `.mcp.json` broke the MCP server for anyone who opened
   the repo.** A `.mcp.json` at the repo root is the plugin's MCP manifest *and*
   project-scope MCP config for any Claude Code session whose working directory is
@@ -66,6 +66,14 @@ To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
   a build the plugin manager never installed, and the only copy being dogfooded
   was one no user ever gets. Set `GSD_SYNC_PLUGIN_CACHE=1` to opt in; the copy
   now mirrors a real install.
+- **Editing `settings.json` hooks could delete another tool's hook.** Claude
+  Code groups hooks by matcher and several tools routinely share a group; every
+  place that touched the `hooks` object — `install.js` registering,
+  `uninstall.js` removing, and the orphan cleanup inside the SessionStart hook —
+  edited at group granularity, so a GSD hook sharing a matcher group took its
+  neighbours with it. Installing or uninstalling GSD silently destroyed them.
+  They now share `hooks/lib/hook-registry.cjs`, which strips exactly one hook
+  and keeps the group for whoever else is in it.
 - Added the `LICENSE` file that `package.json` has always claimed.
 - `commands/resume.md` named `gsd:executor` as the only agent id. That is the
   plugin form; an npx/manual install registers the agents unprefixed, so the
@@ -85,15 +93,6 @@ To stay on the old behaviour: `npm i gsd-lite@0.9.0`, or keep the plugin at
 - A plugin-path session now creates `~/.claude/gsd/runtime/` (update-check
   throttle state, two small files), because the SessionStart hook runs again.
   `/plugin uninstall` does not remove it; `npx gsd-lite uninstall` does.
-
-- **Editing `settings.json` hooks could delete another tool's hook.** Claude
-  Code groups hooks by matcher and several tools routinely share a group; every
-  place that touched the `hooks` object — `install.js` registering,
-  `uninstall.js` removing, and the orphan cleanup inside the SessionStart hook —
-  edited at group granularity, so a GSD hook sharing a matcher group took its
-  neighbours with it. Installing or uninstalling GSD silently destroyed them.
-  They now share `hooks/lib/hook-registry.cjs`, which strips exactly one hook
-  and keeps the group for whoever else is in it.
 
 ### Added
 
