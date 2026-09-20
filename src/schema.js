@@ -645,6 +645,15 @@ export function validateState(state) {
         if (!task.id || typeof task.id !== 'string') {
           errors.push('task.id must be a non-empty string');
         }
+        // The "<phase>.<index>" shape and plan-wide uniqueness are enforced
+        // where ids ENTER a plan — createInitialState, patchPlan add_task, and
+        // the injection path in update() — deliberately not here. A state that
+        // already holds a malformed or duplicated id is a state someone has to
+        // be able to repair: refusing it in validateState would fail every
+        // write, including the patch that would fix it (tests/patch-plan:
+        // "never derives an id from a task id that has no numeric index").
+        // The operations that cannot act safely on such a state refuse on
+        // their own terms instead — see remove_task.
         if (!task.name || typeof task.name !== 'string') {
           errors.push(`Task ${task.id}: name must be a non-empty string`);
         }

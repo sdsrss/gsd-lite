@@ -191,6 +191,39 @@ export async function read({ fields, basePath = process.cwd(), validate = false 
 }
 
 /**
+ * Check an id that is arriving in a plan for the first time, via update()'s
+ * merge rather than through a plan-authoring path.
+ *
+ * Everything that resolves a task id assumes "<phase>.<index>" and plan-wide
+ * uniqueness: `remove_task` looks up the phase holding that id, task-kind
+ * dependencies resolve inside a phase, and `current_task` is a bare id with no
+ * phase beside it. createInitialState and patchPlan add_task enforce it;
+ * update() merges caller-supplied phases and used to push anything it had not
+ * seen, so a second task could arrive under a live id — after which removing
+ * "1.1" deleted whichever copy came first in the phase list.
+ *
+ * Checked here, at the door, rather than in validateState: a state that already
+ * carries a bad id has to stay repairable, and failing validation would fail
+ * every write including the one that would fix it.
+ *
+ * @returns {string|null} error text, or null when the id is fine
+ */
+function _newTaskIdError(state, phase, task) {
+  const id = task?.id;
+  if (typeof id !== 'string' || id.length === 0) {
+    return `task in phase ${phase?.id} has no id`;
+  }
+  if (!new RegExp(`^${phase.id}\\.\\d+$`).test(id)) {
+    return `"${id}" does not belong to phase ${phase.id} (ids are "<phase>.<index>")`;
+  }
+  const clash = (state.phases || []).find(p => p.todo?.some(t => t.id === id));
+  if (clash) {
+    return `"${id}" already exists in phase ${clash.id}`;
+  }
+  return null;
+}
+
+/**
  * Update state.json with canonical field guard and full validation.
  */
 export async function update({ updates, basePath = process.cwd(), expectedVersion, _append_decisions, _propagation_tasks } = {}) {
@@ -284,6 +317,10 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       merged.evidence = { ...(state.evidence || {}), ...updates.evidence };
     }
 
+    // Ids introduced by this merge are checked as they arrive; see
+    // _newTaskIdError. Collected rather than thrown so the caller gets every
+    // bad id at once, and so nothing is written when any of them is bad.
+    const injectionErrors = [];
     if (updates.phases && Array.isArray(updates.phases)) {
       merged.phases = state.phases.map(oldPhase => {
         const newPhase = updates.phases.find(p => p.id === oldPhase.id);
@@ -308,6 +345,11 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
           // Use patchPlan (add_task) for real plan changes.
           for (const newTask of newPhase.todo) {
             if (!oldPhase.todo.find(t => t.id === newTask.id)) {
+              const idError = _newTaskIdError(state, oldPhase, newTask);
+              if (idError) {
+                injectionErrors.push(idError);
+                continue;
+              }
               mergedPhase.todo.push({ ...newTask, lifecycle: 'pending' });
             }
           }
@@ -318,6 +360,13 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       // lifecycle on the phase and every task it carries.
       for (const newPhase of updates.phases) {
         if (!state.phases.find(p => p.id === newPhase.id)) {
+          if (Array.isArray(newPhase.todo)) {
+            // Same rule for a task arriving inside a brand-new phase.
+            for (const t of newPhase.todo) {
+              const idError = _newTaskIdError(state, newPhase, t);
+              if (idError) injectionErrors.push(idError);
+            }
+          }
           merged.phases.push({
             ...newPhase,
             lifecycle: 'pending',
@@ -327,6 +376,13 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
           });
         }
       }
+    }
+    if (injectionErrors.length > 0) {
+      return {
+        error: true,
+        code: ERROR_CODES.INVALID_INPUT,
+        message: `Rejected task id(s): ${injectionErrors.join('; ')}`,
+      };
     }
 
     // Atomic decisions append: accumulate inside the lock against fresh state
@@ -969,7 +1025,18 @@ function _applyPatchOp(state, op) {
       const { task_id } = op;
       if (typeof task_id !== 'string') return { error: true, message: 'task_id must be a string' };
 
-      const phase = state.phases.find(p => p.todo?.some(t => t.id === task_id));
+      // Ids are unique plan-wide and validateState enforces it, but a state
+      // written by an older version can still carry a duplicate. Taking the
+      // first match there deletes work the caller did not name and reports
+      // success, so say what is wrong rather than picking one.
+      const owners = state.phases.filter(p => p.todo?.some(t => t.id === task_id));
+      if (owners.length > 1) {
+        return {
+          error: true,
+          message: `Task ${task_id} exists in more than one phase (${owners.map(p => p.id).join(', ')}) — refusing to guess which one to remove. Fix the duplicate id first.`,
+        };
+      }
+      const phase = owners[0];
       if (!phase) return { error: true, message: `Task ${task_id} not found` };
 
       const task = phase.todo.find(t => t.id === task_id);
