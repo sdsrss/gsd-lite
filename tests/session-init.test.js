@@ -26,6 +26,7 @@ describe('session init update notifications', () => {
       cpSync(SESSION_INIT, join(pluginRoot, 'hooks', 'gsd-session-init.cjs'));
       cpSync(STATUSLINE, join(pluginRoot, 'hooks', 'gsd-statusline.cjs'));
       cpSync(AUTO_UPDATE, join(pluginRoot, 'hooks', 'gsd-auto-update.cjs'));
+      cpSync(LIB_DIR, join(pluginRoot, 'hooks', 'lib'), { recursive: true });
       // Also copy statusline to stable path (install.js always does this)
       cpSync(STATUSLINE, join(claudeDir, 'hooks', 'gsd-statusline.cjs'));
       await writeFile(notifPath, JSON.stringify({
@@ -135,6 +136,7 @@ describe('session init settings.json parse error handling (H5)', () => {
       cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
       cpSync(STATUSLINE, join(claudeDir, 'hooks', 'gsd-statusline.cjs'));
       cpSync(AUTO_UPDATE, join(claudeDir, 'hooks', 'gsd-auto-update.cjs'));
+      cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
 
       // Write corrupted settings.json
       const settingsPath = join(claudeDir, 'settings.json');
@@ -168,6 +170,7 @@ describe('session init settings.json parse error handling (H5)', () => {
       cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
       cpSync(STATUSLINE, join(claudeDir, 'hooks', 'gsd-statusline.cjs'));
       cpSync(AUTO_UPDATE, join(claudeDir, 'hooks', 'gsd-auto-update.cjs'));
+      cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
 
       // No settings.json exists — ENOENT case
       execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {

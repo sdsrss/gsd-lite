@@ -14,7 +14,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const crypto = require('node:crypto');
+const {
+  atomicWrite,
+  atomicWriteJson,
+  atomicWriteThroughLink,
+} = require('./lib/atomic-write.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 // Shared with install.js and uninstall.js: edits settings.json hook entries at
@@ -102,88 +106,6 @@ function findStatusBlock(content) {
   return { begin: -1, end: -1 };
 }
 
-/**
- * Write a file atomically, refusing every way a repository can redirect it.
- *
- * The temp file is opened 'wx' — O_CREAT|O_EXCL — so if anything already exists
- * at that path the open fails instead of following it. This is the part that
- * matters: the old `<path>.gsd-tmp-<pid>` name was guessable, and a cloned repo
- * could pre-create it as a symlink. writeFileSync follows symlinks, so the write
- * went wherever the link pointed and the rename then installed that path as the
- * file we meant to update. A random suffix alone only narrows the window;
- * O_EXCL closes it, and the two together mean an attacker can neither guess the
- * name nor win by planting one.
- *
- * Every write in this hook goes through here. The CLAUDE.md paths add a
- * containment check on top (see atomicWriteThroughLink).
- */
-function atomicWrite(filePath, content) {
-  const tmp = `${filePath}.gsd-tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
-  let fd;
-  try {
-    fd = fs.openSync(tmp, 'wx', 0o600);
-    fs.writeFileSync(fd, content);
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-  // Carry the destination's permissions over. The temp is created 0600 on
-  // purpose — nothing should be able to read a half-written settings.json — but
-  // keeping that mode past the rename silently tightens the user's own file
-  // from 644 to 600 the first time GSD touches it. A file that does not exist
-  // yet keeps 0600.
-  try {
-    fs.chmodSync(tmp, fs.statSync(filePath).mode & 0o777);
-  } catch { /* new file, or stat/chmod unavailable — 0600 stands */ }
-  try {
-    fs.renameSync(tmp, filePath);
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* best effort */ }
-    throw err;
-  }
-}
-
-function atomicWriteJson(filePath, value) {
-  atomicWrite(filePath, JSON.stringify(value, null, 2) + '\n');
-}
-
-/**
- * Atomically rewrite a text file, writing *through* a symlink rather than over
- * it — but never outside `root`.
- *
- * Two failure modes pull in opposite directions. Renaming a temp file onto the
- * link path REPLACES the link with a regular file, so a dotfiles or shared-team
- * CLAUDE.md silently forks a private copy. Following the link wherever it points
- * turns "open a cloned repo" into an arbitrary-file write: a repo shipping
- * `CLAUDE.md -> ~/.bashrc` would get this hook to append lines to a shell rc,
- * with no action from the user beyond opening the project.
- *
- * So resolve the link, then write only if the target is still inside `root`. A
- * link pointing outside is left entirely alone — the status block is a
- * convenience, and GSD_NO_CLAUDEMD_STATUS=1 already exists for people who do not
- * want it. Returns true when it wrote, false when it declined.
- */
-function atomicWriteThroughLink(filePath, content, root) {
-  let target = filePath;
-  try {
-    target = fs.realpathSync(filePath);
-  } catch { /* file does not exist yet — write at the given path */ }
-
-  // Resolve the root too, so a symlinked project directory compares like for like.
-  let resolvedRoot = root;
-  try { resolvedRoot = fs.realpathSync(root); } catch { /* use as given */ }
-
-  const rel = path.relative(resolvedRoot, target);
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
-    if (process.env.GSD_DEBUG) {
-      process.stderr.write(`gsd-session-init: not writing ${filePath} — it resolves outside ${resolvedRoot}\n`);
-    }
-    return false;
-  }
-
-  atomicWrite(target, content);
-  return true;
-}
-
 function cleanupOrphan() {
   // 1. Composite statusLine registry — call removeProvider BEFORE deleting
   //    the lib file it lives in.
@@ -252,7 +174,7 @@ function cleanupOrphan() {
     try { fs.rmSync(path.join(claudeDir, 'hooks', name), { force: true }); } catch { /* best effort */ }
   }
   // 5. Hook lib files (GSD-owned only — don't touch other plugins' libs)
-  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs']) {
+  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs']) {
     try { fs.rmSync(path.join(claudeDir, 'hooks', 'lib', lib), { force: true }); } catch { /* best effort */ }
   }
   // 6. Runtime dir + plugin marketplace + cache dirs (current + legacy names)

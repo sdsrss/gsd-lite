@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -31,12 +31,57 @@ function runStopHook(cwd, pluginRoot) {
 
 async function setupPluginRoot(root) {
   const pluginRoot = join(root, 'plugin');
-  await mkdir(join(pluginRoot, 'hooks', 'lib'), { recursive: true });
-  // Copy hooks
+  await mkdir(join(pluginRoot, 'hooks'), { recursive: true });
+  // Copy hooks. The whole lib/ directory goes across, the way install.js copies
+  // it — picking individual files here meant every new shared helper broke this
+  // suite with a MODULE_NOT_FOUND that says nothing about the real dependency.
   const { cpSync } = await import('node:fs');
   cpSync(join(HOOKS_DIR, 'gsd-session-stop.cjs'), join(pluginRoot, 'hooks', 'gsd-session-stop.cjs'));
-  cpSync(join(HOOKS_DIR, 'lib', 'gsd-finder.cjs'), join(pluginRoot, 'hooks', 'lib', 'gsd-finder.cjs'));
+  cpSync(join(HOOKS_DIR, 'lib'), join(pluginRoot, 'hooks', 'lib'), { recursive: true });
   return pluginRoot;
+}
+
+/**
+ * Run the stop hook, but hold it inside its `git rev-parse HEAD` call until the
+ * caller says go.
+ *
+ * The marker's temp file used to be named `.session-end.<pid>.tmp` — derivable
+ * from the pid alone — so the exploit is to plant a symlink there before the
+ * hook writes. Reproducing that needs the pid, which only exists once the child
+ * is spawned, and needs the write not to have happened yet. A `git` shim that
+ * blocks on a sentinel file gives both: the hook is provably parked in execSync
+ * when `onBlocked` runs, so the test never races the write.
+ */
+async function runStopHookPaused(cwd, pluginRoot, root, onBlocked) {
+  const shimDir = join(root, 'shim');
+  const startedPath = join(root, 'git-started');
+  const sentinelPath = join(root, 'git-go');
+  await mkdir(shimDir, { recursive: true });
+  await writeFile(
+    join(shimDir, 'git'),
+    '#!/bin/sh\n'
+    + `touch "${startedPath}"\n`
+    + `while [ ! -e "${sentinelPath}" ]; do sleep 0.01; done\n`
+    + 'echo 0000000000000000000000000000000000000000\n',
+    { mode: 0o755 },
+  );
+
+  const child = spawn(process.execPath, [join(pluginRoot, 'hooks', 'gsd-session-stop.cjs')], {
+    cwd,
+    stdio: 'ignore',
+    env: { ...process.env, GSD_DEBUG: '1', PATH: `${shimDir}:${process.env.PATH}` },
+  });
+
+  const deadline = Date.now() + 5000;
+  while (!existsSync(startedPath) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 5));
+  }
+  assert.equal(existsSync(startedPath), true, 'git shim never ran — hook did not reach the marker write');
+
+  await onBlocked(child.pid);
+
+  await writeFile(sentinelPath, '');
+  await new Promise(resolve => child.on('exit', resolve));
 }
 
 async function createGsdProject(root, stateOverrides = {}) {
@@ -174,6 +219,59 @@ describe('session stop hook', () => {
 
       const marker = JSON.parse(readFileSync(join(gsdDir, '.session-end'), 'utf8'));
       assert.equal(marker.workflow_mode_was, 'awaiting_user');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// `.gsd/` is part of the repository, so opening a cloned project hands its
+// author control of every path the Stop hook writes to. 0.9.0 closed this for
+// the SessionStart hook; these pin it closed for Stop too.
+describe('session stop hook — hostile .gsd/ contents', () => {
+  it('does not write through a symlink planted at the predictable temp path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-stop-sym-'));
+    try {
+      const pluginRoot = await setupPluginRoot(root);
+      const { gsdDir, projectDir } = await createGsdProject(root);
+
+      const secretPath = join(root, 'secret.txt');
+      await writeFile(secretPath, 'untouched');
+
+      await runStopHookPaused(projectDir, pluginRoot, root, async (pid) => {
+        // Exactly the name the old code derived: marker path + '.' + pid + '.tmp'.
+        await symlink(secretPath, join(gsdDir, `.session-end.${pid}.tmp`));
+      });
+
+      assert.equal(
+        readFileSync(secretPath, 'utf8'),
+        'untouched',
+        'hook followed a planted symlink and wrote outside .gsd/',
+      );
+      // The marker still lands — the fix must not cost the feature.
+      const marker = JSON.parse(readFileSync(join(gsdDir, '.session-end'), 'utf8'));
+      assert.equal(marker.workflow_mode_was, 'executing_task');
+      assert.equal(lstatSync(join(gsdDir, '.session-end')).isSymbolicLink(), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to write when .session-end itself is a symlink', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-stop-sym-'));
+    try {
+      const pluginRoot = await setupPluginRoot(root);
+      const { gsdDir, projectDir } = await createGsdProject(root);
+
+      const secretPath = join(root, 'secret.txt');
+      await writeFile(secretPath, 'untouched');
+      await symlink(secretPath, join(gsdDir, '.session-end'));
+
+      runStopHook(projectDir, pluginRoot);
+
+      assert.equal(readFileSync(secretPath, 'utf8'), 'untouched');
+      // Left exactly as found: refusing beats replacing someone else's link.
+      assert.equal(lstatSync(join(gsdDir, '.session-end')).isSymbolicLink(), true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

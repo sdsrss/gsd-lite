@@ -22,6 +22,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { atomicWriteMarker } = require('./lib/atomic-write.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -102,11 +103,13 @@ process.stdin.on('end', () => {
     const isCritical = remaining <= CRITICAL_THRESHOLD;
     const currentLevel = isCritical ? 'critical' : 'warning';
 
-    // Atomic debounce state write helper
+    // Atomic debounce state write helper. warnPath sits in os.tmpdir(), which is
+    // world-writable on a shared host, and both halves of the old temp name were
+    // derivable — same planted-symlink exposure as the statusline bridge this
+    // file reads from. atomicWriteMarker opens the temp O_EXCL under a random
+    // name and refuses if warnPath itself is a link.
     const writeWarnData = (data) => {
-      const tmpFile = warnPath + `.${process.pid}-${Date.now()}.tmp`;
-      fs.writeFileSync(tmpFile, JSON.stringify(data));
-      fs.renameSync(tmpFile, warnPath);
+      atomicWriteMarker(warnPath, JSON.stringify(data));
     };
 
     // Severity escalation bypasses debounce (lastLevel null = first warning, always fire)
