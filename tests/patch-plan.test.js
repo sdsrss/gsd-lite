@@ -245,7 +245,19 @@ describe('patchPlan — add_dependency', () => {
       basePath: tempDir,
     });
     assert.equal(result.error, true);
-    assert.match(result.message, /gate must be one of/);
+    assert.match(result.message, /gate for a task dependency must be one of/);
+  });
+
+  // The gate vocabulary is per kind; every (kind, gate) pair is pinned against
+  // the scheduler in tests/dep-gates.test.js. This one call site is kept here
+  // because add_dependency is the path a running project uses.
+  it('rejects phase_complete on a task dependency — the scheduler can never satisfy it', async () => {
+    const result = await patchPlan({
+      operations: [{ op: 'add_dependency', task_id: '1.3', requires: { kind: 'task', id: '1.1', gate: 'phase_complete' } }],
+      basePath: tempDir,
+    });
+    assert.equal(result.error, true);
+    assert.match(result.message, /gate for a task dependency must be one of checkpoint, accepted/);
   });
 
   it('rejects duplicate dependency', async () => {

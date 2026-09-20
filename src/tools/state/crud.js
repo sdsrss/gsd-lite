@@ -6,7 +6,9 @@ import { createHash } from 'node:crypto';
 import { ensureDir, readJson, writeJson, writeAtomic, getStatePath, getGsdDir, getGitHead, isPlainObject, clearGsdDirCache } from '../../utils.js';
 import {
   CANONICAL_FIELDS,
+  DEP_GATES,
   TASK_LEVELS,
+  isDepGateAllowed,
   validateState,
   validateStateUpdate,
   validateTransition,
@@ -832,7 +834,8 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
   }, statePath);
 }
 
-const VALID_GATES = ['checkpoint', 'accepted', 'phase_complete'];
+// Gate vocabulary is per kind and lives in schema.js next to the scheduler
+// semantics it was read off; see DEP_GATES there.
 
 /**
  * Validate one `requires` entry for a task owned by `ownerPhase`.
@@ -852,8 +855,8 @@ function _validateRequiresEntry(state, ownerPhase, dep) {
   if (!['task', 'phase'].includes(dep.kind)) {
     return `requires.kind must be "task" or "phase" (got ${JSON.stringify(dep.kind)})`;
   }
-  if (dep.gate && !VALID_GATES.includes(dep.gate)) {
-    return `requires.gate must be one of ${VALID_GATES.join(', ')} (got ${JSON.stringify(dep.gate)})`;
+  if (dep.gate && !isDepGateAllowed(dep.kind, dep.gate)) {
+    return `requires.gate for a ${dep.kind} dependency must be one of ${DEP_GATES[dep.kind].join(', ')} (got ${JSON.stringify(dep.gate)})`;
   }
   if (dep.kind === 'task') {
     // Task deps must be same-phase to match selectRunnableTask's per-phase resolution.

@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path';
 import { writeFile, rename, unlink, open } from 'node:fs/promises';
 import { ensureDir, writeJson, getStatePath, fsyncDir } from '../../utils.js';
 import {
+  DEP_GATES,
   TASK_LIFECYCLE,
+  isDepGateAllowed,
   validateResearchArtifacts,
   validateResearchDecisionIndex,
   validateResearcherResult,
@@ -55,17 +57,26 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
 
     let depsOk = true;
     for (const dep of (task.requires || [])) {
+      // A dependency this function cannot resolve — unknown kind, a gate the
+      // kind does not have — counts as unsatisfied, never as satisfied. Reading
+      // it as met silently drops the ordering the plan asked for; refusing it
+      // parks the task with a reason in the diagnostics below. The authoring
+      // paths reject both (schema.js DEP_GATES), but a state.json written by
+      // hand or by another version can still carry one.
       if (dep.kind === 'task') {
         const depTask = phase.todo.find(t => t.id === dep.id);
         if (!depTask) { depsOk = false; break; }
         const gate = dep.gate || 'accepted';
+        if (!isDepGateAllowed('task', gate)) { depsOk = false; break; }
         if (gate === 'checkpoint' && !['checkpointed', 'accepted'].includes(depTask.lifecycle)) { depsOk = false; break; }
         if (gate === 'accepted' && depTask.lifecycle !== 'accepted') { depsOk = false; break; }
-        if (gate === 'phase_complete') { depsOk = false; break; } // phase_complete is only valid on phase-kind deps
       } else if (dep.kind === 'phase') {
+        if (!isDepGateAllowed('phase', dep.gate)) { depsOk = false; break; }
         const depPhaseId = Number(dep.id);
         const depPhase = (state.phases || []).find(p => p.id === depPhaseId);
         if (!depPhase || depPhase.lifecycle !== 'accepted') { depsOk = false; break; }
+      } else {
+        depsOk = false; break;
       }
     }
     if (depsOk) runnableTasks.push(task);
@@ -114,19 +125,25 @@ export function selectRunnableTask(phase, state, { maxRetry = DEFAULT_MAX_RETRY 
         const gate = dep.gate || 'accepted';
         if (!depTask) {
           reasons.push(`dep ${dep.id} not found`);
+        } else if (!isDepGateAllowed('task', gate)) {
+          // No state satisfies this one, so say so rather than describing a
+          // wait: the plan has to change (state-patch, or replan).
+          reasons.push(`dep ${dep.id} has gate '${gate}', which a task dependency never has (use ${DEP_GATES.task.join(' or ')}) — this task can never run as written`);
         } else if (gate === 'checkpoint' && !['checkpointed', 'accepted'].includes(depTask.lifecycle)) {
           reasons.push(`dep ${dep.id} needs checkpoint (is ${depTask.lifecycle})`);
         } else if (gate === 'accepted' && depTask.lifecycle !== 'accepted') {
           reasons.push(`dep ${dep.id} needs accepted (is ${depTask.lifecycle})`);
-        } else if (gate === 'phase_complete') {
-          reasons.push(`dep ${dep.id} has phase_complete gate (invalid for task-kind dependency)`);
         }
       } else if (dep.kind === 'phase') {
         const depPhaseId = Number(dep.id);
         const depPhase = (state.phases || []).find(p => p.id === depPhaseId);
-        if (!depPhase || depPhase.lifecycle !== 'accepted') {
+        if (!isDepGateAllowed('phase', dep.gate)) {
+          reasons.push(`phase dep ${dep.id} has gate '${dep.gate}', which a phase dependency never has (use ${DEP_GATES.phase.join(' or ')}) — this task can never run as written`);
+        } else if (!depPhase || depPhase.lifecycle !== 'accepted') {
           reasons.push(`phase dep ${dep.id} not accepted`);
         }
+      } else {
+        reasons.push(`dep ${JSON.stringify(dep.id)} has kind '${dep.kind}', which is neither task nor phase — this task can never run as written`);
       }
     }
     if (reasons.length > 0) {

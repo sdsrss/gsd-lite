@@ -1561,11 +1561,15 @@ describe('createInitialState — requires validation', () => {
       ] }],
     });
     assert.equal(result.error, true);
-    assert.match(result.message, /gate must be one of/);
+    assert.match(result.message, /gate for a task dependency must be one of/);
   });
 
-  it('accepts valid gate values', () => {
-    for (const gate of ['checkpoint', 'accepted', 'phase_complete']) {
+  // The gate vocabulary is per kind — a task dependency has no phase_complete,
+  // because the scheduler can never satisfy one and the phase would never
+  // complete. tests/dep-gates.test.js pins every (kind, gate) pair against
+  // selectRunnableTask; these two keep the state-init path covered here.
+  it('accepts the gate values a task dependency has', () => {
+    for (const gate of ['checkpoint', 'accepted']) {
       const result = createInitialState({
         project: 'test',
         phases: [{ name: 'P1', tasks: [
@@ -1575,6 +1579,31 @@ describe('createInitialState — requires validation', () => {
       });
       assert.equal(result.error, undefined, `gate "${gate}" should be accepted`);
     }
+  });
+
+  it('accepts the gate values a phase dependency has', () => {
+    for (const gate of ['checkpoint', 'accepted', 'phase_complete']) {
+      const result = createInitialState({
+        project: 'test',
+        phases: [
+          { name: 'P1', tasks: [{ name: 'A' }] },
+          { name: 'P2', tasks: [{ name: 'B', requires: [{ kind: 'phase', id: 1, gate }] }] },
+        ],
+      });
+      assert.equal(result.error, undefined, `gate "${gate}" should be accepted on a phase dependency`);
+    }
+  });
+
+  it('rejects phase_complete on a task dependency', () => {
+    const result = createInitialState({
+      project: 'test',
+      phases: [{ name: 'P1', tasks: [
+        { name: 'A' },
+        { name: 'B', requires: [{ kind: 'task', id: '1.1', gate: 'phase_complete' }] },
+      ] }],
+    });
+    assert.equal(result.error, true, 'a plan that can never finish must not be accepted as valid');
+    assert.match(result.message, /gate for a task dependency must be one of checkpoint, accepted/);
   });
 });
 
