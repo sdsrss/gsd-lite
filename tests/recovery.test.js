@@ -486,6 +486,52 @@ describe('awaiting_user holds are not auto-cleared', () => {
     });
   });
 
+  it('rejects recovery riding along with confirm_review before anything is committed', async () => {
+    // The wrapper checked `recovery_options` only AFTER _resumeWorkflow returned,
+    // and confirm_review persists and returns early — so the pair committed the
+    // L3 sign-off (1.1 → accepted) and then handed the caller a TRANSITION_ERROR.
+    // A caller that reads the error as "nothing happened" is wrong about an
+    // acceptance that already landed. These are three mutually exclusive ways to
+    // resolve a hold; the contradiction has to be refused before the first write.
+    await withProject('confirm-plus-recovery', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, 'start 1.1');
+      await step(basePath, { current_task: null, phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed' }] }] }, 'checkpoint 1.1');
+      await walkModes(basePath, ['awaiting_user']);
+      await step(basePath, {
+        current_review: { scope: 'task', scope_id: '1.1', stage: 'human_confirmation', pending_tasks: ['1.1'] },
+      }, 'install the L3 hold');
+
+      const result = await resumeWorkflow({ basePath, confirm_review: 'confirm', recovery: 'retry_failed' });
+      assert.equal(result.error, true);
+      assert.equal(result.code, 'INVALID_INPUT',
+        'the contradiction must be refused as bad input, not reported after a partial commit');
+
+      const state = await read({ basePath });
+      assert.equal(state.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'checkpointed',
+        'the L3 sign-off was committed by a call that reported failure');
+      assert.equal(state.workflow_mode, 'awaiting_user', 'the hold must survive a refused call');
+      assert.equal(state.current_review?.stage, 'human_confirmation');
+    });
+  });
+
+  it('rejects recovery riding along with unblock_tasks before anything is committed', async () => {
+    await withProject('unblock-plus-recovery', async (basePath) => {
+      await walkModes(basePath, ['executing_task']);
+      await step(basePath, {
+        phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'blocked', blocked_reason: 'waiting on input' }] }],
+      }, 'block 1.1');
+
+      const result = await resumeWorkflow({ basePath, unblock_tasks: ['1.1'], recovery: 'retry_failed' });
+      assert.equal(result.error, true);
+      assert.equal(result.code, 'INVALID_INPUT');
+
+      const state = await read({ basePath });
+      assert.equal(state.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'blocked',
+        'the unblock was committed by a call that reported failure');
+    });
+  });
+
   it('does not let recovery clear an L3 human-confirmation hold', async () => {
     // human_confirmation is the one awaiting_user stage with its own resolution
     // channel (confirm_review: confirm|reject) precisely because clearing it
