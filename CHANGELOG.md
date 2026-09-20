@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.11.0] - 2026-09-20
 
 **A project can no longer paint itself into a corner, and a failed update can no
 longer break the one you have.** This is the P0 and the eight P1 findings from
