@@ -2,6 +2,61 @@
 
 All notable changes to this project are documented here.
 
+## [0.12.0] - 2026-09-20
+
+**Coming from 0.11.1, this also carries everything in the 0.11.2 entry below** —
+that version was merged but never published, so its two silent failures (a
+`gsd uninstall` that could report success after leaving your hooks registered,
+and a plan that could be accepted and then never finish) are fixed here too.
+
+Minor rather than patch: resume gains a `warnings` array, and three contracts
+now refuse input they used to accept quietly.
+
+**Four things were written down and never read.** Each looked implemented from
+the writing side, which is why they lasted.
+
+- **Context-exhaustion warnings could go silent for a whole session, and
+  nothing could recover it.** The statusline hands the context monitor a file
+  in the shared temp directory. A *directory* planted at either path pinned it:
+  `rename` cannot replace a directory, `/tmp` is sticky so another user's
+  directory cannot be removed by us either, and the self-heal is the rename
+  that cannot happen. Those files now live in `$XDG_RUNTIME_DIR/gsd`, or
+  `<config dir>/gsd/runtime/ctx` where that is unset — a directory only you can
+  enter, verified before use rather than assumed: a real directory, not a
+  symlink, owned by you, with no group or other write bit. **You do not need to
+  do anything**; stale files in the old location are swept at session start.
+  (#8)
+- **A high-confidence task could skip independent review on the strength of
+  evidence that a test had failed.** The orchestrator drops an L1 task to L0
+  unless an evidence entry is a test that did not pass — but nothing ever asked
+  executors for that verdict, so the check that withheld the downgrade could
+  not fire, and "has evidence at all" was the whole test. Evidence entries now
+  carry `type` and `passed` in the tool schema, the executor contract and the
+  evidence spec, and the fields are validated: `passed: "no"` is refused rather
+  than read as a pass. Entries missing `id` or `scope` are refused too — those
+  were dropped from the record while still counting as evidence.
+- **Removing a task could remove a different one.** Task ids are
+  `<phase>.<index>` and unique plan-wide, and `state-update` was the one path
+  that did not check: a task could arrive in phase 2 carrying id `1.1`, after
+  which removing `1.1` deleted whichever copy came first and reported success.
+  Ids are now checked where they enter, and `remove_task` refuses an ambiguous
+  id instead of guessing. A state that already holds a duplicate stays
+  writable, so it can be repaired rather than frozen.
+- **An interrupted research write left a marker nobody read.**
+  `.gsd/.research-commit-pending` means a crash landed between writing the
+  research artifacts and writing the state that references them, so the two may
+  not agree. Resume now reports it, says re-running research rewrites both, and
+  leaves the marker alone — clearing it on report would turn a standing
+  condition into a notice that whoever was not looking never sees again.
+
+**Also**
+
+- The phase-review gate was written out three times and had already drifted.
+  One predicate now answers it, so resume cannot advertise a phase completion
+  that `phase-complete` then refuses.
+- The test suite no longer fails at random on Node 20, and no longer writes
+  into a real `~/.claude` while running.
+
 ## [0.11.2] - 2026-09-20
 
 **`gsd uninstall` could report success after leaving your hooks registered.**
