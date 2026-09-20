@@ -93,18 +93,84 @@ describe('a failed install leaves the working runtime alone', () => {
     }
   });
 
-  it('leaves no staging directory behind after a failure', async () => {
+  it('creates a staging directory and leaves none behind after a failure', async () => {
+    // Both halves, because the second alone is vacuous: asserting "no staging
+    // directory afterwards" passes against a version that never stages at all,
+    // which is exactly what main does. A shim standing in for npm records
+    // whether staging existed at the moment the dependency step ran, so the
+    // absence afterwards means cleaned up rather than never created.
     const home = await mkdtemp(join(tmpdir(), 'gsd-staging-residue-'));
     try {
       const claudeDir = join(home, '.claude');
-      await mkdir(join(home, 'no-npm-bin'), { recursive: true });
+      const shimDir = join(home, 'shim-bin');
+      const witness = join(home, 'staging-at-npm-time.txt');
+      await mkdir(shimDir, { recursive: true });
       await seedExistingRuntime(claudeDir);
       const pkgDir = await makeNpxPackage(home);
 
-      runInstallWithoutNpm(pkgDir, home);
+      // Shell builtins only: PATH is the shim directory alone, so `ls` and
+      // friends are not reachable. Glob expansion and echo are part of sh.
+      await writeFile(join(shimDir, 'npm'), '#!/bin/sh\n'
+        + `for d in "${claudeDir}"/.gsd-staging-*; do echo "$d"; done > "${witness}"\n`
+        + 'exit 1\n', { mode: 0o755 });
 
-      const stray = (await readdir(claudeDir)).filter(e => e.startsWith('.gsd-staging') || e.startsWith('gsd.new'));
+      try {
+        execFileSync(process.execPath, [join(pkgDir, 'install.js')], {
+          cwd: pkgDir,
+          env: { HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PATH: shimDir, PLUGIN_AUTO_UPDATE: '1' },
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        });
+        assert.fail('the install should have failed at the dependency step');
+      } catch (err) {
+        assert.equal(err.status, 1, `expected exit 1, got ${err.status}`);
+      }
+
+      assert.match(readFileSync(witness, 'utf-8'), /\.gsd-staging-\d+/,
+        'nothing was staged — this test cannot tell cleanup from never having run');
+
+      const stray = (await readdir(claudeDir)).filter(e => e.startsWith('.gsd-staging'));
       assert.deepEqual(stray, [], `staging left behind: ${stray.join(', ')}`);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not merge a same-pid leftover into the new runtime', async () => {
+    // The sweep reads our own pid as alive, so a directory left by an earlier
+    // run whose pid was recycled onto this process would be skipped — and
+    // copyDir merges rather than replaces, so its files would ride into the
+    // swap. Reproduced exactly by creating the leftover under the pid that then
+    // runs the installer in-process.
+    const home = await mkdtemp(join(tmpdir(), 'gsd-staging-samepid-'));
+    try {
+      const claudeDir = join(home, '.claude');
+      await mkdir(claudeDir, { recursive: true });
+      const pkgDir = await makeNpxPackage(home);
+      cpSync(join(PROJECT_ROOT, 'node_modules'), join(pkgDir, 'node_modules'), { recursive: true });
+
+      const launcher = join(home, 'launcher.mjs');
+      await writeFile(launcher, `
+        import { mkdirSync, writeFileSync } from 'node:fs';
+        import { join } from 'node:path';
+        const staging = join(${JSON.stringify(claudeDir)}, '.gsd-staging-' + process.pid);
+        mkdirSync(join(staging, 'src'), { recursive: true });
+        writeFileSync(join(staging, 'src', 'ghost.js'), '// left by a crashed run\\n');
+        const { main } = await import(${JSON.stringify(join(pkgDir, 'install.js'))});
+        main();
+      `);
+
+      execFileSync(process.execPath, [launcher], {
+        cwd: pkgDir,
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' },
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+
+      assert.equal(existsSync(join(claudeDir, 'gsd', 'src', 'ghost.js')), false,
+        'a stale file from an abandoned staging directory was installed into the runtime');
+      assert.equal(existsSync(join(claudeDir, 'gsd', 'src', 'server.js')), true,
+        'the real runtime should still be there');
     } finally {
       await rm(home, { recursive: true, force: true });
     }

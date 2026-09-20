@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, unlinkSync, symlinkSync } from 'node:fs';
+import { writeFileSync, unlinkSync, symlinkSync, lstatSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -461,7 +461,8 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
       timestamp: Math.floor(Date.now() / 1000),
     });
     try {
-      // A dangling link: refused by atomicWriteMarker, and unwritable anyway.
+      // A dangling link. It is evicted by the write now, but the point of this
+      // test is the warning: whatever the debounce file does, it must still fire.
       symlinkSync(join(tmpdir(), `gsd-ctx-${sid}-nonexistent-target`), warnPath);
 
       const result = runHook({ session_id: sid });
@@ -470,6 +471,31 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
       const output = JSON.parse(result.stdout);
       assert.match(output.hookSpecificOutput.additionalContext, /CONTEXT CRITICAL/);
     } finally {
+      cleanupSession(sid);
+    }
+  });
+
+  it('evicts a symlink planted at the debounce path', () => {
+    // The companion to the test above: not only must the warning survive, the
+    // link must not survive. Pinning it would silence the debounce reset and
+    // leave a path an attacker controls sitting in the temp dir indefinitely.
+    const sid = nextSessionId();
+    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
+    const decoy = join(tmpdir(), `gsd-ctx-${sid}-decoy.json`);
+    writeFileSync(decoy, 'planted');
+    writeBridgeFile(sid, {
+      remaining_percentage: 20,
+      used_pct: 80,
+      has_gsd: true,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+    try {
+      symlinkSync(decoy, warnPath);
+      runHook({ session_id: sid });
+      assert.equal(lstatSync(warnPath).isSymbolicLink(), false, 'the planted link survived');
+      assert.equal(readFileSync(decoy, 'utf8'), 'planted', 'the decoy was written through');
+    } finally {
+      try { unlinkSync(decoy); } catch {}
       cleanupSession(sid);
     }
   });

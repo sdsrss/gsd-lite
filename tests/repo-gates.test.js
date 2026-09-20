@@ -100,6 +100,21 @@ describe('repo gates — the release workflow signs before it publishes', () => 
     assert.match(pkg.scripts['test:coverage'], /--check-coverage/);
     assert.match(pkg.scripts['test:coverage'], /--lines \d+/);
     assert.match(pkg.scripts['test:coverage'], /--branches \d+/);
+
+    // Pin the deletion too, not just the survivor. Asserting only on
+    // package.json — which this change never touched — passes identically on the
+    // commit before it, so on its own it is a guard against a future edit rather
+    // than evidence the no-op step is gone.
+    // Comment lines are stripped first: the step's own explanation names the
+    // deleted step and the command it used to run, so a plain substring search
+    // matches the history rather than the workflow.
+    const ci = readFileSync(join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8')
+      .split('\n')
+      .filter(line => !line.trim().startsWith('#'))
+      .join('\n');
+    assert.ok(!/c8 report/.test(ci),
+      'ci.yml still shells out to `c8 report`, which is not on PATH inside run: — that step cannot fail');
+    assert.ok(!/name:.*Check coverage threshold/.test(ci));
   });
 
   it('publishes the same tarball it hashed and signed', () => {

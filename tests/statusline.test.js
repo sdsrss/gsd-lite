@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -347,6 +347,31 @@ describe('statusline: non-numeric context percentage', () => {
       assert.match(out, /\d+%/, 'a numeric percentage still renders');
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A planted symlink at the bridge path must be evicted, not honoured. Refusing
+  // to write one was tried and reverted: the rename never followed a link in the
+  // first place, so refusing added no safety and instead pinned the bridge to
+  // whatever was behind the link — freezing the reported context percentage for
+  // that session, where the previous release self-healed on the next run.
+  it('evicts a symlink planted at the bridge path instead of honouring it', () => {
+    const sid = `sym-${Date.now()}`;
+    bridgeSessions.add(sid);
+    const bridgePath = join(tmpdir(), `gsd-ctx-${sid}.json`);
+    const decoy = join(tmpdir(), `gsd-ctx-${sid}-decoy.json`);
+    try {
+      writeFileSync(decoy, JSON.stringify({ remaining_percentage: 99, has_gsd: false }));
+      symlinkSync(decoy, bridgePath);
+
+      runHook({ session_id: sid, model: { display_name: 'Test' }, context_window: { remaining_percentage: 20 } });
+
+      assert.equal(lstatSync(bridgePath).isSymbolicLink(), false, 'the bridge is still pinned to the planted link');
+      assert.equal(JSON.parse(readFileSync(decoy, 'utf8')).remaining_percentage, 99,
+        'the decoy was written through');
+      assert.equal(JSON.parse(readFileSync(bridgePath, 'utf8')).remaining_percentage, 20);
+    } finally {
+      try { rmSync(decoy, { force: true }); } catch { /* best effort */ }
     }
   });
 });
