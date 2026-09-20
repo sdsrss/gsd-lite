@@ -533,12 +533,29 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
     }
   });
 
+  // The bridge is no longer at a fixed path under os.tmpdir() (#8): it lives in
+  // $XDG_RUNTIME_DIR/gsd, or under the config dir when that is unset. Ask the
+  // helper the hook asks, with the same CLAUDE_CONFIG_DIR the hook will see —
+  // otherwise this writes the file somewhere the hook never looks and the
+  // "no warning" half passes for the wrong reason.
+  function bridgeFor(session, claudeDir) {
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = claudeDir;
+    try {
+      return _require('../hooks/lib/ctx-bridge.cjs').bridgePaths(session);
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+  }
+
   it('context-monitor stands down under the plugin and warns without it', async () => {
     for (const [pluginPresent, expectWarning] of [[true, false], [false, true]]) {
       const { home, claudeDir } = await makeClaudeHome('gsd-standdown-ctx-');
       try {
         if (pluginPresent) await markPluginInstalled(claudeDir);
-        const bridge = join(tmpdir(), 'gsd-ctx-standdown-session.json');
+        const paths = bridgeFor('standdown-session', claudeDir);
+        const bridge = paths.metrics;
         await writeFile(bridge, JSON.stringify({
           remaining_percentage: 20, used_pct: 80, timestamp: Math.floor(Date.now() / 1000), has_gsd: true,
         }));
@@ -548,7 +565,7 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
             `plugin present=${pluginPresent}: warning expected=${expectWarning}`);
         } finally {
           await rm(bridge, { force: true });
-          await rm(join(tmpdir(), 'gsd-ctx-standdown-session-warned.json'), { force: true });
+          await rm(paths.warned, { force: true });
         }
       } finally {
         await rm(home, { recursive: true, force: true });

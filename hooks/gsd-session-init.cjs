@@ -177,7 +177,7 @@ function cleanupOrphan() {
     try { fs.rmSync(path.join(claudeDir, 'hooks', name), { force: true }); } catch { /* best effort */ }
   }
   // 5. Hook lib files (GSD-owned only — don't touch other plugins' libs)
-  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs']) {
+  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs', 'ctx-bridge.cjs']) {
     try { fs.rmSync(path.join(claudeDir, 'hooks', 'lib', lib), { force: true }); } catch { /* best effort */ }
   }
   // 6. Runtime dir + plugin marketplace + cache dirs (current + legacy names)
@@ -218,13 +218,24 @@ setTimeout(() => process.exit(0), 4000).unref();
     } catch { /* no marker = first run */ }
 
     if (shouldClean) {
-      const tmpDir = os.tmpdir();
-      for (const entry of fs.readdirSync(tmpDir)) {
-        if (!entry.startsWith('gsd-ctx-')) continue;
-        try {
-          const fullPath = path.join(tmpDir, entry);
-          if (now - fs.statSync(fullPath).mtimeMs > DAY_MS) fs.unlinkSync(fullPath);
-        } catch { /* skip */ }
+      // Two directories, because the bridge moved (#8): the private one it
+      // lives in now, and the shared temp directory earlier versions used,
+      // which still holds whatever they left there. Sweeping only the new one
+      // would leave the old files to age out with nothing to age them out.
+      const { ctxDir, legacyTmpDir } = require('./lib/ctx-bridge.cjs');
+      const sweepDirs = [ctxDir(), legacyTmpDir()].filter(Boolean);
+      for (const dir of sweepDirs) {
+        let entries = [];
+        try { entries = fs.readdirSync(dir); } catch { continue; }
+        for (const entry of entries) {
+          if (!entry.startsWith('gsd-ctx-')) continue;
+          try {
+            const fullPath = path.join(dir, entry);
+            // lstat, not stat: a symlink's age is the link's own, and unlink
+            // removes the link rather than following it.
+            if (now - fs.lstatSync(fullPath).mtimeMs > DAY_MS) fs.unlinkSync(fullPath);
+          } catch { /* skip */ }
+        }
       }
       try {
         fs.mkdirSync(path.dirname(cleanupMarker), { recursive: true });

@@ -143,6 +143,13 @@ export function main() {
   removeDir(join(CLAUDE_DIR, 'references', 'gsd'), 'references/gsd/');
   removeDir(RUNTIME_DIR, 'gsd runtime/');
   removeDir(join(CLAUDE_DIR, 'gsd-lite'), 'legacy gsd-lite runtime/');
+  // Deliberately NOT removing $XDG_RUNTIME_DIR/gsd, where the context bridge
+  // lives when that variable is set (#8). It is outside the config directory
+  // this uninstaller was pointed at, and an uninstaller whose blast radius
+  // extends past its own target is the shape of every bug this file has had.
+  // Those files are tmpfs, cleared at logout, and swept after a day anyway.
+  // The fallback location, <config dir>/gsd/runtime/ctx, went with the runtime
+  // directory removed above.
 
   // Remove hook files (both legacy and current names)
   for (const name of ['context-monitor.js', 'gsd-statusline.cjs', 'gsd-context-monitor.cjs', 'gsd-session-init.cjs', 'gsd-auto-update.cjs', 'gsd-session-stop.cjs']) {
@@ -156,7 +163,7 @@ export function main() {
   const hookLibDir = join(CLAUDE_DIR, 'hooks', 'lib');
   if (existsSync(hookLibDir)) {
     // Only remove GSD-owned files, not other plugins' libs
-    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs']) {
+    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs', 'ctx-bridge.cjs']) {
       const fullPath = join(hookLibDir, libFile);
       if (existsSync(fullPath)) {
         rmSync(fullPath);
