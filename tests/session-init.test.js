@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, readFileSync, symlinkSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, readFileSync, symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -240,6 +240,27 @@ describe('session init reads repo-controlled paths without blocking', () => {
     await withProject('mdfifo', async (ctx) => {
       execFileSync('mkfifo', [join(ctx.project, 'CLAUDE.md')]);
       runInit(ctx);
+    });
+  });
+
+  it('never writes over a CLAUDE.md it could not read', async () => {
+    // "Could not read" and "is not there" are different answers, and treating
+    // them as one destroys the file: the read fails, the caller starts from an
+    // empty string, appends its status block, and renames that over the user's
+    // notes. Measured before this guard: a mode-000 CLAUDE.md holding 40 bytes of
+    // someone's content came back as 178 bytes of status block, exit 0, silent.
+    if (typeof process.getuid === 'function' && process.getuid() === 0) return; // root ignores the mode bits
+    await withProject('mdunreadable', async (ctx) => {
+      const md = join(ctx.project, 'CLAUDE.md');
+      const original = '# My project notes\n\nIrreplaceable line.\n';
+      await writeFile(md, original);
+      chmodSync(md, 0o000);
+
+      runInit(ctx);
+
+      chmodSync(md, 0o644);
+      assert.equal(readFileSync(md, 'utf8'), original,
+        'the hook replaced a file it could not read with its own generated content');
     });
   });
 

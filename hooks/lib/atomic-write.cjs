@@ -119,6 +119,19 @@ function readMarker(filePath, encoding = 'utf8') {
  * an exception. Both were live bugs, a release apart. Centralising the check is
  * what stops the next call site from reintroducing either one.
  */
+function readJsonOwned(filePath) {
+  const raw = readMarker(filePath);
+  if (raw === null) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return parsed;
+}
+
 /**
  * Read a file that may legitimately BE a symlink, following it — or return null.
  *
@@ -146,17 +159,24 @@ function readThroughLink(filePath, encoding = 'utf8') {
   }
 }
 
-function readJsonOwned(filePath) {
-  const raw = readMarker(filePath);
-  if (raw === null) return null;
-  let parsed;
+/**
+ * Is there a regular file here that we just failed to read?
+ *
+ * readThroughLink answers null for "absent" and for "present but unreadable",
+ * and a caller about to GENERATE replacement content must not treat those the
+ * same. That conflation is how a mode-000 CLAUDE.md holding someone's notes gets
+ * replaced by a generated status block: the read fails, the caller starts from
+ * an empty string, appends its block, and renames that over the file. Measured
+ * before this guard existed — 40 bytes of user content became 178 bytes of
+ * status block, exit 0, no message. Nothing there is safe to create over;
+ * something there we cannot see is not.
+ */
+function existsAsRegularFile(filePath) {
   try {
-    parsed = JSON.parse(raw);
+    return fs.statSync(filePath).isFile();
   } catch {
-    return null;
+    return false;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  return parsed;
 }
 
 /**
@@ -201,6 +221,7 @@ module.exports = {
   readMarker,
   readJsonOwned,
   readThroughLink,
+  existsAsRegularFile,
   atomicWrite,
   atomicWriteJson,
   atomicWriteThroughLink,
