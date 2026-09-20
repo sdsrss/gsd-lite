@@ -17,7 +17,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 ### Quality Discipline (Built-in, Not Optional)
 - **TDD enforcement** — "No production code without a failing test first" baked into every executor dispatch
 - **Anti-rationalization guards** — Red-flag checklists inline in every agent prompt, blocking common excuses to skip process
-- **Multi-level code review** — L0 self-review / L1 phase-batch review / L2 immediate independent review / phase review retry limit
+- **Multi-level code review** — L0 self-review / L1 phase-batch review / L2 immediate independent review / L3 immediate review **plus a human sign-off gate that code enforces** (see [Review Levels](#review-levels)) / phase review retry limit
 - **Contract change propagation** — When an API contract changes, downstream tasks automatically invalidate
 
 ### Intelligent Failure Recovery
@@ -106,7 +106,7 @@ User → discuss + research (confirm requirements) → approve plan → auto-exe
 | Reference | Content |
 |-----------|---------|
 | `execution-loop` | 9-step execution loop specification (single source of truth) |
-| `review-classification` | Review level classification decision tree (L0/L1/L2) |
+| `review-classification` | Review level classification decision tree (L0/L1/L2/L3) |
 | `evidence-spec` | Evidence validation and citation rules |
 | `state-diagram` | 12-state lifecycle workflow machine diagram |
 | `testing-patterns` | Test structure and patterns |
@@ -212,6 +212,27 @@ GSD-Lite will:
 
 Validates workspace consistency (git HEAD, file integrity), then resumes from the exact task and workflow mode where execution stopped.
 
+> **Do not resume a checkout you don't trust.**
+>
+> `.gsd/` is ordinary repository content. A clone, a fork, or a pull request branch carries
+> whatever the author put there, and `/gsd:resume` turns that content into work: the plan's task
+> descriptions become executor dispatches, which run commands and write files in your workspace.
+> Resuming a project you didn't plan is running a task list you didn't write.
+>
+> This starts before you type anything. The StatusLine hook reads `.gsd/state.json` on every
+> render and SessionStart reads it when the session opens, each walking up from the working
+> directory until it finds a `.gsd/state.json` — so merely opening Claude Code in an untrusted
+> checkout is enough for GSD-Lite to read that repo's state file.
+>
+> The read path itself is hardened: state reads go through an ownership-checked reader, so a
+> symlink, a FIFO, or a directory left at one of those paths cannot hang the hook or quietly
+> substitute another file. That makes the *file* safe to touch. It does not make the *plan* safe
+> to run — no amount of read hardening can tell an attacker's task list from yours.
+>
+> Treat `.gsd/plan.md` and `.gsd/state.json` the way you'd treat a `Makefile` or
+> `.vscode/tasks.json` from a stranger: read them before you act on them. When in doubt, delete
+> `.gsd/` and plan the work yourself.
+
 ### Monitor Progress
 
 ```bash
@@ -236,6 +257,40 @@ Shows phase completion, task lifecycle states, review status, and blockers — a
 8. all phases done → project complete
 ```
 
+### Review Levels
+
+Every task carries a level that decides how its checkpoint is reviewed. Levels can be raised
+mid-flight (low executor confidence, a contract change, an explicit `[LEVEL-UP]`), never lowered
+once they reach L2 or L3.
+
+| Level | Typical work | What happens after checkpoint |
+|-------|--------------|-------------------------------|
+| L0 | No runtime semantics (docs, config, style) | Accepted directly, no reviewer |
+| L1 | Ordinary coding (default) | Batch-reviewed at end of phase |
+| L2 | High risk — auth, payment, public API, DB migration | Immediate independent review |
+| L3 | Highest risk — security architecture, breaking changes | Immediate independent review **and a human confirmation hold** |
+
+**The L3 gate is enforced by the orchestrator, not by agent prompts.** When a reviewer approves a
+task whose level is `L3`, the task is *not* accepted. It stays `checkpointed`, the workflow moves
+to `awaiting_user`, and `current_review.stage` becomes `human_confirmation` — so autonomous
+execution stops there and waits for you. Other tasks in the same review batch are accepted
+normally; only the L3 ones are withheld.
+
+Resolve the hold through `orchestrator-resume`:
+
+```
+confirm_review: "confirm"   → the held task(s) become accepted, execution continues
+confirm_review: "reject"    → the held task(s) go back for rework with your feedback
+```
+
+The gate fires on the task's **level**, not on a reviewer flag: a reviewer cannot opt out of it,
+and it covers phase-scoped reviews too. `requires_human_confirmation` and `security_implications`
+remain the reviewer's channel for attaching security context to the hold, which resume surfaces
+when it reports the pending confirmation.
+
+This is the one point where "discuss thoroughly, execute automatically" deliberately stops being
+automatic. If you plan security or architecture work as L3, expect to be asked.
+
 ### Failure Recovery
 
 ```
@@ -255,6 +310,47 @@ All state lives in `.gsd/state.json` — a single source of truth with:
 - Evidence references (command outputs, test results)
 - Research artifacts and decision index
 - Incremental validation (simple field updates use fast path; phases use full validation)
+
+`state-init` lays the directory out like this:
+
+```
+.gsd/
+├── state.json              # canonical state — rewritten on nearly every tool call
+├── state.json.bak          # last good state, kept when you re-init with force
+├── plan.md                 # human-readable plan
+├── phases/                 # per-phase notes
+├── research/               # STACK.md, ARCHITECTURE.md, PITFALLS.md, SUMMARY.md
+├── .session-end            # session lifecycle marker (Stop hook)
+├── .context-health         # context usage snapshot (StatusLine)
+└── .research-commit-pending # marker: research landed but was never committed
+```
+
+#### Should you commit `.gsd/`?
+
+**Default: no — add `.gsd/` to `.gitignore`.** This repository does exactly that for its own
+working state. Three reasons:
+
+- `state.json` is rewritten on nearly every tool call and carries a `_version` counter for
+  optimistic concurrency. On a shared branch it conflicts on essentially every pull, and a
+  hand-resolved merge of that file is a corrupted state machine, not a merged plan.
+- The three dot-markers are per-machine, per-session facts. Committed, they describe someone
+  else's session — `.session-end` in particular is how resume decides whether the last exit was
+  graceful.
+- A committed plan is an *executable* plan for anyone who clones the repo. See the warning under
+  [Resume After Interruption](#resume-after-interruption).
+
+**If you want the plan visible in review**, commit only the prose artifacts and keep the machinery
+out:
+
+```gitignore
+.gsd/*
+!.gsd/plan.md
+!.gsd/phases/
+!.gsd/research/
+```
+
+Those are written for humans and change at phase boundaries rather than per tool call. Everything
+else in `.gsd/` is runtime state that belongs to one checkout on one machine.
 
 ## Comparison with GSD
 
