@@ -128,6 +128,26 @@ release or any later one.
   `c8`, which is not on `PATH` inside `run:`, and exited 0 every time. The real
   gate is c8's own `--check-coverage` in `test:coverage`.
 
+### Known issues
+
+One defect found during this release is left open. It predates 0.11.0 and is not
+made worse here.
+
+- A **directory** planted at `$TMPDIR/gsd-ctx-<session>.json` or at
+  `$TMPDIR/gsd-ctx-<session>-warned.json` pins that path: `rename` cannot
+  replace a directory, so the statusline can never write the bridge file again
+  and the context-exhaustion warning stays silent for that session. The symlink
+  version of this is fixed — a link gets evicted — but the directory version is
+  not, and the reason it is left alone is that the obvious fix does not work:
+  `/tmp` is sticky on Linux, so a directory another user created cannot be
+  removed by us either. Teaching the shared atomic-write helper to delete
+  directories would buy nothing against the case it was written for while giving
+  a helper that writes `~/.claude/settings.json` the power to remove a
+  directory. If context warnings go quiet on a shared host, check
+  `ls -ld $TMPDIR/gsd-ctx-*`. Tracked in #8, where the fix worth costing out is
+  moving these two files out of the shared temp directory rather than reacting
+  to what gets planted in it.
+
 ## [0.10.0] - 2026-09-20
 
 **A plugin install now actually installs the hooks.** Found by running the
