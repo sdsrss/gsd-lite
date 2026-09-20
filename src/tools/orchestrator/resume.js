@@ -1,7 +1,7 @@
 import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask } from '../state/index.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
 import { join } from 'node:path';
-import { unlink } from 'node:fs/promises';
+import { stat, unlink } from 'node:fs/promises';
 import {
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
@@ -966,7 +966,53 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
  * introduced by the fix for the first two. A gate placed anywhere inside a
  * function with early returns is a gate on some of them.
  */
+/**
+ * `.gsd/.research-commit-pending` is written before the research artifacts are
+ * renamed in and removed once the state referencing them has been written. It
+ * surviving means a crash landed between the two, so the artifacts on disk and
+ * the research recorded in state.json may not agree.
+ *
+ * storeResearch has maintained that marker since it was added and nothing ever
+ * read it — the comment said "on recovery (future iteration)". This is that
+ * reader. It reports rather than repairs: which side is right depends on what
+ * the interrupted run was doing, and re-running research rewrites both.
+ *
+ * The marker is deliberately left in place. Clearing it on report would turn a
+ * standing condition into a one-shot notice that whoever was not looking at
+ * that moment never sees again; re-running research clears it by finishing the
+ * write it belongs to.
+ */
+async function attachResearchWarning(basePath, result) {
+  if (!result || result.error) return result;
+  try {
+    const gsdDir = await getGsdDir(basePath);
+    if (!gsdDir) return result;
+    const pending = await stat(join(gsdDir, '.research-commit-pending')).then(() => true).catch(() => false);
+    if (!pending) return result;
+    return {
+      ...result,
+      warnings: [
+        ...(result.warnings || []),
+        {
+          code: 'RESEARCH_COMMIT_PENDING',
+          message: 'A previous research write did not finish (.gsd/.research-commit-pending is still there), '
+            + 'so the files in .gsd/research/ and the research recorded in state.json may not agree. '
+            + 'Re-run research to rewrite both, or delete that file if you have checked the artifacts yourself.',
+        },
+      ],
+    };
+  } catch {
+    // Diagnosing a half-written research state must not be what stops a resume.
+    return result;
+  }
+}
+
 export async function resumeWorkflow(args = {}) {
+  const result = await _resumeWorkflowWithRecovery(args);
+  return attachResearchWarning(args.basePath ?? process.cwd(), result);
+}
+
+async function _resumeWorkflowWithRecovery(args = {}) {
   const { basePath = process.cwd(), _depth = 0, recovery, unblock_tasks, confirm_review } = args;
 
   // Validate the value before anything runs, so a bad one cannot ride along

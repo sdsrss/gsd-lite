@@ -118,13 +118,13 @@ describe('H4: research write atomicity sentinel', () => {
     assert.equal(existsSync(sentinelPath), false, 'sentinel should be removed after successful write');
   });
 
-  it('storeResearch code contains sentinel write and cleanup logic', async () => {
-    const logicSrc = await readFile(join(process.cwd(), 'src', 'tools', 'state', 'logic.js'), 'utf-8');
-    // Sentinel should be written before artifact renames
-    assert.ok(logicSrc.includes('.research-commit-pending'), 'logic.js should reference sentinel file');
-    assert.ok(logicSrc.includes('await writeFile(sentinelPath'), 'logic.js should use writeFile for sentinel');
-    assert.ok(logicSrc.includes('await unlink(sentinelPath'), 'logic.js should use unlink to clean up sentinel');
-  });
+  // A test that asserted logic.js *contains the strings* '.research-commit-pending',
+  // 'await writeFile(sentinelPath' and 'await unlink(sentinelPath' used to sit
+  // here. It passed whether or not the marker did anything — and for most of its
+  // life nothing read it — while failing the moment someone moved the call into a
+  // helper. What the marker is for is now covered by behaviour: the case above
+  // (a successful write removes it) and tests/research-sentinel.test.js (a marker
+  // left by an interrupted write is reported by resume).
 });
 
 // === Fix M4: unhandledRejection always outputs to stderr ===
