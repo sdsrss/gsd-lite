@@ -28,10 +28,17 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
   if (phase.id !== state.current_phase) {
     return { error: true, message: `Task ${result.task_id} is in phase ${phase.id}, not the current phase ${state.current_phase}; result rejected` };
   }
-  // Same staleness guard as the executor handler, and it matters more here: a
-  // debugger result carrying `architecture_concern: true` fails the whole
-  // workflow, so a late one for a task that already checkpointed would end the
-  // project over work that had since succeeded.
+  // Same staleness guard as the executor handler. The case it actually catches
+  // is `outcome: 'root_cause_found'`: that patch carries no lifecycle, so it
+  // passes lifecycle validation and, for a task that already checkpointed into
+  // review, resets workflow_mode to executing_task and nulls current_review —
+  // the review is simply gone.
+  //
+  // The `failed` / `architecture_concern: true` branch does NOT need this guard:
+  // its patch sets lifecycle `failed`, update() is atomic, and checkpointed →
+  // failed is already rejected whole by TASK_LIFECYCLE. Testing the guard with
+  // that input proves nothing, because the pre-existing validator answers it
+  // with the same error code.
   if (!ACTIONABLE_LIFECYCLES.includes(task.lifecycle)) {
     return {
       error: true,

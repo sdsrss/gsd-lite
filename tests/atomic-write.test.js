@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { chmodSync, lstatSync, readFileSync, statSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,10 +10,17 @@ const require = createRequire(import.meta.url);
 const {
   atomicWrite,
   atomicWriteJson,
-  atomicWriteMarker,
-  atomicWriteMarkerJson,
   atomicWriteThroughLink,
 } = require('../hooks/lib/atomic-write.cjs');
+
+function withTmpSync(fn) {
+  const root = mkdtempSync(join(tmpdir(), 'gsd-atomic-'));
+  try {
+    fn(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 async function withTmp(fn) {
   const root = await mkdtemp(join(tmpdir(), 'gsd-atomic-'));
@@ -86,46 +93,37 @@ describe('atomicWrite', () => {
   });
 });
 
-describe('atomicWriteMarker', () => {
-  it('refuses a symlinked destination instead of replacing it', async () => {
-    await withTmp(root => {
+describe('atomicWrite against a planted symlink', () => {
+  it('replaces a symlinked destination instead of writing through it', () => {
+    // Both halves matter. The target must be untouched (no write-through), and
+    // the link must be gone (self-healing). An earlier version refused instead,
+    // which got the first half and lost the second: a link planted at a marker
+    // path could never be evicted, so it pinned the file forever.
+    withTmpSync(root => {
       const secret = join(root, 'secret.txt');
       writeFileSync(secret, 'untouched');
       const marker = join(root, '.marker');
       symlinkSync(secret, marker);
 
-      assert.throws(() => atomicWriteMarker(marker, 'payload'), { code: 'GSD_SYMLINK_REFUSED' });
-      assert.equal(readFileSync(secret, 'utf8'), 'untouched');
-      assert.equal(lstatSync(marker).isSymbolicLink(), true);
+      atomicWrite(marker, 'payload');
+
+      assert.equal(readFileSync(secret, 'utf8'), 'untouched', 'wrote through the link');
+      assert.equal(lstatSync(marker).isSymbolicLink(), false, 'the link was not evicted');
+      assert.equal(readFileSync(marker, 'utf8'), 'payload');
     });
   });
 
-  it('refuses a dangling symlink too', async () => {
-    // A link to a path that does not exist yet is the interesting case: the
-    // write would create the target, which is how a plant turns into a file
-    // somewhere the hook was never meant to touch.
-    await withTmp(root => {
+  it('replaces a dangling symlink without creating its target', () => {
+    withTmpSync(root => {
       const marker = join(root, '.marker');
-      symlinkSync(join(root, 'does-not-exist'), marker);
-      assert.throws(() => atomicWriteMarker(marker, 'payload'), { code: 'GSD_SYMLINK_REFUSED' });
-      assert.equal(lstatSync(marker).isSymbolicLink(), true);
-    });
-  });
+      const ghost = join(root, 'does-not-exist');
+      symlinkSync(ghost, marker);
 
-  it('writes normally when the destination is absent', async () => {
-    await withTmp(root => {
-      const p = join(root, '.marker');
-      atomicWriteMarker(p, 'ok');
-      assert.equal(readFileSync(p, 'utf8'), 'ok');
-    });
-  });
+      atomicWrite(marker, 'payload');
 
-  it('writes normally when the destination is a regular file', async () => {
-    await withTmp(root => {
-      const p = join(root, '.marker');
-      writeFileSync(p, 'old');
-      atomicWriteMarkerJson(p, { ok: true });
-      assert.equal(readFileSync(p, 'utf8'), '{\n  "ok": true\n}\n');
+      assert.equal(existsSync(ghost), false, 'the write followed the link and created its target');
+      assert.equal(lstatSync(marker).isSymbolicLink(), false);
+      assert.equal(readFileSync(marker, 'utf8'), 'payload');
     });
   });
 });

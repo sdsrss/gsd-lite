@@ -145,6 +145,25 @@ function readSettingsOrExit(settingsPath) {
   return parsed;
 }
 
+/**
+ * Is a pid still running?
+ *
+ * `kill(pid, 0)` sends no signal; it only asks. ESRCH means gone. EPERM means
+ * alive but owned by someone else — still alive, so still hands off. Anything
+ * unparseable (a directory name we did not write) is treated as alive, because
+ * the cost of skipping a sweep is litter and the cost of a wrong delete is a
+ * corrupted install.
+ */
+function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code !== 'ESRCH';
+  }
+}
+
 function copyDir(src, dest, label) {
   if (DRY_RUN) {
     log(`  [dry-run] Would copy ${src} → ${dest}`);
@@ -204,12 +223,23 @@ export function main() {
   // server threw ERR_MODULE_NOT_FOUND on every start after that. The background
   // updater runs this path on session start, unattended.
   //
-  // Sweep staging and backup dirs stranded by an interrupted earlier run.
+  // Sweep staging and backup dirs stranded by an interrupted earlier run — but
+  // never one another install is still building into.
+  //
+  // Both names carry the owning pid. A second install.js is a reachable state,
+  // not a theoretical one: the auto-updater's lock goes stale after 10s
+  // (LOCK_STALE_MS in gsd-auto-update.cjs) while an install holding it can run
+  // for 60s, so a second session takes the lock and spawns its own installer.
+  // Deleting a live run's tree mid-copy is not a tidy failure — cpSync aborts
+  // the process with an uncatchable std::filesystem error, or worse, returns
+  // normally having copied only part of the tree, and that truncated tree then
+  // gets renamed over ~/.claude/gsd under a success message.
   if (!DRY_RUN) {
     for (const entry of readdirSync(CLAUDE_DIR)) {
-      if (entry.startsWith('.gsd-runtime-backup-') || entry.startsWith('.gsd-staging-')) {
-        rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
-      }
+      const prefix = ['.gsd-runtime-backup-', '.gsd-staging-'].find(p => entry.startsWith(p));
+      if (!prefix) continue;
+      if (isPidAlive(Number(entry.slice(prefix.length)))) continue;
+      rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
     }
   }
 
@@ -270,6 +300,14 @@ export function main() {
   const abandonStaging = () => {
     try { rmSync(STAGING_DIR, { recursive: true, force: true }); } catch { /* best effort */ }
   };
+  // Belt and braces for every throw between here and the swap — a failed
+  // copyFile, a full disk, anything not already handled below. 'exit' fires on
+  // normal exit and after an uncaught exception, and rmSync is synchronous, so
+  // the staging tree does not outlive the process that owns it. A hard kill
+  // (SIGKILL, or the uncatchable filesystem abort) escapes this, which is what
+  // the pid-aware sweep above is for: by the next run the owner is gone.
+  let stagingSwapped = false;
+  process.on('exit', () => { if (!stagingSwapped) abandonStaging(); });
 
   copyDir(join(__dirname, 'src'), join(STAGING_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
   // Write a sanitized package.json: strip dev-only npm lifecycle scripts
@@ -347,6 +385,7 @@ export function main() {
         if (hadRuntime && !existsSync(RUNTIME_DIR)) renameSync(backupDir, RUNTIME_DIR);
         throw err;
       }
+      stagingSwapped = true;
       log('  ✓ runtime swapped into ~/.claude/gsd');
     } catch (err) {
       log(`  ✗ Failed to install the new runtime: ${err.message}`);

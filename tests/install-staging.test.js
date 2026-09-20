@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -105,6 +105,70 @@ describe('a failed install leaves the working runtime alone', () => {
 
       const stray = (await readdir(claudeDir)).filter(e => e.startsWith('.gsd-staging') || e.startsWith('gsd.new'));
       assert.deepEqual(stray, [], `staging left behind: ${stray.join(', ')}`);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  // The staging rewrite added `.gsd-staging-*` to the start-of-run sweep. On main
+  // that sweep only matched `.gsd-runtime-backup-*`, which nothing created, so it
+  // was a no-op. Now it matches a directory a CONCURRENT install is building
+  // into — and concurrent installs are reachable: the auto-updater's lock goes
+  // stale after 10s (gsd-auto-update.cjs LOCK_STALE_MS) while an install holding
+  // it can run for 60s, so a second session takes the lock and spawns a second
+  // install.js. Deleting its tree mid-copy gives an uncatchable SIGABRT out of
+  // cpSync, or a silently truncated copy that still reports success.
+  it('does not sweep a staging directory belonging to a live process', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'gsd-staging-live-'));
+    try {
+      const claudeDir = join(home, '.claude');
+      await mkdir(claudeDir, { recursive: true });
+      const pkgDir = await makeNpxPackage(home);
+      cpSync(join(PROJECT_ROOT, 'node_modules'), join(pkgDir, 'node_modules'), { recursive: true });
+
+      // This test process is alive by definition.
+      const live = join(claudeDir, `.gsd-staging-${process.pid}`);
+      await mkdir(live, { recursive: true });
+      await writeFile(join(live, 'in-progress.txt'), 'another install is building here');
+
+      execFileSync(process.execPath, [join(pkgDir, 'install.js')], {
+        cwd: pkgDir,
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' },
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+
+      assert.equal(existsSync(join(live, 'in-progress.txt')), true,
+        'swept a live install\'s staging directory out from under it');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('still sweeps a staging directory left by a dead process', async () => {
+    // The sweep has to keep working, or an interrupted install litters forever.
+    const home = await mkdtemp(join(tmpdir(), 'gsd-staging-dead-'));
+    try {
+      const claudeDir = join(home, '.claude');
+      await mkdir(claudeDir, { recursive: true });
+      const pkgDir = await makeNpxPackage(home);
+      cpSync(join(PROJECT_ROOT, 'node_modules'), join(pkgDir, 'node_modules'), { recursive: true });
+
+      // Spawn and reap, so the pid is provably gone.
+      const corpse = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+      const deadPid = corpse.pid;
+      const stale = join(claudeDir, `.gsd-staging-${deadPid}`);
+      await mkdir(stale, { recursive: true });
+      await writeFile(join(stale, 'abandoned.txt'), 'left by an interrupted run');
+
+      execFileSync(process.execPath, [join(pkgDir, 'install.js')], {
+        cwd: pkgDir,
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' },
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+
+      assert.equal(existsSync(stale), false, 'abandoned staging directory was not cleaned up');
     } finally {
       await rm(home, { recursive: true, force: true });
     }

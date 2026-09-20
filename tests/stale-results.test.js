@@ -83,31 +83,38 @@ describe('result handlers reject results for tasks that are not running', () => 
     });
   });
 
-  it('refuses a late debugger result for a checkpointed task under review', async () => {
+  // `root_cause_found`, not `failed`. The failed branch patches lifecycle
+  // `failed`, and checkpointed → failed is already rejected whole by
+  // TASK_LIFECYCLE with the same error code — so asserting on that input passes
+  // with this guard deleted and proves nothing. The root_cause_found patch
+  // carries no lifecycle at all, sails through validation, and is the one input
+  // only this guard stops.
+  it('refuses a late debugger root-cause result for a checkpointed task under review', async () => {
     await withProject('stale-debug', async (dir) => {
       await underReview(dir);
+      const before = await read({ basePath: dir });
 
       const result = await handleDebuggerResult({
         result: {
           task_id: '1.1',
-          outcome: 'failed',
+          outcome: 'root_cause_found',
           root_cause: 'stale',
           fix_direction: 'none',
           evidence: [],
           hypothesis_tested: [{ hypothesis: 'the run was superseded', result: 'confirmed', evidence: 'test fixture' }],
           fix_attempts: 1,
           blockers: [],
-          architecture_concern: true,
+          architecture_concern: false,
         },
         basePath: dir,
       });
-      assert.equal(result.error, true);
+      assert.equal(result.error, true, 'a late root-cause result must not be accepted');
       assert.equal(result.code, 'TRANSITION_ERROR');
 
       const after = await read({ basePath: dir });
-      assert.equal(after.workflow_mode, 'reviewing_task',
-        'architecture_concern on a stale result would have failed the whole workflow');
-      assert.equal(after.phases[0].lifecycle, 'active');
+      assert.equal(after.workflow_mode, 'reviewing_task', 'the in-flight review was cancelled');
+      assert.deepEqual(after.current_review, before.current_review, 'the review target was dropped');
+      assert.equal(after.phases[0].todo.find(t => t.id === '1.1').lifecycle, 'checkpointed');
     });
   });
 

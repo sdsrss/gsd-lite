@@ -15,7 +15,7 @@
 
 const path = require('node:path');
 const { findGsdDir, readState } = require('./lib/gsd-finder.cjs');
-const { atomicWriteMarkerJson } = require('./lib/atomic-write.cjs');
+const { atomicWriteJson } = require('./lib/atomic-write.cjs');
 const os = require('node:os');
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -70,11 +70,12 @@ const TERMINAL_MODES = ['completed', 'failed', 'paused_by_user'];
   // `.gsd/` belongs to the repository, so a clone controls every path under it.
   // The old temp name was `.session-end.<pid>.tmp` — no random component — which
   // a hostile checkout could pre-create as a symlink and have writeFileSync
-  // follow. atomicWriteMarkerJson opens the temp O_EXCL under a random name and
-  // refuses outright if the marker itself is a link; see lib/atomic-write.cjs.
+  // follow. atomicWriteJson opens the temp O_EXCL under a random name, and its
+  // rename replaces a link planted at the marker path instead of following it;
+  // see lib/atomic-write.cjs.
   const markerPath = path.join(gsdDir, '.session-end');
   try {
-    atomicWriteMarkerJson(markerPath, marker);
+    atomicWriteJson(markerPath, marker);
   } catch (e) {
     if (process.env.GSD_DEBUG) {
       process.stderr.write(`gsd-session-stop: ${e.message}\n`);

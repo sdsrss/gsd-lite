@@ -22,7 +22,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { atomicWriteMarker } = require('./lib/atomic-write.cjs');
+const { atomicWrite } = require('./lib/atomic-write.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -106,10 +106,21 @@ process.stdin.on('end', () => {
     // Atomic debounce state write helper. warnPath sits in os.tmpdir(), which is
     // world-writable on a shared host, and both halves of the old temp name were
     // derivable — same planted-symlink exposure as the statusline bridge this
-    // file reads from. atomicWriteMarker opens the temp O_EXCL under a random
-    // name and refuses if warnPath itself is a link.
+    // file reads from. atomicWrite opens the temp O_EXCL under a random name,
+    // and its rename evicts a planted link instead of being stopped by one.
+    //
+    // Best effort, and that is the whole point: this file is bookkeeping, the
+    // warning below is the product. A throw here used to reach the outer catch
+    // and exit 0 with empty stdout, so planting a symlink at a path anyone can
+    // derive from `ls /tmp/gsd-ctx-*` silently suppressed every context-exhaustion
+    // warning for that session. Failing to debounce means the warning may repeat —
+    // noisy, and noticed. Losing the warning is silent, and is not.
     const writeWarnData = (data) => {
-      atomicWriteMarker(warnPath, JSON.stringify(data));
+      try {
+        atomicWrite(warnPath, JSON.stringify(data));
+      } catch (e) {
+        if (process.env.GSD_DEBUG) process.stderr.write(`gsd-context-monitor: debounce write skipped: ${e.message}\n`);
+      }
     };
 
     // Severity escalation bypasses debounce (lastLevel null = first warning, always fire)
