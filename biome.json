@@ -25,6 +25,15 @@
     "enabled": false
   },
   "files": {
-    "includes": ["src/**", "tests/**", "hooks/**"]
+    "includes": [
+      "src/**",
+      "tests/**",
+      "hooks/**",
+      "cli.js",
+      "install.js",
+      "uninstall.js",
+      "launcher.js",
+      "scripts/**"
+    ]
   }
 }
