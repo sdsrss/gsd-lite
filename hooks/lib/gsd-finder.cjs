@@ -8,6 +8,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { readJsonOwned } = require('./atomic-write.cjs');
 
 const _findCache = new Map();
 
@@ -46,14 +47,15 @@ function clearFindGsdDirCache() {
 }
 
 /**
- * Read and parse .gsd/state.json. Returns parsed object or null on any failure.
+ * Read and parse .gsd/state.json. Returns a plain object, or null on any failure.
+ *
+ * Goes through readJsonOwned rather than readFileSync for the same reason the
+ * statusline does: a FIFO at this repo-controlled path makes readFileSync block
+ * forever instead of throwing, and a try/catch cannot catch a read that never
+ * returns.
  */
 function readState(gsdDir) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(gsdDir, 'state.json'), 'utf8'));
-  } catch {
-    return null;
-  }
+  return readJsonOwned(path.join(gsdDir, 'state.json'));
 }
 
 /**

@@ -523,4 +523,32 @@ describe('gsd-context-monitor.cjs (production PostToolUse hook)', () => {
       cleanupSession(sid);
     }
   });
+
+  it('refuses an array on the debounce path instead of adopting it as state', () => {
+    // `typeof [] === 'object'`, so the shape check admitted an array. Assigning
+    // callsSinceWarn to it works, and JSON.stringify then drops the property —
+    // so the counter could never persist. One `[]` written to this world-derivable
+    // path made every subsequent run re-read `[]`, re-lose the count, and never
+    // advance the debounce: self-sustaining suppression of the warning, from a
+    // single write, on a path `ls /tmp/gsd-ctx-*` hands to any local user.
+    const sid = nextSessionId();
+    const warnPath = join(tmpdir(), `gsd-ctx-${sid}-warned.json`);
+    writeBridgeFile(sid, {
+      remaining_percentage: 20,
+      used_pct: 80,
+      has_gsd: true,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+    try {
+      writeFileSync(warnPath, '[]');
+      runHook({ session_id: sid });
+
+      const after = JSON.parse(readFileSync(warnPath, 'utf8'));
+      assert.equal(Array.isArray(after), false, 'the planted array was adopted as debounce state');
+      assert.equal(typeof after.callsSinceWarn, 'number',
+        'the debounce counter did not persist, so the warning can never be debounced or re-armed');
+    } finally {
+      cleanupSession(sid);
+    }
+  });
 });

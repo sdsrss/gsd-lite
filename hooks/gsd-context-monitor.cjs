@@ -21,7 +21,7 @@
 
 const os = require('node:os');
 const path = require('node:path');
-const { atomicWrite, readMarker } = require('./lib/atomic-write.cjs');
+const { atomicWrite, readJsonOwned } = require('./lib/atomic-write.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -60,18 +60,13 @@ process.stdin.on('end', () => {
     const tmpDir = os.tmpdir();
     const metricsPath = path.join(tmpDir, `gsd-ctx-${sessionId}.json`);
 
-    // readMarker returns null rather than throwing, so absence has to be checked
-    // and not left to the catch: JSON.parse(null) yields null instead of raising,
-    // which would sail past a try/catch written for readFileSync's ENOENT.
-    const metricsRaw = readMarker(metricsPath);
-    if (metricsRaw === null) process.exit(0); // No bridge file — fresh session or subagent
-    let metrics;
-    try {
-      metrics = JSON.parse(metricsRaw);
-    } catch {
-      process.exit(0); // Unparseable bridge file
-    }
-    if (!metrics || typeof metrics !== 'object') process.exit(0);
+    // readJsonOwned folds all four ways this can go wrong — missing, not a regular
+    // file, unparseable, or parsed to a non-object — into a single null. Absence
+    // has to be a return value and not an exception here: JSON.parse(null) yields
+    // null instead of raising, so a try/catch written for readFileSync's ENOENT
+    // would sail straight past it.
+    const metrics = readJsonOwned(metricsPath);
+    if (metrics === null) process.exit(0); // No usable bridge file — fresh session or subagent
     const remaining = metrics.remaining_percentage;
     const usedPct = metrics.used_pct;
 
@@ -97,15 +92,11 @@ process.stdin.on('end', () => {
     const warnPath = path.join(tmpDir, `gsd-ctx-${sessionId}-warned.json`);
     let warnData = { callsSinceWarn: 0, lastLevel: null };
 
-    const warnRaw = readMarker(warnPath);
-    if (warnRaw !== null) {
-      try {
-        const parsed = JSON.parse(warnRaw);
-        if (parsed && typeof parsed === 'object') warnData = parsed;
-      } catch {
-        // Unparseable — keep the default rather than adopting a null
-      }
-    }
+    // Only a plain object is adopted. An array passed the old `typeof` check and
+    // then silently refused to carry the counter through JSON.stringify, which
+    // made a single planted `[]` suppress the warning for the rest of the session.
+    const parsedWarn = readJsonOwned(warnPath);
+    if (parsedWarn) warnData = parsedWarn;
 
     warnData.callsSinceWarn = (warnData.callsSinceWarn || 0) + 1;
 

@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { findGsdDir } = require('./lib/gsd-finder.cjs');
-const { atomicWrite, readMarker } = require('./lib/atomic-write.cjs');
+const { atomicWrite, readMarker, readJsonOwned } = require('./lib/atomic-write.cjs');
 
 let input = '';
 const stdinTimeout = setTimeout(() => process.exit(0), 3000);
@@ -38,19 +38,23 @@ process.stdin.on('end', () => {
     let task = '';
     let hasGsd = false;
     const gsdDir = findGsdDir(cwd);
-    if (gsdDir) try {
-      const state = JSON.parse(fs.readFileSync(path.join(gsdDir, 'state.json'), 'utf8'));
+    // `.gsd/state.json` is as repo-controlled as `.gsd/.context-health`, and it is
+    // read on every render. A bare readFileSync here meant a FIFO planted at this
+    // path hung the statusline forever — the same failure the marker guard fixed
+    // one path over, which is why it goes through the same guard now. Absent or
+    // unusable is a null to branch on, not an exception to catch: the old catch
+    // could not have caught a blocking read anyway.
+    const state = gsdDir ? readJsonOwned(path.join(gsdDir, 'state.json')) : null;
+    if (state) {
       hasGsd = true;
       if (state.current_task && state.current_phase) {
         const phase = (state.phases || []).find(p => p.id === state.current_phase);
         const t = phase?.todo?.find(t => t.id === state.current_task);
-        if (t) {
+        if (typeof t?.name === 'string') {
           const name = t.name.length > 40 ? t.name.substring(0, 40) + '...' : t.name;
           task = `${t.id} ${name}`;
         }
       }
-    } catch {
-      // No state.json or parse error — skip task display
     }
 
     // Context window display (USED percentage scaled to usable context)
@@ -67,15 +71,11 @@ process.stdin.on('end', () => {
         try {
           const bridgePath = path.join(os.tmpdir(), `gsd-ctx-${session}.json`);
           let needsWrite = true;
-          // readMarker returns null instead of throwing, and JSON.parse(null) is
-          // null rather than an error — so absence is checked, not caught.
-          const existingRaw = readMarker(bridgePath);
-          if (existingRaw !== null) {
-            try {
-              const existing = JSON.parse(existingRaw);
-              if (existing?.remaining_percentage === remaining && existing?.has_gsd === hasGsd) needsWrite = false;
-            } catch { /* unparseable — rewrite it */ }
-          }
+          // Anything unreadable, unparseable or not object-shaped comes back null
+          // and leaves needsWrite true, so the obstruction is rewritten rather
+          // than treated as a matching value.
+          const existing = readJsonOwned(bridgePath);
+          if (existing && existing.remaining_percentage === remaining && existing.has_gsd === hasGsd) needsWrite = false;
           if (needsWrite) {
             // R-23 made the tmp name unique (pid+timestamp) so concurrent
             // statusline processes would not race on a shared `.tmp`. Unique is

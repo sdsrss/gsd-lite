@@ -408,4 +408,32 @@ describe('statusline: non-numeric context percentage', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  // Same failure, one path over. The guard above landed on the marker files and
+  // left .gsd/state.json on a bare readFileSync, which a hostile checkout
+  // controls just as directly — and the statusline reads it on every render.
+  it('does not hang when .gsd/state.json is a fifo', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-statusline-statefifo-'));
+    try {
+      const gsdDir = join(root, '.gsd');
+      await mkdir(gsdDir, { recursive: true });
+      execFileSync('mkfifo', [join(gsdDir, 'state.json')]);
+
+      const sid = `statefifo-${Date.now()}`;
+      bridgeSessions.add(sid);
+      const out = execFileSync(process.execPath, [HOOK_PATH], {
+        input: JSON.stringify({
+          session_id: sid,
+          model: { display_name: 'Test' },
+          workspace: { current_dir: root },
+          context_window: { remaining_percentage: 41 },
+        }),
+        encoding: 'utf8',
+        timeout: 6000,
+      });
+      assert.match(out, /41%|\d+%/, 'the statusline should still render');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
