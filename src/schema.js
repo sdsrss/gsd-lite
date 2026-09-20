@@ -24,20 +24,45 @@ export const WORKFLOW_MODES = [
 // only ways out were state-init force:true (which destroys the plan) or editing
 // state.json by hand. The two edges below are what resume's long-advertised
 // recovery_options drive.
-export const WORKFLOW_TRANSITIONS = {
+// Modes the *system* imposes rather than the caller choosing: evaluatePreflight
+// detects a condition (HEAD moved, plan drifted, research expired, direction
+// drifted) and persists the matching mode through the same update() path a tool
+// call uses. The whitelist therefore got a vote on a state already determined to
+// be true, and mostly voted no — replan_required, for instance, listed only
+// executing_task and paused_by_user, so a user who edited the plan and committed
+// got VALIDATION_FAILED from every resume thereafter, forever, because the
+// failed write left the condition in place to be re-detected next time.
+//
+// Every non-terminal mode therefore reaches all four. These are holds requiring
+// resolution, not shortcuts: widening the door to them cannot skip work.
+export const SYSTEM_HOLD_MODES = ['reconcile_workspace', 'replan_required', 'research_refresh_needed', 'awaiting_user'];
+
+const WORKFLOW_TRANSITIONS_BASE = {
   planning:                 ['executing_task', 'paused_by_user'],
-  executing_task:           ['planning', 'reviewing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'failed'],
-  reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'failed'],
-  reviewing_phase:          ['executing_task', 'awaiting_user', 'awaiting_clear', 'paused_by_user', 'reconcile_workspace', 'replan_required', 'completed', 'failed'],
-  awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required', 'planning'],
+  executing_task:           ['planning', 'reviewing_task', 'reviewing_phase', 'awaiting_clear', 'paused_by_user', 'failed'],
+  reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_clear', 'paused_by_user', 'failed'],
+  reviewing_phase:          ['executing_task', 'awaiting_clear', 'paused_by_user', 'completed', 'failed'],
+  awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear', 'planning'],
   awaiting_clear:           ['executing_task', 'paused_by_user'],
-  paused_by_user:           ['executing_task', 'awaiting_user', 'awaiting_clear', 'reconcile_workspace', 'replan_required', 'research_refresh_needed', 'reviewing_task', 'reviewing_phase'],
+  paused_by_user:           ['executing_task', 'awaiting_clear', 'reviewing_task', 'reviewing_phase'],
   reconcile_workspace:      ['executing_task', 'paused_by_user'],
   replan_required:          ['executing_task', 'paused_by_user'],
   research_refresh_needed:  ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user'],
   completed:                [],  // terminal — guarded by FROM-terminal check
   failed:                   ['executing_task', 'planning'],  // recoverable via resume `recovery`
 };
+
+// `completed` and `failed` are excluded: preflight skips them outright
+// (skipsPreflight in orchestrator/helpers.js), so nothing needs the edge, and
+// `failed`'s two exits are the recovery decisions and nothing else.
+export const WORKFLOW_TRANSITIONS = Object.fromEntries(
+  Object.entries(WORKFLOW_TRANSITIONS_BASE).map(([mode, allowed]) => [
+    mode,
+    mode === 'completed' || mode === 'failed'
+      ? allowed
+      : [...new Set([...allowed, ...SYSTEM_HOLD_MODES.filter((hold) => hold !== mode)])],
+  ]),
+);
 
 export const TASK_LIFECYCLE = {
   pending:              ['running', 'blocked'],
