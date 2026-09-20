@@ -75,9 +75,31 @@ function atomicWriteJson(filePath, value) {
  * session. Both self-healed before the change and stopped self-healing after it.
  *
  * So these paths use atomicWrite and let the rename evict whatever is there.
- * Callers that read one of these files first already wrap the read in try/catch
- * and treat a bad value as absent.
+ *
+ * The READ side needs its own guard, which is what readMarker below is for. A
+ * try/catch does not help there: a symlink pointing at a FIFO makes
+ * readFileSync block forever rather than throw, and the statusline reads
+ * .context-health before it decides whether to write — so the write semantics
+ * never come into it. Measured: a FIFO planted at that path hangs the hook
+ * indefinitely, on this version and every earlier one.
  */
+
+/**
+ * Read a file GSD owns, or return null — never block, never follow a link.
+ *
+ * lstat first and read only a regular file. A directory, a socket, a device or
+ * a FIFO all return null, which every caller already treats as "no value yet".
+ * The lstat/open race is not worth closing here: losing it means reading a file
+ * someone swapped in, and these callers all parse defensively and fall back.
+ */
+function readMarker(filePath, encoding = 'utf8') {
+  try {
+    if (!fs.lstatSync(filePath).isFile()) return null;
+    return fs.readFileSync(filePath, encoding);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Atomically rewrite a text file, writing *through* a symlink rather than over
@@ -118,6 +140,7 @@ function atomicWriteThroughLink(filePath, content, root) {
 }
 
 module.exports = {
+  readMarker,
   atomicWrite,
   atomicWriteJson,
   atomicWriteThroughLink,

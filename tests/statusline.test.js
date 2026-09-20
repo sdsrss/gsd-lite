@@ -374,4 +374,38 @@ describe('statusline: non-numeric context percentage', () => {
       try { rmSync(decoy, { force: true }); } catch { /* best effort */ }
     }
   });
+
+  // A FIFO at .gsd/.context-health hung the hook forever: the read happens
+  // before the write decision, so no write-side hardening touches it, and a
+  // try/catch does nothing for a blocking read. Every later render hung too.
+  it('does not hang when .context-health is a fifo', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-statusline-fifo-'));
+    try {
+      const gsdDir = join(root, '.gsd');
+      await mkdir(gsdDir, { recursive: true });
+      await writeFile(join(gsdDir, 'state.json'), JSON.stringify({
+        schema_version: 'v1', project: 'p', workflow_mode: 'executing_task',
+        current_phase: 1, current_task: null, total_phases: 1, phases: [],
+      }));
+      execFileSync('mkfifo', [join(root, 'pipe')]);
+      symlinkSync(join(root, 'pipe'), join(gsdDir, '.context-health'));
+
+      const sid = `fifo-${Date.now()}`;
+      bridgeSessions.add(sid);
+      // execFileSync throws ETIMEDOUT on a hang, which is the failure we want.
+      const out = execFileSync(process.execPath, [HOOK_PATH], {
+        input: JSON.stringify({
+          session_id: sid,
+          model: { display_name: 'Test' },
+          workspace: { current_dir: root },
+          context_window: { remaining_percentage: 37 },
+        }),
+        encoding: 'utf8',
+        timeout: 6000,
+      });
+      assert.match(out, /37%|\d+%/, 'the statusline should still render');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

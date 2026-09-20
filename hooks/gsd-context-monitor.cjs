@@ -19,10 +19,9 @@
 // Debounce: 5 tool uses between warnings to avoid spam
 // Severity escalation bypasses debounce (WARNING -> CRITICAL fires immediately)
 
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { atomicWrite } = require('./lib/atomic-write.cjs');
+const { atomicWrite, readMarker } = require('./lib/atomic-write.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
@@ -61,12 +60,18 @@ process.stdin.on('end', () => {
     const tmpDir = os.tmpdir();
     const metricsPath = path.join(tmpDir, `gsd-ctx-${sessionId}.json`);
 
+    // readMarker returns null rather than throwing, so absence has to be checked
+    // and not left to the catch: JSON.parse(null) yields null instead of raising,
+    // which would sail past a try/catch written for readFileSync's ENOENT.
+    const metricsRaw = readMarker(metricsPath);
+    if (metricsRaw === null) process.exit(0); // No bridge file — fresh session or subagent
     let metrics;
     try {
-      metrics = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+      metrics = JSON.parse(metricsRaw);
     } catch {
-      process.exit(0); // No bridge file — fresh session or subagent
+      process.exit(0); // Unparseable bridge file
     }
+    if (!metrics || typeof metrics !== 'object') process.exit(0);
     const remaining = metrics.remaining_percentage;
     const usedPct = metrics.used_pct;
 
@@ -92,10 +97,14 @@ process.stdin.on('end', () => {
     const warnPath = path.join(tmpDir, `gsd-ctx-${sessionId}-warned.json`);
     let warnData = { callsSinceWarn: 0, lastLevel: null };
 
-    try {
-      warnData = JSON.parse(fs.readFileSync(warnPath, 'utf8'));
-    } catch {
-      // No prior warning state — first warning this session
+    const warnRaw = readMarker(warnPath);
+    if (warnRaw !== null) {
+      try {
+        const parsed = JSON.parse(warnRaw);
+        if (parsed && typeof parsed === 'object') warnData = parsed;
+      } catch {
+        // Unparseable — keep the default rather than adopting a null
+      }
     }
 
     warnData.callsSinceWarn = (warnData.callsSinceWarn || 0) + 1;
