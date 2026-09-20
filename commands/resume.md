@@ -238,6 +238,12 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
                           用户决定后 → orchestrator-resume recovery:'retry_failed' |
                           'skip_failed' | 'replan'
 
+  3b. warnings (可选数组，与 action 正交):
+     响应里带 `warnings` 时，先把每条转达给用户，再按 action 继续——它不是终止条件。
+     目前只有一种: RESEARCH_COMMIT_PENDING —— 上一次研究写入没写完，
+     `.gsd/research/` 里的文件和 state.json 记录的研究可能对不上。
+     重新跑研究会重写两边并清掉标记；确认产物没问题也可以直接删那个文件。
+
   4. 上下文安全阀:
      每次循环迭代前检查上下文健康度
      remaining <= 35% → 保存状态 + 输出 "请 /clear 后 /gsd:resume" → 退出循环
