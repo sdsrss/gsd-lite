@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Plugin installer for GSD-Lite
 
-import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, renameSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, renameSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -164,6 +164,19 @@ function isPidAlive(pid) {
   }
 }
 
+// Pids get recycled. Without a second condition, a directory left by a crashed
+// run whose number now belongs to some unrelated long-lived process reads as
+// alive forever, and this sweep — the only garbage collection these directories
+// get — would never reclaim it. No install runs for a day.
+const ABANDONED_AFTER_MS = 24 * 60 * 60 * 1000;
+function isAbandoned(dirPath) {
+  try {
+    return Date.now() - statSync(dirPath).mtimeMs > ABANDONED_AFTER_MS;
+  } catch {
+    return false; // cannot tell — leave it alone
+  }
+}
+
 function copyDir(src, dest, label) {
   if (DRY_RUN) {
     log(`  [dry-run] Would copy ${src} → ${dest}`);
@@ -238,7 +251,12 @@ export function main() {
     for (const entry of readdirSync(CLAUDE_DIR)) {
       const prefix = ['.gsd-runtime-backup-', '.gsd-staging-'].find(p => entry.startsWith(p));
       if (!prefix) continue;
-      if (isPidAlive(Number(entry.slice(prefix.length)))) continue;
+      const owner = Number(entry.slice(prefix.length));
+      // Our own pid always reads alive, so a leftover from an earlier run whose
+      // pid has since been recycled onto THIS process would be skipped here and
+      // then merged into by copyDir — stale files riding into the swap. It is
+      // ours by name, so take it regardless.
+      if (owner !== process.pid && isPidAlive(owner) && !isAbandoned(join(CLAUDE_DIR, entry))) continue;
       rmSync(join(CLAUDE_DIR, entry), { recursive: true, force: true });
     }
   }
@@ -308,6 +326,10 @@ export function main() {
   // the pid-aware sweep above is for: by the next run the owner is gone.
   let stagingSwapped = false;
   process.on('exit', () => { if (!stagingSwapped) abandonStaging(); });
+  // Start from an empty tree no matter what the sweep decided. copyDir merges
+  // rather than replaces, so anything surviving here would be copied into the
+  // new runtime.
+  if (!DRY_RUN) abandonStaging();
 
   copyDir(join(__dirname, 'src'), join(STAGING_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
   // Write a sanitized package.json: strip dev-only npm lifecycle scripts
