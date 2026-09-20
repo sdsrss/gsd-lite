@@ -411,7 +411,7 @@ gsd-lite/
 
 ```bash
 npm test                    # Run the full test suite
-npm run test:coverage       # Tests + coverage report (whole-package ~91% lines / ~82% branches; c8 gate: 80% lines / 75% branches)
+npm run test:coverage       # Tests + coverage report (whole-package ~93% lines / ~86% branches; gate: 80% lines / 75% branches)
 npm run lint                # Biome lint
 node --test tests/file.js   # Run a single test file
 ```

@@ -4,17 +4,24 @@ on:
   push:
     tags: ['v*']
 
+# Default for every job: read only. `validate` needs nothing more, and it runs
+# first, so the write grant does not exist while untrusted-ish work (npm ci,
+# lifecycle scripts of the whole dependency tree) is running. Only `publish`
+# raises it, and only to what it actually uses — see its `permissions:` block.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      # Pinned to the commit SHA of the major, not the floating tag: `@v5` is
+      # mutable by the action's owner, the SHA is not. The trailing comment
+      # records the major so a bump stays readable in review.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -60,10 +67,22 @@ jobs:
   publish:
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      # `contents: write` is required by action-gh-release below, which creates
+      # or updates the GitHub Release. Do not remove it to "tighten" this job:
+      # `npm publish` runs BEFORE the release step, so a job that cannot write
+      # the Release still publishes to npm first — leaving the version on npm
+      # with no signed Release behind it, which is exactly the state auto-update
+      # clients fail closed on (they read GitHub Releases, not npm).
+      contents: write
+      # `id-token: write` is what `npm publish --provenance` needs: npm exchanges
+      # this job's OIDC token for a Sigstore signature binding the tarball to
+      # this workflow, this repo and this commit.
+      id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -160,6 +179,16 @@ jobs:
         # The packed tarball is published rather than the working directory, so
         # the bytes on npm are the same bytes hashed into the release body and
         # attached as the asset.
+        #
+        # `--provenance` adds npm's own attestation on top of the Ed25519
+        # signature above. They answer different questions and neither replaces
+        # the other: the signature proves the release body's checksum came from
+        # the holder of RELEASE_SIGNING_KEY, and is what the auto-update client
+        # checks; provenance proves to *npm consumers* that this tarball was
+        # built by this workflow from this commit. It needs `id-token: write`
+        # (granted on this job) and `--access public` (already passed). If the
+        # OIDC exchange fails the publish fails with it, which is the safe
+        # direction: nothing reaches npm and the run is re-runnable.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           TARBALL: ${{ steps.pack.outputs.tarball }}
@@ -169,12 +198,12 @@ jobs:
           if [ "$PUBLISHED" = "$VERSION" ]; then
             echo "::notice::gsd-lite@$VERSION already published to npm — skipping"
           else
-            npm publish "$TARBALL" --access public
+            npm publish "$TARBALL" --access public --provenance
             echo "Published gsd-lite@$VERSION to npm"
           fi
 
       - name: Create or update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           # If a release was already created (e.g., via `gh release create`),
