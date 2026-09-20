@@ -20,6 +20,7 @@ const {
   atomicWriteThroughLink,
   readJsonOwned,
   readThroughLink,
+  existsAsRegularFile,
 } = require('./lib/atomic-write.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -412,7 +413,19 @@ setTimeout(() => process.exit(0), 4000).unref();
             // write that through the link over the real contents. Following the
             // link and rejecting only what it lands on keeps read and write
             // agreeing, and stops a FIFO here from hanging SessionStart.
-            const content = readThroughLink(claudeMdPath) ?? '';
+            const existing = readThroughLink(claudeMdPath);
+
+            // null means absent OR unreadable, and those must not be treated the
+            // same by code that is about to generate a replacement. A regular
+            // file we failed to read is content we cannot see, and starting from
+            // '' would rename a status block over it — a mode-000 CLAUDE.md lost
+            // its contents exactly that way. Nothing there is safe to create
+            // over; something there we cannot read is not.
+            const unreadable = existing === null && existsAsRegularFile(claudeMdPath);
+            if (unreadable && process.env.GSD_DEBUG) {
+              process.stderr.write(`gsd-session-init: ${claudeMdPath} exists but could not be read — leaving it alone\n`);
+            }
+            const content = existing ?? '';
 
             const { begin: beginIdx, end: endIdx } = findStatusBlock(content);
 
@@ -426,8 +439,9 @@ setTimeout(() => process.exit(0), 4000).unref();
               newContent = content + separator + statusBlock + '\n';
             }
 
-            // Only write if content changed
-            if (newContent !== content) {
+            // Only write if content changed, and never over a file we could
+            // not read.
+            if (newContent !== content && !unreadable) {
               atomicWriteThroughLink(claudeMdPath, newContent, projectRoot);
             }
           } catch (e) {
