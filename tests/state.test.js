@@ -1,11 +1,12 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat as fsStat } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, stat as fsStat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update, phaseComplete, matchDecisionForBlocker } from '../src/tools/state/index.js';
 import { readJson } from '../src/utils.js';
 import { ERROR_CODES } from '../src/tools/state/constants.js';
+import { CANONICAL_FIELDS } from '../src/schema.js';
 
 describe('state tools', () => {
   let tempDir;
@@ -532,5 +533,67 @@ describe('R-19: update() forces injected tasks/phases to initial lifecycle', () 
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// state-read's `fields` filter used to answer `{}` for three different things:
+// a misspelled name, a name that is valid but absent from this state, and a
+// field that is genuinely empty. A caller acting on `{}` concludes "no current
+// task" in all three. update() has rejected unknown keys since it was written;
+// read() accepted anything, so the two halves of one contract disagreed.
+describe('state-read field filtering tells absent from misspelled', () => {
+  let dir;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'gsd-fields-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  // A minimal legacy state: migration leaves most canonical fields off it, so
+  // "valid name, not in this state" and "empty value" both occur here at once,
+  // which is the only way to assert they are distinguishable.
+  async function legacyState() {
+    await mkdir(join(dir, '.gsd'), { recursive: true });
+    await writeFile(join(dir, '.gsd', 'state.json'), JSON.stringify({
+      schema_version: 'v1', project: 'legacy', workflow_mode: 'planning', phases: [],
+    }));
+  }
+
+  it('rejects a field name that is not readable, naming it', async () => {
+    await legacyState();
+    const result = await read({ basePath: dir, fields: ['curent_task'] });
+    assert.equal(result.error, true, 'a misspelled field must not come back as {}');
+    assert.equal(result.code, 'INVALID_INPUT');
+    assert.match(result.message, /curent_task/, 'the message must name the offending field');
+  });
+
+  it('reports a valid-but-absent field as absent, not as empty', async () => {
+    await legacyState();
+    const result = await read({ basePath: dir, fields: ['phases', 'evidence'] });
+    assert.ok(!result.error, `expected a result, got ${JSON.stringify(result)}`);
+    assert.deepEqual(result.phases, [], 'phases is present and empty — that is not absence');
+    assert.deepEqual(result._absent, ['evidence'], 'evidence is absent from this state and must say so');
+    assert.ok(!('evidence' in result), 'an absent field must not appear as a key');
+  });
+
+  it('omits the absent marker entirely when everything asked for is there', async () => {
+    await init({ project: 'full', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T' }] }], basePath: dir });
+    const result = await read({ basePath: dir, fields: ['project', 'workflow_mode'] });
+    assert.ok(!('_absent' in result), 'a marker that is always present is noise, not signal');
+  });
+
+  it('reads _version, which update() must still refuse to write', async () => {
+    // The read and write allowlists are deliberately different. Asserting both
+    // here stops a later "unify these two lists" from quietly breaking either.
+    await init({ project: 'v', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T' }] }], basePath: dir });
+    const readBack = await read({ basePath: dir, fields: ['_version'] });
+    assert.equal(typeof readBack._version, 'number', '_version must stay readable');
+    const written = await update({ updates: { _version: 99 }, basePath: dir });
+    assert.equal(written.error, true, '_version must stay unwritable');
+    assert.match(written.message, /_version/);
+  });
+
+  it('accepts every canonical field, so a new one cannot be added without a read path', async () => {
+    await init({ project: 'all', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T' }] }], basePath: dir });
+    assert.ok(CANONICAL_FIELDS.length > 0, 'empty field list would make this vacuous');
+    const result = await read({ basePath: dir, fields: [...CANONICAL_FIELDS] });
+    assert.ok(!result.error, `a canonical field was rejected: ${JSON.stringify(result)}`);
   });
 });
