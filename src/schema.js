@@ -74,6 +74,12 @@ export const TASK_LIFECYCLE = {
   needs_revalidation:   ['pending'],
 };
 
+// Lifecycles in which an executor or debugger result is still meaningful: the
+// task is queued for dispatch (parallel dispatch leaves it pending until its
+// result lands) or actively running. Anything else means the result is stale —
+// the work was superseded, already reviewed, or already accepted.
+export const ACTIONABLE_LIFECYCLES = ['pending', 'running'];
+
 export const PHASE_LIFECYCLE = {
   pending:    ['active'],
   active:     ['reviewing', 'blocked', 'failed'],

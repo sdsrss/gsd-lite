@@ -1,5 +1,5 @@
-import { read, reclassifyReviewLevel, selectRunnableTask } from '../state/index.js';
-import { validateExecutorResult } from '../../schema.js';
+import { ERROR_CODES, read, reclassifyReviewLevel, selectRunnableTask } from '../state/index.js';
+import { ACTIONABLE_LIFECYCLES, validateExecutorResult } from '../../schema.js';
 import {
   MAX_DEBUG_RETRY,
   getPhaseAndTask,
@@ -34,6 +34,21 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
   // misrouted result that must not mutate an already-advanced/earlier phase.
   if (phase.id !== state.current_phase) {
     return { error: true, message: `Task ${result.task_id} is in phase ${phase.id}, not the current phase ${state.current_phase}; result rejected` };
+  }
+
+  // A result is only meaningful for a task still being worked on. The phase
+  // check above catches a misrouted result; this catches a late one for the
+  // right task — a duplicate dispatch, or a run superseded while it was still
+  // going. Without it, `outcome: 'failed'` for an already-checkpointed L2 task
+  // reported success, cleared current_review, dropped the workflow back to
+  // executing_task and recorded a retry against work that had not failed: the
+  // failed branch's patch carried no lifecycle, so it applied from any state.
+  if (!ACTIONABLE_LIFECYCLES.includes(task.lifecycle)) {
+    return {
+      error: true,
+      code: ERROR_CODES.TRANSITION_ERROR,
+      message: `Task ${task.id} is '${task.lifecycle}', not ${ACTIONABLE_LIFECYCLES.join(' or ')}; this result is stale and was rejected`,
+    };
   }
 
   // R-21 (audit L4): optimistic-lock the read→persist window. update() bumps

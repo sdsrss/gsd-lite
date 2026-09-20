@@ -1,5 +1,5 @@
-import { read } from '../state/index.js';
-import { validateDebuggerResult } from '../../schema.js';
+import { ERROR_CODES, read } from '../state/index.js';
+import { ACTIONABLE_LIFECYCLES, validateDebuggerResult } from '../../schema.js';
 import {
   getPhaseAndTask,
   persist,
@@ -28,6 +28,18 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
   if (phase.id !== state.current_phase) {
     return { error: true, message: `Task ${result.task_id} is in phase ${phase.id}, not the current phase ${state.current_phase}; result rejected` };
   }
+  // Same staleness guard as the executor handler, and it matters more here: a
+  // debugger result carrying `architecture_concern: true` fails the whole
+  // workflow, so a late one for a task that already checkpointed would end the
+  // project over work that had since succeeded.
+  if (!ACTIONABLE_LIFECYCLES.includes(task.lifecycle)) {
+    return {
+      error: true,
+      code: ERROR_CODES.TRANSITION_ERROR,
+      message: `Task ${task.id} is '${task.lifecycle}', not ${ACTIONABLE_LIFECYCLES.join(' or ')}; this result is stale and was rejected`,
+    };
+  }
+
   // R-21 (audit L4): optimistic-lock the read→persist window (one persist per call).
   const expectedVersion = state._version;
 
