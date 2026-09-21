@@ -1,6 +1,6 @@
 ---
 status: implemented
-revision: 2
+revision: 3
 ---
 
 # Untrusted-checkout executor surface
@@ -135,3 +135,52 @@ execution side acts differently.
   behaviour change (init outside git, `git init` later → reconcile) meets §2-EXT's
   released-artifact bar, so the release carrying this owes a CHANGELOG migration note
   naming the exit (`state-update` on `git_head`). Nothing to do until then.
+- r3 (2026-09-21) — independent review refuted two of r2's four claims; this revision
+  is the response. The goal is unchanged; the means are substantially different, and
+  **the centre of the change moved from advisory to mechanical**.
+
+  **Removed: the preflight predicate.** Two structural reasons, neither fixable by
+  narrowing it further. It could not stop anything — the hint's only vocabulary is
+  `reconcile_workspace` / `await_manual_intervention`, and `workflows/execution-flow.md`
+  (which `commands/resume.md` names the single source of truth) puts that pair outside
+  the terminal set and instructs the orchestrator to set `git_head` and continue; the
+  gate's whole effect was one extra `state-update`. And r2's load-bearing premise —
+  "state-init inside a git repo always writes one" — is false: `git rev-parse --short
+  HEAD` exits 128 on an unborn HEAD, so `git init` → scaffold → state-init → first
+  commit trips it, as does any transient `getGitHead` failure, permanently. A security
+  prompt that fires on ordinary work trains people to dismiss it. The removal is pinned
+  by a test, with the reasoning in a comment where the predicate used to sit.
+
+  **Added: constraints on the values that get substituted into a command and a path.**
+  `agents/reviewer.md` tells an agent holding Bash to build `git diff
+  <commit>~1..<commit>` from `checkpoint_commit` and to Read every `files_changed`
+  entry, while schema validation accepts any string and any array of strings. This is
+  the half that does not ask a model to comply, so it runs first: `safeCommitRef`
+  (`/^[0-9a-f]{4,40}$/`, git's own abbreviation floor rather than 7, so a legitimate
+  short hash is never withheld) and `safeWorkspacePaths` (no absolute, `~`, NUL or `..`),
+  applied at all three dispatch sites. Deliberately NOT in `validateState`: rejecting a
+  whole state at read would brick a project that already has a bad value, with no way to
+  repair it. A withheld value is reported to the agent as `checkpoint_commit_rejected` /
+  `files_changed_rejected` so it reports the gap instead of substituting its own.
+
+  **Moved: provenance from the executor payload to the response envelope.** r2 marked
+  one of four dispatch paths, and state-sourced strings ride outside any context object
+  (`summary.recent_decisions[].summary` and `summary.current_task.name` on every
+  successful resume, `last_failure_summary` at top level). The note's wording was also
+  wrong in the same way r2's `project_conventions` claim was, one level up: "the fields
+  named in project_data were read from the workspace" reads as a guarantee that the rest
+  are ours. It now says the list is a pointer, not a boundary.
+
+  Tests: 24 in `tests/untrusted-checkout.test.js`, 1450 → 1463 suite-wide, 0 fail; lint
+  108 files, 0 findings. Mutation-verified, and the mutation run is what caught the two
+  gaps worth naming: the sanitiser was unit-tested while neither dispatch call site was,
+  so deleting `...safeTaskRefs(task)` from either left everything green — and the
+  reviewer has two call sites, of which a single test covered one. Both now fail
+  independently. A third mutant exposed a live bug rather than a test gap: the envelope
+  helper had lost its `await` and was silently attaching nothing to a promise, so it now
+  throws on one rather than no-opping.
+
+  **Still open, and not addressed here** (needs its own round and its own AUTH): whether
+  `checkpoint_commit` and `files_changed` should also be constrained where they are
+  *written* — `handleExecutorResult` accepts them from the executor. Shape-checking at
+  the write boundary is a Δ-contract on input accepted today.

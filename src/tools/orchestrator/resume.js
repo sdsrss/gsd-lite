@@ -1,4 +1,4 @@
-import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask } from '../state/index.js';
+import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask, PROVENANCE_NOTE } from '../state/index.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
 import { join } from 'node:path';
 import { stat, unlink } from 'node:fs/promises';
@@ -12,6 +12,7 @@ import {
   getTaskById,
   getBlockedTasks,
   getReviewTargets,
+  safeTaskRefs,
   getDebugTarget,
   persist,
   buildExecutorDispatch,
@@ -782,8 +783,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           review_targets: getReviewTargets(phase, 'phase', current_review.scope_id).map((task) => ({
             id: task.id,
             level: task.level,
-            checkpoint_commit: task.checkpoint_commit || null,
-            files_changed: task.files_changed || [],
+            ...safeTaskRefs(task),
           })),
         };
         break;
@@ -810,8 +810,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           review_target: task ? {
             id: task.id,
             level: task.level,
-            checkpoint_commit: task.checkpoint_commit || null,
-            files_changed: task.files_changed || [],
+            ...safeTaskRefs(task),
           } : null,
         };
         break;
@@ -1007,9 +1006,49 @@ async function attachResearchWarning(basePath, result) {
   }
 }
 
+/**
+ * Which fields of a resume response carry content read from the project.
+ *
+ * Marking only `executor_context` was not enough, and the gap was not academic:
+ * state-sourced strings ride on responses that have no executor_context at all.
+ * `summary.recent_decisions[].summary` and `summary.current_task.name` are
+ * attached to every successful resume, `last_failure_summary` sits at the top
+ * level, and the reviewer/debugger/researcher dispatches carried no marker of
+ * any kind — three of the four dispatch paths.
+ */
+function envelopeProjectData(result) {
+  const present = [];
+  if (result.summary?.current_task?.name) present.push('summary.current_task.name');
+  if (result.summary?.recent_decisions?.length) present.push('summary.recent_decisions[].summary');
+  if (result.last_failure_summary) present.push('last_failure_summary');
+  if (result.executor_context) present.push('executor_context');
+  if (result.review_target) present.push('review_target');
+  if (result.review_targets?.length) present.push('review_targets[]');
+  if (result.debug_target) present.push('debug_target');
+  if (result.expired_research?.length) present.push('expired_research[]');
+  if (result.blockers?.length) present.push('blockers[]');
+  if (result.current_review) present.push('current_review');
+  if (result.drift_phase) present.push('drift_phase');
+  return present;
+}
+
+function withProvenance(result) {
+  if (!result || result.error) return result;
+  // A promise reaching here reads as a response with no state-sourced fields —
+  // every lookup is undefined, the list comes back empty, and the note is
+  // silently not attached. That is how the first version of this shipped: the
+  // call below had lost its `await`. Refuse instead of no-opping.
+  if (typeof result.then === 'function') {
+    throw new TypeError('withProvenance received a promise — await the response first');
+  }
+  const project_data = envelopeProjectData(result);
+  if (project_data.length === 0) return result;
+  return { ...result, input_provenance: { project_data, note: PROVENANCE_NOTE } };
+}
+
 export async function resumeWorkflow(args = {}) {
   const result = await _resumeWorkflowWithRecovery(args);
-  return attachResearchWarning(args.basePath ?? process.cwd(), result);
+  return withProvenance(await attachResearchWarning(args.basePath ?? process.cwd(), result));
 }
 
 async function _resumeWorkflowWithRecovery(args = {}) {
