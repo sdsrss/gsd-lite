@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -562,6 +562,38 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
       assert.ok(files.some(p => p === f || p.endsWith(f)),
         `Package should include ${f}`);
     }
+  });
+
+  it('the published tarball carries neither a lockfile nor node_modules', () => {
+    // These two absences are what select install.js's dependency branch, and
+    // the selection is load-bearing: with no own node_modules it reaches the
+    // install command at all, and with no lockfile that command is
+    // `npm install --omit=dev` rather than `npm ci`. The "npx from tarball"
+    // suite below therefore exercises the branch a real npx user takes — but
+    // only incidentally, because nothing asserted the inputs that put it there.
+    //
+    // Measured rather than assumed: npm refuses to publish package-lock.json
+    // whatever `files` says, so listing it there (as this package did until
+    // now) described an artifact that never existed. And npm hoists a tarball's
+    // dependencies to the install prefix, leaving the package directory without
+    // its own node_modules — verified by installing a packed tarball into a
+    // temp prefix and looking.
+    //
+    // If either absence stops holding, coverage silently moves to the `npm ci`
+    // branch and no other test notices.
+    const packInfo = JSON.parse(execSync('npm pack --json --dry-run', {
+      cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 10000,
+    }));
+    const files = packInfo[0].files.map(f => f.path);
+
+    assert.ok(!files.some(p => p === 'package-lock.json' || p.endsWith('/package-lock.json')),
+      'a lockfile in the tarball would switch real npx installs to the npm ci branch');
+    assert.ok(!files.some(p => p.startsWith('node_modules/') || p.includes('/node_modules/')),
+      'bundled node_modules would make install.js copy them and never run a dependency install at all');
+
+    const declared = JSON.parse(readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf8')).files;
+    assert.ok(!declared.includes('package-lock.json'),
+      'package.json `files` claims a lockfile npm will not publish — a declaration describing an artifact that does not exist');
   });
 
   it('gsd CLI is executable via --help', () => {
