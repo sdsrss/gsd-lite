@@ -126,4 +126,87 @@ describe('preflight overrides survive the transition whitelist', () => {
       assert.equal(result.workflow_mode, 'reconcile_workspace');
     });
   });
+
+  // M10. The hold is persisted; preflight only raises it while the heads
+  // actually differ. So every resume AFTER the divergence is resolved — the user
+  // moved HEAD back, or ran state-update on git_head and has not yet cleared the
+  // mode — falls through preflight untouched and lands in the reconcile branch,
+  // which re-reads HEAD and reports whatever it finds as a mismatch. With the
+  // heads equal that message names one value twice and tells the reader to fix
+  // something that is already fixed.
+  it('does not report a mismatch when the heads agree', async () => {
+    await gitProject('preflight-resolved', async (dir) => {
+      await update({ updates: { workflow_mode: 'executing_task' }, basePath: dir });
+      await update({ updates: { workflow_mode: 'reconcile_workspace' }, basePath: dir });
+
+      const head = execSync('git rev-parse --short HEAD', { cwd: dir }).toString().trim();
+      assert.equal((await read({ basePath: dir })).git_head, head,
+        'setup: this case is only reachable while saved and current agree');
+
+      const result = await resumeWorkflow({ basePath: dir });
+      assert.ok(!result.error, `resume failed: ${result.code}: ${result.message}`);
+      assert.equal(result.workflow_mode, 'reconcile_workspace');
+      assert.equal(result.expected_head, head);
+      assert.equal(result.actual_head, head);
+      assert.doesNotMatch(
+        result.message,
+        /mismatch|diverged/i,
+        `the heads are both ${head}; the message must not claim they differ: ${result.message}`,
+      );
+      assert.match(result.message, new RegExp(head), 'the message must still name the HEAD it compared');
+      assert.doesNotMatch(
+        result.guidance,
+        /update git_head/i,
+        `git_head is already current; telling the reader to update it sends them at a no-op: ${result.guidance}`,
+      );
+      assert.match(result.guidance, /executing_task/,
+        'the one remaining step is clearing the hold, so guidance must name it');
+    });
+  });
+
+  // The other two arms of the same branch. `getGitHead` collapses "not a repo",
+  // "unborn HEAD", "git missing" and "timed out" into null, so a null current
+  // HEAD is not evidence of anything — least of all a mismatch.
+  it('does not report a mismatch when the current HEAD cannot be read', async () => {
+    await gitProject('preflight-nogit', async (dir) => {
+      await update({ updates: { workflow_mode: 'executing_task' }, basePath: dir });
+      await update({ updates: { workflow_mode: 'reconcile_workspace' }, basePath: dir });
+      await rm(join(dir, '.git'), { recursive: true, force: true });
+
+      const result = await resumeWorkflow({ basePath: dir });
+      assert.ok(!result.error, `resume failed: ${result.code}: ${result.message}`);
+      assert.equal(result.actual_head, null);
+      assert.doesNotMatch(
+        result.message,
+        /mismatch|diverged/i,
+        `an unreadable HEAD is not a differing HEAD: ${result.message}`,
+      );
+      assert.match(result.message, /could not be read|unavailable/i,
+        `the message must say the comparison did not happen: ${result.message}`);
+    });
+  });
+
+  // Vacuity guard for the two above, and the reason the branch could only ever
+  // be wrong: a genuine divergence never reaches the reconcile branch at all.
+  // evaluatePreflight runs first and returns early on `git_head && current &&
+  // differ`, so the only states that fall through to the branch are "equal" and
+  // "one side unknown" — the two the message was least able to describe.
+  it('reports a genuine divergence from preflight, before the branch is reached', async () => {
+    await gitProject('preflight-differ', async (dir) => {
+      await update({ updates: { workflow_mode: 'executing_task' }, basePath: dir });
+      await update({ updates: { workflow_mode: 'reconcile_workspace' }, basePath: dir });
+      await update({ updates: { git_head: 'deadbee' }, basePath: dir });
+
+      const head = execSync('git rev-parse --short HEAD', { cwd: dir }).toString().trim();
+      const result = await resumeWorkflow({ basePath: dir });
+      assert.ok(!result.error, `resume failed: ${result.code}: ${result.message}`);
+      assert.equal(result.saved_git_head, 'deadbee', 'the preflight override is what answered');
+      assert.equal(result.current_git_head, head);
+      assert.doesNotMatch(
+        result.message,
+        /^Git HEAD mismatch/,
+        'if this ever becomes the branch\'s own message, the branch has become reachable with differing heads and needs its arm back',
+      );
+    });
+  });
 });

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- **`/gsd:resume` announced a git HEAD mismatch between a commit and itself.**
+  Sitting in `reconcile_workspace`, every resume after the divergence was
+  resolved — and before the mode was cleared — printed `Git HEAD mismatch:
+  saved=abc1234, current=abc1234`, then told the reader to update a `git_head`
+  that already held the right value. The mode is persisted while the check that
+  raises it is not: pre-flight returns its own answer the moment the two heads
+  genuinely differ, so the branch behind it could only ever be reached in the two
+  cases it was unable to describe — the heads agree, or one of them could not be
+  read at all. It now says which of those it found, and `git rev-parse` failing
+  (no repo, no commits yet, no git) is reported as a comparison that did not
+  happen rather than as a difference.
+
 ## [0.14.0] - 2026-09-21
 
 Minor, not patch: a security fix changes which files reach a reviewing agent.

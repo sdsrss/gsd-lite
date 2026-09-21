@@ -889,14 +889,42 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
         break;
       case 'reconcile_workspace': {
         const reconGitHead = await getGitHead(basePath);
+        // M10. This branch never sees the divergence it used to report.
+        // evaluatePreflight runs ahead of this switch and returns its own
+        // override the moment `state.git_head && current && differ`, so the only
+        // states that fall through to here are the two it does not fire on: the
+        // heads agree, or one of them is unknown. The mode is persisted, which is
+        // what makes both routine — every resume after the user resolves the
+        // divergence, and before they clear the hold, lands here. The old message
+        // reported all of it as `Git HEAD mismatch: saved=X, current=X`, naming
+        // one value twice and sending the reader to update a field that already
+        // held the right value.
+        //
+        // If a differing pair ever reaches here, preflight stopped running first
+        // and this needs its mismatch arm back; `preflight-differ` in
+        // tests/preflight-transitions.test.js is the tripwire for that.
+        const bothKnown = Boolean(state.git_head) && Boolean(reconGitHead);
+        let reconMessage;
+        let reconGuidance;
+        if (bothKnown && state.git_head === reconGitHead) {
+          reconMessage = `Git HEAD matches the saved value (${reconGitHead}); the recorded divergence is resolved`;
+          reconGuidance = 'Workspace and saved git_head agree. Set workflow_mode to executing_task via state-update to resume, or paused_by_user to stop here';
+        } else {
+          // getGitHead collapses "not a git repo", "no commits yet", "git
+          // missing" and "timed out" into null, so an absent side is not evidence
+          // of a difference — it is evidence that no comparison happened.
+          const unknown = !reconGitHead ? 'the current workspace HEAD' : 'the saved git_head';
+          reconMessage = `Git HEAD could not be compared: ${unknown} could not be read (saved=${state.git_head ?? 'none'}, current=${reconGitHead ?? 'none'})`;
+          reconGuidance = 'Verify the workspace yourself, record the current HEAD with git_head via state-update if there is one, then set workflow_mode to executing_task';
+        }
         result = {
           success: true,
           action: 'reconcile_workspace',
           workflow_mode: state.workflow_mode,
           expected_head: state.git_head,
           actual_head: reconGitHead,
-          guidance: 'Workspace git HEAD has diverged. Verify changes and update git_head via state-update, then set workflow_mode to executing_task',
-          message: `Git HEAD mismatch: saved=${state.git_head}, current=${reconGitHead}`,
+          guidance: reconGuidance,
+          message: reconMessage,
         };
         break;
       }
