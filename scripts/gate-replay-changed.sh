@@ -25,6 +25,13 @@
 #   CRASHED        (other) gate-replay.js did not finish — no verdict was
 #                       reached. FAILS: a checker that crashed has cleared nothing.
 #
+# A SECOND THING IT CANNOT JUDGE, found by running it on itself: a test file
+# whose new assertions read ITS OWN source can never be red on the base tree,
+# because the replay copies the head version of that file into the base tree
+# before running it — so the assertion reads the content it is asserting about.
+# Source-level self-reference is vacuous here by construction. Assert such a
+# property from a different test file, which the replay does not overwrite.
+#
 # WHAT THIS DOES NOT CATCH, stated because the alternative is implying otherwise:
 # the verdict is per FILE, so one vacuous `it()` hides behind a real one in the
 # same file — demonstrated by appending an `includes('e')` assertion to a file

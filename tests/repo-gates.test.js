@@ -10,7 +10,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize } from 'node:path';
@@ -31,7 +31,15 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 function withoutComments(yaml) {
   return yaml
     .split('\n')
-    .filter((line) => !line.trim().startsWith('#'))
+    // One clause, not two: `(^|\\s)#` already covers a whole-line comment at any
+    // indent, and the separate startsWith('#') filter it replaced was proven
+    // redundant by removing it with the suite still green. Trailing comments are
+    // the shape that needed covering — `- uses: …@sha # v5` is
+    // the common shape here, and a comment written to EXPLAIN a setting sits on
+    // the same line as often as above it — the fetch-depth gate below is
+    // searching for exactly such a setting, so a trailing mention would vouch
+    // for a job that lost it.
+    .map((line) => line.replace(/(^|\s)#.*$/, '$1'))
     .join('\n');
 }
 
@@ -418,4 +426,60 @@ describe('repo gates — the test-count parsers read the reporter this repo actu
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+// A workflow job that runs the suite without full history does not fail loudly:
+// tests/gate-replay-changed.test.js needs real commits from this repository, and
+// on a depth-1 clone it fails with a message about the missing history rather
+// than about the product. `ci.yml` got `fetch-depth: 0` in one commit and
+// `release.yml` did not, which failed the v0.15.0 tag at the validate gate —
+// call-site patching, in the release that is otherwise about not doing that.
+//
+// So the rule lives here instead of in each workflow's reviewer: any job that
+// runs the suite checks out full history, or this goes red.
+describe('every workflow job that runs the suite checks out full history', () => {
+  const workflowDir = join(repoRoot, '.github', 'workflows');
+  const files = readdirSync(workflowDir).filter((f) => /\.ya?ml$/.test(f));
+
+  // Comments are stripped by withoutComments above, for the reason stated
+  // there: a file's own prose names the thing it explains.
+
+  it('finds workflows to check', () => {
+    // Vacuity guard: an empty directory would satisfy the loop below silently.
+    assert.ok(files.length >= 2, `expected the workflow set, found ${files.length}`);
+  });
+
+  it('a comment cannot vouch for a missing fetch-depth', () => {
+    // Decoy: a job that runs the suite and only MENTIONS the setting must fail.
+    const decoy = [
+      'jobs:',
+      '  validate:',
+      '    steps:',
+      // Both comment shapes, because each is stripped by a different clause and
+      // the whole-line one alone left the trailing-comment strip unasserted.
+      '      - uses: actions/checkout@sha # fetch-depth: 0 belongs on this step',
+      '        # and the same thing said on its own line: fetch-depth: 0',
+      '      - run: npm test',
+    ].join('\n');
+    const blocks = withoutComments(decoy).split(/\n(?= {2}[A-Za-z][\w-]*:\n)/);
+    const suiteBlocks = blocks.filter((b) => /\brun:\s*npm (test|run test:coverage)/.test(b));
+    assert.equal(suiteBlocks.length, 1, 'the decoy must be recognised as running the suite');
+    assert.ok(!/fetch-depth:\s*0/.test(suiteBlocks[0]),
+      'the comment must not survive the strip, or this gate passes on a job that lost the setting');
+  });
+
+  for (const file of files) {
+    it(`${file} — no suite-running job on a shallow clone`, () => {
+      const src = withoutComments(readFileSync(join(workflowDir, file), 'utf8'));
+      // Split on job keys (two-space indent under `jobs:`), so each block is one
+      // job and a `fetch-depth` in a sibling job cannot vouch for this one.
+      const blocks = src.split(/\n(?= {2}[A-Za-z][\w-]*:\n)/);
+      const offenders = blocks
+        .filter((b) => /\brun:\s*npm (test|run test:coverage)/.test(b))
+        .filter((b) => !/fetch-depth:\s*0/.test(b))
+        .map((b) => b.match(/^\s{2}([\w-]+):/m)?.[1] ?? '<unnamed>');
+      assert.deepEqual(offenders, [],
+        `these run the suite without fetch-depth: 0, so tests needing git history fail on the clone rather than on the code:\n  ${offenders.join('\n  ')}`);
+    });
+  }
 });
