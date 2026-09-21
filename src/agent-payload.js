@@ -17,7 +17,7 @@
 // remains. Do not reintroduce a trust marker without reading r5/r6 of
 // tasks/specs/untrusted-checkout-executor-surface.md first.
 import { realpathSync } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 
 // 4 is git's own floor for an abbreviated hash (`core.abbrev`), not 7: the
 // default display length is 7+, but a small repo or a configured abbrev can
@@ -45,37 +45,63 @@ export function safeCommitRef(value) {
  *
  * Resolving the PARENT and checking containment does not fix it either, because
  * the parent of `docs/notes` is the perfectly ordinary `docs/`. The entry itself
- * has to be resolved. The parent is the fallback for one specific legitimate
- * case: a file the executor DELETED is still named in files_changed, and
- * realpath throws on it.
+ * is resolved; an ancestor is the fallback for the one legitimate case where
+ * realpath must throw — the task deleted what it is still naming.
  *
  * Containment is checked against the resolved root too, so a workspace that is
  * itself reached through a symlink does not fail every entry.
  */
 function staysInWorkspace(entry, realRoot) {
+  // `..` is refused outright, and this is load-bearing rather than tidiness.
+  // resolve() collapses `..` LEXICALLY, before any symlink is followed, while
+  // the agent is handed the original string and the OS collapses it AFTER
+  // following one. With `link -> /etc` in the project, `link/../shadow`
+  // resolves here to <root>/shadow — inside, so kept — and reads as /shadow
+  // for the agent. The validator would be checking a different path from the
+  // one it returns. Nothing git reports in files_changed contains `..`.
+  // `~` is refused for the same reason, and the walk-up below is what made it
+  // matter: `~/.aws/credentials` names no existing directory, so walking up
+  // reaches the project root and the entry reads as contained. Here `~` is a
+  // literal directory name; to the agent's file tools it is a home directory.
+  // Same disagreement, same answer.
+  const segments = entry.split(/[\\/]/);
+  if (segments.includes('..') || segments[0] === '~') return false;
+
   const abs = resolve(realRoot, entry);
-  let real;
   try {
-    real = realpathSync(abs);
+    const real = realpathSync(abs);
+    return real === realRoot || real.startsWith(realRoot + sep);
   } catch {
-    // Does not exist. Deleted-but-listed is legitimate, so vouch for it via the
-    // parent — which is resolved, so a symlinked parent still escapes and is
-    // still refused.
-    try {
-      real = join(realpathSync(dirname(abs)), basename(abs));
-    } catch {
-      return false; // parent is gone too — nothing here can be vouched for
+    // Does not exist. Legitimate: the task deleted it and still names it.
+    // Walk up to the nearest ancestor that does exist and resolve THAT —
+    // stopping at the immediate parent covered a deleted file but not a
+    // deleted DIRECTORY, so removing a module made an ordinary review report a
+    // security rejection. A check that fires on ordinary work is worse than no
+    // check; it is the reason the git_head gate was removed.
+    //
+    // Safe because `..` is already refused: every remaining segment is a plain
+    // name, so appending them to a resolved ancestor cannot climb out.
+    let dir = dirname(abs);
+    while (true) {
+      try {
+        const realDir = realpathSync(dir);
+        return realDir === realRoot || realDir.startsWith(realRoot + sep);
+      } catch {
+        const parent = dirname(dir);
+        if (parent === dir) return false; // reached the filesystem root
+        dir = parent;
+      }
     }
   }
-  return real === realRoot || real.startsWith(realRoot + sep);
 }
 
 /**
  * The entries that stay inside the workspace, and a count of those dropped.
  *
- * Absolute paths, `..` traversal, `~`, and Windows UNC / drive-relative forms
- * need no special case: resolve-then-contain rejects all of them for the same
- * reason. Only the two things resolution cannot see are checked first.
+ * Absolute paths, `~`, and Windows UNC / drive-relative forms need no special
+ * case: resolve-then-contain rejects them for the same reason. `..` DOES need
+ * one — see staysInWorkspace — because resolve() collapses it before symlinks
+ * are followed and the agent is handed the un-collapsed string.
  */
 export function safeWorkspacePaths(list, workspaceRoot) {
   // A caller that forgets the root is a programming error, and the quiet

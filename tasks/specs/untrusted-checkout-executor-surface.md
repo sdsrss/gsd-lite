@@ -99,16 +99,19 @@ execution side acts differently.
 2. **A gate on the class, not the members.** A repo gate fails on a raw read of either
    field outside that function, proven by re-introducing a raw read at each of the four
    sites in turn. This is the deliverable; fixing the fourth site is not.
-3. **One envelope.** `input_provenance` is attached where every tool response passes
-   (`dispatchToolCall`), so the four `handle*Result` tools carry it, and a tool added
-   later carries it without anyone remembering. Asserted per dispatching tool.
+3. ~~**One envelope.**~~ **Withdrawn at r6.** The `input_provenance` marker was built,
+   moved to `dispatchToolCall`, and removed after it made `state-read` certify a
+   committed state's own `guidance` string as an orchestrator directive — the third
+   false trust claim from one mechanism. Nothing replaces it; the prompt framing carries
+   the advisory half and makes no machine-readable claim.
 4. **The path filter resolves.** `realpath`-and-contain replaces the lexical check, so a
    committed symlink pointing outside the workspace is dropped and counted. Asserted
    against a real symlink, and against a legitimate relative path that must survive.
 5. **The doc comment is true.** Whatever the filter does is what its comment claims.
-6. **The note is accurate**: `guidance` and `recovery_options` are reconciled with the
-   claim that the orchestrator sends no directives in a payload, the marker no longer
-   filters itself out of its own list, and "closes forgery" is narrowed to tag forgery.
+6. **The prompts are accurate** about what the rejection flags mean — "could not be
+   confirmed inside the project", not "outside the workspace" — and all three agents
+   that receive them say so, `executor.md` included, since `predecessor_outputs`
+   carries them.
 7. `safeCommitRef` accepts uppercase hex.
 8. Every new assertion is mutation-verified: reverting the thing it guards turns it red.
 9. `npm test` green; `npm run lint` clean.
