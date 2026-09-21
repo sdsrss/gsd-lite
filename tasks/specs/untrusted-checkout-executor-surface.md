@@ -407,3 +407,9 @@ execution side acts differently.
   a realistic revert of the prompt-layer instruction, and the template-body stripper.
 
   Unchanged and still open: the write boundary, TOFU, attention-crowding, M10.
+
+- M10 closed 2026-09-21 outside this spec, as r5 said it should be (`14e64fa`).
+  The finding was larger than the deferral recorded: the branch is unreachable
+  with differing heads at all, because pre-flight answers first — so its message
+  was wrong in every state that could reach it, not only in the equal one. Still
+  open here and unchanged: the write boundary, TOFU, attention-crowding.
