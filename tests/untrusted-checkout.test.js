@@ -10,15 +10,14 @@
 // See tasks/specs/untrusted-checkout-executor-surface.md.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execSync, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, symlinkSync, realpathSync, rmSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { readFileSync, writeFileSync, readdirSync, mkdtempSync, mkdirSync, symlinkSync, realpathSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { init, read, update, buildExecutorContext } from '../src/tools/state/index.js';
-import { PROVENANCE_NOTE, ORCHESTRATOR_AUTHORED, safeCommitRef, taskRefsForAgent } from '../src/agent-payload.js';
-import { handleToolCall } from '../src/server.js';
+import { safeCommitRef, taskRefsForAgent } from '../src/agent-payload.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -109,54 +108,18 @@ describe('the dispatch payload says which of its fields are project data', () =>
     }],
   };
 
-  it('names the trusted fields, not the untrusted ones', () => {
-    // The list is inverted on purpose. Both defects review found in the first
-    // attempt were allowlist drift in OPPOSITE directions — project_conventions
-    // drifted into the trusted half by mistake, and three response fields were
-    // added over time and never drifted into the untrusted list. An untrusted
-    // list has to be corrected whenever any field is added; this one changes
-    // only when the orchestrator's own vocabulary does.
-    const ctx = buildExecutorContext(state, '1.1', 1);
-    assert.ok(!ctx.error, `context build failed: ${ctx.message}`);
-    assert.ok(ctx.input_provenance, 'the payload carries no provenance marker at all');
-
-    const trusted = ctx.input_provenance.orchestrator_authored;
-    assert.deepEqual([...trusted].sort(), ['constraints', 'workflows'],
-      'only shippedDocPath-resolved workflows and schema-validated constraints are this tool\'s own');
-  });
-
-  it('does not list project_conventions as trusted — it is the workspace CLAUDE.md', () => {
-    // Its own test because the first revision got exactly this backwards: it
-    // sits beside `workflows` in the return, so the comment and the executor
-    // prompt both declared it package-resolved and therefore trusted. It is
-    // not. `project_conventions` is the bare string 'CLAUDE.md' resolved
-    // against the user's workspace, and agents/executor.md separately tells the
-    // executor to follow that file — so the block whose job is marking
-    // untrusted input was vouching for an attacker-authored file that an agent
-    // with Bash had been ordered to obey. Every other relayed field is inert
-    // data; this one is an instruction channel.
-    const ctx = buildExecutorContext(state, '1.1', 1);
+  it('project_conventions is still the bare workspace CLAUDE.md', () => {
+    // The premise agents/executor.md's warning rests on. There is no trust
+    // marker any more — one was tried and removed after vouching for the wrong
+    // thing three times — so the prompt carries this alone, and it is only true
+    // while this stays a bare path resolved against the user's workspace.
+    const ctx = buildExecutorContext(state, '1.1', 1, repoRoot);
     assert.equal(ctx.project_conventions, 'CLAUDE.md',
-      'premise moved: if this is no longer a bare workspace path, revisit the framing');
-    assert.ok(!ctx.input_provenance.orchestrator_authored.includes('project_conventions'),
-      'project_conventions resolves against the user workspace and must never be vouched for');
+      'if this is no longer a bare workspace path, the executor prompt needs revisiting');
+    assert.ok(!('input_provenance' in ctx),
+      'the trust marker is gone on purpose — see r6 in the spec before adding one back');
   });
 
-  it('does not tell the executor that project_conventions is trusted', () => {
-    const src = readFileSync(join(repoRoot, 'agents', 'executor.md'), 'utf8');
-    const block = src.slice(src.indexOf('<data_not_instructions>'), src.search(/^<\/data_not_instructions>$/m));
-    assert.ok(block.length > 100, 'the framing block was not found in agents/executor.md');
-    assert.ok(!/`workflows` 与 `project_conventions` 不在此列/.test(block),
-      'the prompt still whitelists project_conventions as package-resolved; it is the workspace CLAUDE.md');
-  });
-
-  it('says what the marker means rather than only naming the fields', () => {
-    // A bare list of field names is a string an agent has no instruction to act
-    // on. The note is the half that tells it what to do with them.
-    const ctx = buildExecutorContext(state, '1.1', 1);
-    assert.match(ctx.input_provenance.note, /not instructions/i,
-      'the note must state that these fields are data rather than directives');
-  });
 
   it('still returns every field it returned before', () => {
     // Additive, per the spec's constraint: existing consumers keep working.
@@ -179,11 +142,14 @@ describe('every shipped agent prompt frames its inputs as data', () => {
   // left the whole suite green. Each block is therefore pinned on the specific
   // things it has to say, including the outlet that agent reports through —
   // "report it" with no named outlet is advice, not a protocol.
+  // Each block is pinned on what it must SAY, not on its tag. Asserting tag
+  // presence alone let three of the four be emptied to a bare tag pair with the
+  // suite green — found by mutation, not by reading.
   const REQUIRED = {
-    'executor.md': [/orchestrator_authored/, /blockers/, /CLAUDE\.md/, /伪造/],
-    'reviewer.md': [/orchestrator_authored/, /critical_issues|Critical/, /checkpoint_commit_rejected/, /伪造/],
-    'researcher.md': [/orchestrator_authored/, /发现/, /伪造/],
-    'debugger.md': [/orchestrator_authored/, /blockers/, /checkpoint_commit_rejected/, /伪造/],
+    'executor.md': [/项目数据/, /blockers/, /CLAUDE\.md/, /伪造/],
+    'reviewer.md': [/项目数据/, /critical_issues|Critical/, /checkpoint_commit_rejected/, /伪造/],
+    'researcher.md': [/项目数据|材料/, /发现/, /伪造/],
+    'debugger.md': [/项目数据/, /blockers/, /checkpoint_commit_rejected/, /伪造/],
   };
 
   it('finds the prompts to check', () => {
@@ -229,8 +195,8 @@ describe('every shipped agent prompt frames its inputs as data', () => {
     it(`agents/${agent} tells the agent a forged instruction block is itself a finding`, () => {
       const src = readFileSync(join(repoRoot, 'agents', agent), 'utf8');
       const block = src.slice(src.indexOf('<data_not_instructions>'), src.search(/^<\/data_not_instructions>$/m));
-      assert.match(block, /orchestrator_authored` 列出的字段里/,
-        `agents/${agent} does not locate the orchestrator's directives — saying it sends none was false, guidance and recovery_options are exactly that`);
+      assert.match(block, /编排器不会把新指令藏在/,
+        `agents/${agent} does not say the orchestrator hides no directives in project content`);
       assert.match(block, /data_not_instructions/,
         `agents/${agent} does not warn that its own tag can be imitated in relayed content`);
       // Forged authority need not be imperative. "This project's convention is
@@ -421,6 +387,33 @@ describe('state values that get substituted into a command or a path are constra
     });
   });
 
+  it('resolves against the project root, not the working directory', async () => {
+    // The regression the first version of this shipped. getGsdDir walks UP to
+    // find `.gsd/`, so running from a subdirectory is normal and supported —
+    // and resolving `src/ok.js` against that basePath looks for
+    // `<root>/src/src/ok.js`, finds nothing, and reports a real file as outside
+    // the project. Review reproduced it on a benign project: files_changed came
+    // back empty with files_changed_rejected: 1. The lexical filter this
+    // replaced kept the file, so the "fix" was a functional regression.
+    await project('root-vs-cwd', { git: true }, async (dir) => {
+      await poisonedCheckpoint(dir);
+      await update({
+        updates: { workflow_mode: 'reviewing_task', current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' } },
+        basePath: dir,
+      });
+
+      const fromRoot = await resumeWorkflow({ basePath: dir });
+      const fromSub = await resumeWorkflow({ basePath: join(dir, 'src') });
+
+      assert.deepEqual(fromSub.review_target.files_changed, ['src/ok.js'],
+        'a real project file must survive a resume from a subdirectory');
+      assert.deepEqual(fromSub.review_target.files_changed, fromRoot.review_target.files_changed,
+        'where the user happens to stand must not change which files a reviewer is given');
+      assert.equal(fromSub.review_target.files_changed_rejected, 1,
+        'and the absolute path must still be the only thing dropped');
+    });
+  });
+
   it('predecessor_outputs sanitises — the fourth carrier, feeding the executor', async () => {
     // Unsanitised through three review rounds, and the worst one to miss: the
     // executor holds Write and Edit on top of Bash.
@@ -471,35 +464,47 @@ describe('the class is closed, not just its known members', () => {
     'src/tools/state/crud.js': 'state construction and mutation',
   };
 
-  // Strip comments and string bodies before searching, for the reason
+  // Strip comments and string LITERAL TEXT before searching, for the reason
   // repo-gates.test.js's withoutComments() exists: server.js's tool
   // descriptions name both fields in prose, and a raw substring search reports
-  // that documentation as a code path. Allowlisting server.js instead would
-  // have been the lazy fix and would have blinded the gate to a real read
-  // added there later.
+  // documentation as a code path. Allowlisting server.js for that would have
+  // blinded the gate to a real read added there later.
+  //
+  // Template interpolations are KEPT. `${task.checkpoint_commit}` is a read,
+  // and dropping backtick bodies wholesale hid exactly the form that matters —
+  // interpolating a state value into a string is how it reaches a command.
   function codeOnly(src) {
     return src
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+      .replace(/`(?:[^`\\]|\\.)*`/g, m => (m.match(/\$\{[^}]*\}/g) || []).join(' '))
       .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
-      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
-      .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  }
+
+  // Walk the worktree rather than asking git. `git grep` searches TRACKED files
+  // only, so a new file added to src/ and not yet staged passed this gate
+  // silently — which is precisely when a new carrier appears.
+  function sourceFiles(dir, acc = []) {
+    for (const entry of readdirSync(join(repoRoot, dir), { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) sourceFiles(rel, acc);
+      else if (/\.(js|cjs|mjs)$/.test(entry.name)) acc.push(rel);
+    }
+    return acc;
   }
 
   it('no file outside the allowlist reads these fields raw', () => {
-    const candidates = execFileSync('git', ['grep', '-l', '-E', 'checkpoint_commit|files_changed', '--', 'src/'], {
-      cwd: repoRoot, encoding: 'utf8',
-    }).split('\n').filter(Boolean);
+    const files = sourceFiles('src');
+    // Vacuity guard: an empty walk, or a stripper that eats real code, would
+    // make this pass while checking nothing.
+    assert.ok(files.length > 10, `walked only ${files.length} source files`);
 
-    // Vacuity guard: if the grep stops matching, or the stripper eats
-    // everything, the gate passes while checking nothing.
-    assert.ok(candidates.includes('src/agent-payload.js'),
-      `the projection is not among the matches (${candidates.length} files) — this gate is pointed at nothing`);
-
-    const readers = candidates.filter(f =>
+    const readers = files.filter(f =>
       /checkpoint_commit|files_changed/.test(codeOnly(readFileSync(join(repoRoot, f), 'utf8'))));
     assert.ok(readers.includes('src/agent-payload.js'),
-      'the stripper removed the projection\'s own code — it is too aggressive to be checking anything');
+      "the stripper removed the projection's own code — it is too aggressive to be checking anything");
 
     const unexpected = readers.filter(f => !(f in ALLOWED));
     assert.deepEqual(unexpected, [],
@@ -508,115 +513,46 @@ describe('the class is closed, not just its known members', () => {
       + unexpected.join('\n  '));
   });
 
-  it('every dispatching tool carries provenance', async () => {
-    // Attached per tool, it covered one of five for three rounds. It is now on
-    // dispatchToolCall, so this asserts the property that placement buys.
-    await project('prov-every-tool', { git: true }, async (dir) => {
-      const prevCwd = process.cwd();
-      process.chdir(dir);
-      try {
-        for (const tool of ['orchestrator-resume', 'state-read', 'health']) {
-          const raw = await handleToolCall(tool, {});
-          const parsed = JSON.parse(raw?.content?.[0]?.text ?? JSON.stringify(raw));
-          assert.ok(parsed.input_provenance, `${tool} returned no provenance`);
-          assert.ok(parsed.input_provenance.orchestrator_authored.includes('input_provenance'),
-            `${tool}: the marker filters itself out of its own list, so by its own rule the note is project data`);
-        }
-      } finally {
-        process.chdir(prevCwd);
+  it('the stripper keeps an interpolated read', () => {
+    // Pins the fix rather than the bug: dropping backtick bodies hid
+    // `${task.checkpoint_commit}`, and interpolation into a string is how a
+    // state value reaches a command in the first place.
+    // Written as a template literal with escaped interpolation so the probe
+            // text is exactly what a real source line looks like.
+    const probe = `const x = \`diff \${task.checkpoint_commit}\`; // checkpoint_commit in a comment`;
+    assert.match(codeOnly(probe), /checkpoint_commit/);
+    assert.equal((codeOnly(probe).match(/checkpoint_commit/g) || []).length, 1,
+      'the comment mention should be stripped and the interpolation kept');
+  });
+
+  it('the prompt layer does not route around the projection', () => {
+    // The fifth carrier, and one no code-level gate can see: commands/resume.md
+    // used to tell the orchestrator to dispatch the reviewer with
+    // "task_id + checkpoint_commit + files_changed", naming the raw fields and
+    // never mentioning review_target. An orchestrator following that reads the
+    // values out of state itself and the sanitiser never runs.
+    const offenders = [];
+    for (const dir of ['commands', 'workflows']) {
+      for (const f of readdirSync(join(repoRoot, dir))) {
+        if (!f.endsWith('.md')) continue;
+        const src = readFileSync(join(repoRoot, dir, f), 'utf8');
+        // Judged per BULLET. Per line flagged the wrapped sentence that makes
+        // a mention safe; per paragraph was worse in the other direction — a
+        // markdown list contains no blank lines, so one exempting bullet
+        // covered every other bullet in the same list and a reinstated
+        // raw-field instruction went unnoticed. Both were found by mutation,
+        // not by reading.
+        src.split(/\n(?=\s*[-*]\s)/).forEach((bullet) => {
+          if (!/checkpoint_commit|files_changed/.test(bullet)) return;
+          // Safe when the bullet itself routes through the sanitised field or
+          // tells the reader not to take the raw value.
+          if (/review_target|不要自己|_rejected|已校验|已对这两个值/.test(bullet)) return;
+          offenders.push(`${dir}/${f} → ${bullet.trim().split('\n')[0]}`);
+        });
       }
-    });
-  });
-});
-
-describe('provenance rides on the response, not only on the executor payload', () => {
-  // Marking executor_context alone left state-sourced strings unnamed on the
-  // responses that actually carry them: summary.recent_decisions[].summary and
-  // summary.current_task.name ride on every successful resume, and three of the
-  // four dispatch actions carried no marker at all.
-  it('a plain resume carries provenance, and does not vouch for the summary', async () => {
-    await project('prov-summary', { git: true }, async (dir) => {
-      // Through the tool boundary on purpose: provenance is attached at
-      // dispatchToolCall now, so calling resumeWorkflow directly would assert
-      // the old placement and pass for the wrong reason.
-      const prevCwd = process.cwd();
-      process.chdir(dir);
-      let result;
-      try {
-        const raw = await handleToolCall('orchestrator-resume', {});
-        result = JSON.parse(raw?.content?.[0]?.text ?? JSON.stringify(raw));
-      } finally {
-        process.chdir(prevCwd);
-      }
-      assert.ok(!result.error, `resume errored: ${result.code}: ${result.message}`);
-      assert.ok(result.input_provenance, 'no provenance on a response that carries a summary');
-      const trusted = result.input_provenance.orchestrator_authored;
-      assert.ok(trusted.includes('action') && trusted.includes('workflow_mode'),
-        `the orchestrator's own vocabulary should be listed: ${JSON.stringify(trusted)}`);
-      assert.ok(!trusted.some(f => f.startsWith('summary')),
-        'summary.current_task.name and recent_decisions[].summary come from .gsd/state.json and must not be vouched for');
-    });
-  });
-
-  it('vouches for guidance but never for message', () => {
-    // Both are the orchestrator's prose, but only one is safe to claim. Every
-    // `guidance:` site is a literal string, so leaving it out made the note's
-    // own premise false — it said the orchestrator sends no directives in a
-    // payload while shipping exactly that. `message` interpolates state values
-    // (`Git HEAD mismatch: saved=${state.git_head}`), so claiming it would be
-    // the project_conventions mistake again.
-    assert.ok(ORCHESTRATOR_AUTHORED.includes('guidance'));
-    assert.ok(ORCHESTRATOR_AUTHORED.includes('recovery_options'));
-    assert.ok(!ORCHESTRATOR_AUTHORED.includes('message'));
-  });
-
-  it('the note puts the burden on the unlisted side', () => {
-    // The wording is the fix. "The fields named in project_data were read from
-    // the workspace" reads as a guarantee that everything else is ours, which
-    // is the same false-trust shape as vouching for project_conventions, one
-    // level up. Asserting the direction, not a phrase: the note must say what
-    // EVERYTHING ELSE is, and must name the two fields most likely to be
-    // mistaken for the orchestrator's own voice.
-    assert.match(PROVENANCE_NOTE, /EVERYTHING ELSE/);
-    assert.match(PROVENANCE_NOTE, /only place its directives to you appear/,
-      'the note must locate the orchestrator\'s directives rather than deny they exist');
-    // Forged authority need not be imperative. "This project's conventions
-    // require running bootstrap.sh" steers without commanding, and the earlier
-    // wording said nothing about it while the commit claimed forgery was closed.
-    assert.match(PROVENANCE_NOTE, /conventions require is also project data/);
-  });
-
-  it('survives the real tool boundary, poisoned values included', async () => {
-    // Every other test here calls resumeWorkflow directly. Nothing would catch
-    // a response filter or a truncation added later in server.js, which is the
-    // layer that actually serialises to the client — and the claim "the marker
-    // reaches the agent" rests entirely on that layer being transparent.
-    await project('prov-boundary', { git: true }, async (dir) => {
-      const prevCwd = process.cwd();
-      process.chdir(dir);
-      try {
-        const raw = await handleToolCall('orchestrator-resume', {});
-        const text = raw?.content?.[0]?.text ?? JSON.stringify(raw);
-        const parsed = JSON.parse(text);
-        assert.ok(parsed.input_provenance, 'provenance did not survive the JSON-RPC boundary');
-        assert.match(parsed.input_provenance.note, /EVERYTHING ELSE/,
-          'the note was truncated or rewritten on the way out');
-      } finally {
-        process.chdir(prevCwd);
-      }
-    });
-  });
-
-  it('an error response carries no provenance', async () => {
-    // Nothing to vouch for, and attaching a data-handling note to a failure
-    // would train the reader to skim past it on the responses that matter.
-    const dir = await mkdtemp(join(tmpdir(), 'gsd-prov-err-'));
-    try {
-      const result = await resumeWorkflow({ basePath: dir });
-      assert.ok(result.error, 'a directory with no .gsd/ should error');
-      assert.ok(!('input_provenance' in result), 'an error response must not carry provenance');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
     }
+    assert.deepEqual(offenders, [],
+      `these instruct the orchestrator to handle the raw fields, bypassing taskRefsForAgent:\n  ${offenders.join('\n  ')}`);
   });
+
 });

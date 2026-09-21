@@ -31,7 +31,7 @@ executor 上下文传递协议 (orchestrator → executor):
 ```
 ├── task_spec:           从 phases/*.md 提取当前 task 的规格段落
 ├── research_decisions:  从 research_basis 引用的 decision 摘要
-├── predecessor_outputs: 前置依赖 task 的 files_changed + checkpoint_commit
+├── predecessor_outputs: 前置依赖 task 的 files_changed + checkpoint_commit（服务端已校验形状）
 ├── project_conventions: CLAUDE.md 路径 (executor 自行读取)
 ├── workflows:           需加载的工作流文件路径 (如 tdd-cycle.md, deviation-rules.md; retry 时追加 debugging.md; 有 research_basis 时追加 research.md)
 ├── constraints:         retry_count / level / review_required

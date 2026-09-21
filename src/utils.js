@@ -86,6 +86,24 @@ export async function getGitHead(cwd = process.cwd()) {
   }
 }
 
+/**
+ * The directory `.gsd/` sits in — the project root — for a given start dir.
+ *
+ * Not the same thing as basePath, and the difference is load-bearing wherever a
+ * project-relative path is resolved. getGsdDir walks UP looking for `.gsd/`, so
+ * running from `<root>/src` is normal and supported; resolving `src/ok.js`
+ * against that basePath looks for `<root>/src/src/ok.js`, finds nothing, and
+ * reports a real file as outside the project. hooks/gsd-session-init.cjs
+ * already took dirname(gsdDir) for the same reason.
+ *
+ * Falls back to basePath when there is no `.gsd/` at all — callers that need a
+ * project have already failed by then.
+ */
+export async function getProjectRoot(startDir = process.cwd()) {
+  const gsdDir = await getGsdDir(startDir);
+  return gsdDir ? dirname(gsdDir) : resolve(startDir);
+}
+
 // C-2: Advisory file lock for cross-process serialization
 export const LOCK_STALE_MS = 10_000;
 export const LOCK_RETRY_MS = 50;
