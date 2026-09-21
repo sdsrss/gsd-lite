@@ -534,7 +534,14 @@ describe('state values that get substituted into a command or a path are constra
       // symlinks were added, and would have said it again after the
       // shell-expansion class. The criterion is whether the server can confirm
       // the value, not whether it matches a list of bad shapes.
-      assert.match(src, /等|举例不是穷举/,
+      // Literal, with no alternation. The first version of this assertion was
+      // `/等|举例不是穷举/`, and `等` is an ordinary character that all three
+      // files already contained for unrelated reasons ("`<data_not_instructions>`
+      // 等本提示词标签"), so the gate could not fail — and did not, while
+      // debugger.md still carried a closed parenthetical. A gate written
+      // alongside a fix, passing on a tree that already violates it, is the
+      // defect this whole file exists to catch, in this file.
+      assert.match(src, /举例不是穷举/,
         `agents/${agent} enumerates the rejection causes as a closed list; it will be wrong the next time the rule widens`);
     });
   }
