@@ -335,6 +335,34 @@ describe('state values that get substituted into a command or a path are constra
     }
   });
 
+  it('a dangling symlink is not a deletion', () => {
+    // `realpathSync` throws for both, and the walk-up was written for one of
+    // them. A symlink whose target does not exist climbs past the link to the
+    // project root and reads as contained — the one branch where an
+    // attacker-authored symlink survives the resolve, while the comment said
+    // that could not happen. Found by review, reproduced here first.
+    symlinkSync('/no-such-target-zzz', join(ws, 'dead'));
+    writeFileSync(join(ws, 'src', 'ok.js'), '//\n');
+    const refs = taskRefsForAgent({
+      checkpoint_commit: null,
+      files_changed: ['src/ok.js', 'dead', 'dead/creds'],
+    }, ws);
+    assert.deepEqual(refs.files_changed, ['src/ok.js'], 'a dangling symlink was kept');
+    assert.equal(refs.files_changed_rejected, 2);
+  });
+
+  it('a file the task deleted still survives — the case the walk-up exists for', () => {
+    // The other half, and the reason the fix above cannot simply refuse every
+    // unresolvable entry: a review that reports a deleted module must not read
+    // as a security rejection.
+    const refs = taskRefsForAgent({
+      checkpoint_commit: null,
+      files_changed: ['src/deleted.js', 'src/gone/deeper/also-deleted.js'],
+    }, ws);
+    assert.deepEqual(refs.files_changed, ['src/deleted.js', 'src/gone/deeper/also-deleted.js']);
+    assert.ok(!('files_changed_rejected' in refs));
+  });
+
   it('still keeps filenames that merely look odd', () => {
     // The other half of the trade. Glob characters are legal in filenames and
     // are deliberately not refused — a denylist of "suspicious-looking" names
@@ -546,9 +574,33 @@ describe('state values that get substituted into a command or a path are constra
   // Whitespace is collapsed before comparing, so where a file wraps the line is
   // not part of the contract. Everything else is.
   const REJECTION_CAUSES = '会被展开成另一条路径的字符'
-    + '（`~user`、`$VAR`、`$(…)`、反引号、换行、`{a,b}`）**等** —— 举例不是穷举，'
+    + '（`~user`、`$VAR`、`$(…)`、反引号、换行、`{a,b}`、`\\`）**等** —— 举例不是穷举，'
     + '判据是服务端能不能确认，不是它长得像不像坏东西。';
   const collapsed = (s) => s.replace(/\s+/g, '');
+
+  it('every example in REJECTION_CAUSES is a form the code actually refuses', () => {
+    // The gate below pins three prompts to this CONSTANT, not to the code —
+    // review named the consequence exactly: widen `staysInWorkspace` without
+    // editing the constant and all three prompts stay green and all three are
+    // wrong. Nothing tells you.
+    //
+    // The asymmetry is what makes a check possible. The list saying LESS than
+    // the code refuses is fine — it says `举例不是穷举` in the same breath. The
+    // list naming something the code does NOT refuse is a prompt telling an
+    // agent a falsehood about its own inputs, and that direction is checkable:
+    // every example here must actually come back rejected.
+    const examples = [...REJECTION_CAUSES.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+    assert.ok(examples.length >= 4,
+      `extracted ${examples.length} examples from REJECTION_CAUSES — the parse is broken, not the prompts`);
+    for (const ex of examples) {
+      const refs = taskRefsForAgent({
+        checkpoint_commit: null,
+        files_changed: ['src/ok.js', `${ex}/x.js`],
+      }, ws);
+      assert.deepEqual(refs.files_changed, ['src/ok.js'],
+        `the prompts name ${JSON.stringify(ex)} as a rejection cause and the code keeps it`);
+    }
+  });
 
   // executor.md is in this loop because predecessor_outputs carries the flags
   // too — it was left out while the field it describes was already reaching it.

@@ -16,7 +16,7 @@
 // certifying the wrong things; constraining values does not, and is what
 // remains. Do not reintroduce a trust marker without reading r5/r6 of
 // tasks/specs/untrusted-checkout-executor-surface.md first.
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
 
 // 4 is git's own floor for an abbreviated hash (`core.abbrev`), not 7: the
@@ -51,6 +51,23 @@ export function safeCommitRef(value) {
  * Containment is checked against the resolved root too, so a workspace that is
  * itself reached through a symlink does not fail every entry.
  */
+// A path that lstat can see but realpath cannot follow: a dangling symlink or a
+// symlink loop. Distinguishing it from "nothing is there" is what separates an
+// attacker-authored link from the file a task legitimately deleted.
+function existsUnresolvable(p) {
+  try {
+    lstatSync(p);
+  } catch {
+    return false; // genuinely absent
+  }
+  try {
+    realpathSync(p);
+    return false; // resolves — the caller's own containment check governs
+  } catch {
+    return true;
+  }
+}
+
 function staysInWorkspace(entry, realRoot) {
   // `..` is refused outright, and this is load-bearing rather than tidiness.
   // resolve() collapses `..` LEXICALLY, before any symlink is followed, while
@@ -113,8 +130,16 @@ function staysInWorkspace(entry, realRoot) {
     const real = realpathSync(abs);
     return real === realRoot || real.startsWith(realRoot + sep);
   } catch {
-    // Does not exist. Legitimate: the task deleted it and still names it.
-    // Walk up to the nearest ancestor that does exist and resolve THAT —
+    // realpath threw, and there are TWO reasons it can — this comment named one
+    // of them until review found the other. Legitimate: the task deleted the
+    // file and still names it. Not legitimate: a component EXISTS but does not
+    // resolve, which is a dangling symlink (or a symlink loop). The walk-up was
+    // written for the first and climbed straight past the second, so an
+    // attacker-authored `dead -> /no-such-target` reached the project root and
+    // read as contained. `exists but unresolvable` is the discriminator, and it
+    // is what `lstat` answers that `realpath` cannot.
+    //
+    // Then walk up to the nearest ancestor that does exist and resolve THAT —
     // stopping at the immediate parent covered a deleted file but not a
     // deleted DIRECTORY, so removing a module made an ordinary review report a
     // security rejection. A check that fires on ordinary work is worse than no
@@ -122,8 +147,10 @@ function staysInWorkspace(entry, realRoot) {
     //
     // Safe because `..` is already refused: every remaining segment is a plain
     // name, so appending them to a resolved ancestor cannot climb out.
+    if (existsUnresolvable(abs)) return false;
     let dir = dirname(abs);
     while (true) {
+      if (existsUnresolvable(dir)) return false;
       try {
         const realDir = realpathSync(dir);
         return realDir === realRoot || realDir.startsWith(realRoot + sep);

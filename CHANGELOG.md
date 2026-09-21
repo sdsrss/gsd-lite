@@ -29,7 +29,11 @@ upgrades with no action.
 
   Both fields now reach every agent payload through one function, and the path
   check resolves the entry with `realpath` before testing containment instead of
-  reading its spelling. A repo test fails on a raw read of either field anywhere
+  reading its spelling. A symlink whose target does not exist is refused too:
+  `realpath` throws both for that and for a file the task simply deleted, and
+  the walk-up written for the second case used to climb straight past the first.
+  A deleted file is still reported as an ordinary change, which is the whole
+  reason that walk-up exists. A repo test fails on a raw read of either field anywhere
   outside that function, so the next carrier cannot be added quietly — three
   rounds of this fix each patched the carriers that round had found, and each
   round found more.
