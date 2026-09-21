@@ -827,6 +827,14 @@ describe('the two substituted fields are constrained where they are written', ()
         'a1b2\nc3d',
         '-oProxyCommand=sh',
         'a\0b',
+        // These three pass the character class and are refused by the second
+        // clause, which mutation testing found had no reader: every other poison
+        // here carries a character the class already rejects, so deleting the
+        // `..`/leading-dash line left the suite green. A rule with nothing
+        // asserting it is a rule that will be deleted by someone tidying up.
+        '..',
+        'a..b',
+        '-rf',
       ]) {
         const res = await handleExecutorResult({ basePath: dir, result: ok({ checkpoint_commit: poison }) });
         assert.equal(res.error, true, `${JSON.stringify(poison)} must not reach state.json`);
