@@ -58,7 +58,11 @@ upgrades with no action.
   path into a shell command without quoting it can be steered by things no
   denylist can remove. A plain space is the clearest case — `src/a.js /etc/passwd`
   is one list entry and two arguments — and spaces stay legal, because
-  `My Document.md` is an ordinary filename. What holds without enumeration is
+  `My Document.md` is an ordinary filename. Tabs, quotes, `;`, `|`, globs,
+  redirection (`</etc/passwd`) and process substitution (`<(cat /etc/passwd)`)
+  are all kept for the same reason, and that is a family rather than a list:
+  read it as "quoting is the consumer's job", not as five characters we
+  checked. What holds without enumeration is
   the containment check: every entry is resolved with `realpath` and dropped
   unless it lands inside your project, which is what caught the symlink.
 
