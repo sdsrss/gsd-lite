@@ -75,10 +75,19 @@ fi
 # The subshell's status is captured rather than assumed: `mapfile < <(...)` never
 # inspects it and `pipefail` does not cross process substitution, so a failing
 # `git diff` became "nothing to replay" and a green job.
-FILE_LIST_ALL=$(git -C "$ROOT" diff --name-only --diff-filter=AMR "$BASE" "$AT") \
+REPLAYABLE=$(git -C "$ROOT" diff --name-only --diff-filter=AMR "$BASE" "$AT") \
   || not_run "git diff failed for $BASE..$AT — the file list is unknown, not empty"
-FILE_LIST=$(printf '%s\n' "$FILE_LIST_ALL" | grep -E '^tests/' || true)
-mapfile -t FILES < <(printf '%s\n' "$FILE_LIST" | grep -E '\.test\.js$')
+mapfile -t FILES < <(printf '%s\n' "$REPLAYABLE" | grep -E '^tests/.*\.test\.js$')
+
+# A SECOND list, unfiltered, and the separation is the point. The AMR list above
+# answers "which test files can be replayed at `at`"; this one answers "did this
+# range touch source at all". Reusing one list for both questions is a bug the
+# pre-tag reviewer found: AMR excludes D, so deleting a source file counted as
+# touching nothing and a commit that removes src/foo.js while editing a test was
+# exempted below. Deleting source is unambiguously a source change. T (a file
+# replaced by a symlink) had the same hole.
+ALL_CHANGED=$(git -C "$ROOT" diff --name-only "$BASE" "$AT") \
+  || not_run "git diff failed for $BASE..$AT — the file list is unknown, not empty"
 
 # A range that changes no source file cannot have its tests red on the base tree,
 # because the base tree IS the tree those tests describe. VACUOUS there is not a
@@ -104,7 +113,7 @@ mapfile -t FILES < <(printf '%s\n' "$FILE_LIST" | grep -E '\.test\.js$')
 # So: an unknown path counts as source and the gate fires. Only these are not.
 NOT_SOURCE='^tests/|^tasks/|^docs/|^CHANGELOG\.md$|^README\.md$|^LICENSE$'
 SOURCE_TOUCHED=$(
-  printf '%s\n' "$FILE_LIST_ALL" | grep -vE "$NOT_SOURCE" | grep -c . || true
+  printf '%s\n' "$ALL_CHANGED" | grep -vE "$NOT_SOURCE" | grep -c . || true
 )
 TEST_ONLY=0
 [ "$SOURCE_TOUCHED" -eq 0 ] && TEST_ONLY=1
