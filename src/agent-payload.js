@@ -59,15 +59,20 @@ function staysInWorkspace(entry, realRoot) {
   // resolves here to <root>/shadow — inside, so kept — and reads as /shadow
   // for the agent. The validator would be checking a different path from the
   // one it returns. Nothing git reports in files_changed contains `..`.
-  // Shell-expanded forms are refused for the same reason, and the walk-up below
-  // is what made it matter. `~/.aws/credentials` names no existing directory,
+  // Path-expanding forms are refused for the same reason, and the walk-up below
+  // is what made it matter. PATH-expanding, not shell-expanding: the line is
+  // whether the string denotes a different FILE than the one validated. `$VAR`,
+  // `~user`, `$(…)`, backticks and CR/LF do; `;`, `|` and a bare space do not —
+  // they change argv when a consumer forgets to quote, which is quoting's job,
+  // and refusing them would mean refusing spaces, and `My Document.md` is an
+  // ordinary filename. `~/.aws/credentials` names no existing directory,
   // so the walk reaches the project root and the entry reads as contained —
   // here these are literal directory names, and to the agent's tools they are a
   // home directory, an environment variable, a command. Same disagreement.
   //
-  // The rule names the CLASS, not the member that was found: `segments[0] ===
+  // The rule names the class, not the member that was found: `segments[0] ===
   // '~'` covered `~/x` and admitted `~root/x`, `$HOME/x` and `$(curl …|sh)/x`,
-  // all of which bash expands the same way. The old code refused those by
+  // all of which bash expands into a different path the same way. The old code refused those by
   // accident — dirname of a two-segment missing path is also missing, so it
   // gave up — and the walk-up removed the accident.
   //
