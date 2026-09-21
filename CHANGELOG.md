@@ -9,12 +9,14 @@ Minor, not patch: a security fix changes which files reach a reviewing agent.
 not true.
 
 **Do I have to do anything?** Only if a file in your repository has `$`, a
-backtick, or a newline in its *name*, or sits under a path segment starting with
-`~`. Those entries are now dropped from the `files_changed` list handed to the
-reviewer, debugger and executor, and counted in `files_changed_rejected`. The
-agent is told the count and told to report it, so the gap is visible — but the
-filename is not shown, and that file will not be reviewed. Rename it, or pin
-`gsd-lite@0.13.0` to go back. Everything else upgrades with no action.
+backtick, a backslash, a newline or a brace group like `{a,b}` in its *name*, or
+if its path *starts* with a `~` segment. (`docs/~backup/x.js` is fine — only the
+first segment is checked.) Those entries are now dropped from the
+`files_changed` list handed to the reviewer, debugger and executor, and counted
+in `files_changed_rejected`. The agent is told the count and told to report it,
+so the gap is visible — but the filename is not shown, and that file will not be
+reviewed. Rename it, or pin `gsd-lite@0.13.0` to go back. Everything else
+upgrades with no action.
 
 - **A cloned repository could read files outside your project.** `.gsd/` is
   committable, so a checkout can carry someone else's project state, and
@@ -36,13 +38,23 @@ filename is not shown, and that file will not be reviewed. Rename it, or pin
   agent sees `checkpoint_commit_rejected: true` or `files_changed_rejected: <n>`
   and is instructed to report the gap rather than substitute a value of its own.
 
-- **What is refused, and what is deliberately not.** The rule drops an entry
-  whose text could denote a different file than the one checked: `..`, a
-  leading `~` segment, `$`, a backtick, CR or LF. It does **not** drop `;`, `|`,
-  globs or spaces — those change a command's arguments when a consumer forgets
-  to quote, which is quoting's job, and refusing them would mean refusing
-  `My Document.md`. A `$` in a real filename is legal and rare; refusing it
-  costs a counted, reported entry, which is the cheaper side of that trade.
+- **What is refused — and why that list is not a boundary.** Dropped today:
+  `..`, a leading `~` segment, `$`, a backtick, CR/LF, a brace group like
+  `{a,b}` or `{1..3}`, and any backslash. Six of those were added over six
+  review rounds, two of them *after* a round concluded the set was complete, so
+  this release does not claim the set is closed and you should not read it that
+  way.
+
+  The reason it cannot be closed by listing characters: an agent that pastes a
+  path into a shell command without quoting it can be steered by things no
+  denylist can remove. A plain space is the clearest case — `src/a.js /etc/passwd`
+  is one list entry and two arguments — and spaces stay legal, because
+  `My Document.md` is an ordinary filename. What holds without enumeration is
+  the containment check: every entry is resolved with `realpath` and dropped
+  unless it lands inside your project, which is what caught the symlink.
+
+  The README's warning stands unchanged: **do not resume a checkout you do not
+  trust.** This release narrows a surface; it does not turn that answer around.
 
 - **The agent prompts say their inputs are project data.** `agents/reviewer.md`,
   `debugger.md`, `executor.md` and `researcher.md` each carry a

