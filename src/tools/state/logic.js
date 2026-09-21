@@ -347,9 +347,17 @@ export function buildExecutorContext(state, taskId, phaseId) {
   // executor that receives all of it holds Bash, and nothing here told it the
   // two had different authors.
   //
-  // `workflows` and `project_conventions` are deliberately absent from the
-  // list: those paths are resolved by shippedDocPath from this package's own
-  // install location, so they are ours.
+  // `workflows` is the only field here that is ours: shippedDocPath resolves it
+  // from this package's own install location.
+  //
+  // `project_conventions` is NOT, despite sitting beside it — it is the bare
+  // string 'CLAUDE.md' (see above), resolved against the USER'S workspace. In a
+  // cloned repository that file is the repository author's, and
+  // `agents/executor.md` separately instructs the executor to follow it. It is
+  // therefore listed in project_data like any other relayed input. An earlier
+  // revision of this comment claimed both were resolved by shippedDocPath and
+  // the executor prompt repeated the claim, which made the block whose whole
+  // job is marking untrusted input vouch for the most dangerous field in it.
   //
   // This is additive and stays additive — the framing is its own field rather
   // than a prefix glued onto the values, because a consumer may match on
@@ -357,6 +365,7 @@ export function buildExecutorContext(state, taskId, phaseId) {
   const input_provenance = {
     project_data: [
       'task_spec',
+      'project_conventions',
       'research_decisions',
       'predecessor_outputs',
       'debugger_guidance',

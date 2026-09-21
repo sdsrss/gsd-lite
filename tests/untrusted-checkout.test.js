@@ -139,6 +139,31 @@ describe('the dispatch payload says which of its fields are project data', () =>
     }
   });
 
+  it('marks project_conventions, which is the workspace CLAUDE.md', () => {
+    // Its own test because the first revision of this change got it exactly
+    // backwards: it sat beside `workflows` in the return, so the comment and the
+    // executor prompt both declared it package-resolved and therefore trusted.
+    // It is not. `project_conventions` is the bare string 'CLAUDE.md', resolved
+    // against the user's workspace, and agents/executor.md separately tells the
+    // executor to follow that file — so in a cloned repository the block whose
+    // job is marking untrusted input was vouching for an attacker-authored file
+    // that an agent with Bash had been ordered to obey. Every other field here
+    // is inert data; this one is an instruction channel.
+    const ctx = buildExecutorContext(state, '1.1', 1);
+    assert.equal(ctx.project_conventions, 'CLAUDE.md',
+      'premise moved: if this is no longer a bare workspace path, revisit the framing');
+    assert.ok(ctx.input_provenance.project_data.includes('project_conventions'),
+      'project_conventions resolves against the user workspace and must be listed as project data');
+  });
+
+  it('does not tell the executor that project_conventions is trusted', () => {
+    const src = readFileSync(join(repoRoot, 'agents', 'executor.md'), 'utf8');
+    const block = src.slice(src.indexOf('<data_not_instructions>'), src.indexOf('</data_not_instructions>'));
+    assert.ok(block.length > 100, 'the framing block was not found in agents/executor.md');
+    assert.ok(!/`workflows` 与 `project_conventions` 不在此列/.test(block),
+      'the prompt still whitelists project_conventions as package-resolved; it is the workspace CLAUDE.md');
+  });
+
   it('says what the marker means rather than only naming the fields', () => {
     // A bare list of field names is a string an agent has no instruction to act
     // on. The note is the half that tells it what to do with them.
