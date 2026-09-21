@@ -1,6 +1,6 @@
 ---
-status: draft
-revision: 1
+status: implemented
+revision: 2
 ---
 
 # The context meter says what it measures
@@ -88,3 +88,19 @@ behaviour; changing what it is *called* does not.
   Reproduced by feeding one synthetic payload through the composite statusline and
   reading both implementations; the disagreement is by construction, not a defect in
   either.
+
+- r2 (2026-09-21) — **implemented** (`61f30f1`). The rendered percentage is
+  `compact:N%` in all four colour bands; one `label` const feeds every band, so
+  there is no arm to forget.
+
+  Criterion 2 was verified by the vacuity gate wired one commit earlier rather
+  than by reverting the label by hand: replaying `tests/statusline.test.js` as
+  written at `61f30f1` against `e4f93c9` returns DISCRIMINATIVE, 2/23 failed, both
+  of them the new ones. Read honestly, that proves the *label* assertion earns its
+  place — the bridge-invariance half of the second test is also red on the base
+  tree for the same label reason, so the replay does not independently prove that
+  half. It pins it going forward, which is what it is for.
+
+  23/23 in the file, 1486 → 1488 suite-wide / 0 fail, lint 0 findings.
+
+  Unchanged and still open: whether 16.5 is still Claude Code's reserve.

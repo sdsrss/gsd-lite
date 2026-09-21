@@ -1,5 +1,7 @@
 import { ERROR_CODES, read, reclassifyReviewLevel, selectRunnableTask } from '../state/index.js';
 import { ACTIONABLE_LIFECYCLES, validateExecutorResult } from '../../schema.js';
+import { safeWorkspacePaths } from '../../agent-payload.js';
+import { getProjectRoot } from '../../utils.js';
 import {
   MAX_DEBUG_RETRY,
   getPhaseAndTask,
@@ -86,13 +88,26 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       : null;
     const workflow_mode = current_review ? 'reviewing_task' : 'executing_task';
 
+    // Containment, at the write. The shape half is in validateExecutorResult
+    // above and refuses the whole call; this half cannot, because it needs the
+    // filesystem and because refusing here would throw away a checkpoint whose
+    // work is already committed in git over one bad entry. So it mirrors the
+    // read side exactly: drop and count.
+    //
+    // getProjectRoot, not basePath — getGsdDir walks UP, so resuming from a
+    // subdirectory is normal, and resolving `src/ok.js` against `<root>/src`
+    // reports a real file as outside the project. That regression already
+    // shipped once on the read side.
+    const { kept: keptFiles, dropped: droppedFiles } =
+      safeWorkspacePaths(result.files_changed || [], await getProjectRoot(basePath));
+
     // Single atomic persist: auto-accept goes directly running → accepted,
     // otherwise running → checkpointed (awaiting review)
     const taskPatch = {
       id: task.id,
       lifecycle: autoAccept ? 'accepted' : 'checkpointed',
       checkpoint_commit: result.checkpoint_commit,
-      files_changed: result.files_changed || [],
+      files_changed: keptFiles,
       evidence_refs: result.evidence || [],
       level: reviewLevel,
       blocked_reason: null,
@@ -127,6 +142,9 @@ export async function handleExecutorResult({ result, basePath = process.cwd() } 
       review_level: reviewLevel,
       current_review,
       auto_accepted: autoAccept,
+      // Reported, never silently blanked. An orchestrator that sees a shorter
+      // list and no count concludes the task changed fewer files.
+      ...(droppedFiles > 0 ? { files_changed_rejected: droppedFiles } : {}),
     };
   }
 

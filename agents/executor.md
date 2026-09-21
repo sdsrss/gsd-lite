@@ -90,6 +90,23 @@ tools: Read, Write, Edit, Bash, Grep, Glob
     {"id": "ev:typecheck:phase-2", "scope": "task:2.3", "type": "typecheck", "passed": true}
   ]
 }
+<result_constraints>
+这两个字段会被下游 agent 拼进 `git diff` 命令和文件读取，所以服务端在**写入**时就做校验，
+不是等到转发时才过滤。不符合形状的结果会被**整个拒绝**并返回错误信息 —— 修正后重发即可，
+不要把值改成占位符。
+
+- `checkpoint_commit` —— 填 `git rev-parse HEAD` 打印出来的那个提交哈希。带空白、引号、
+  `;` `|` `$` 反引号、换行、路径分隔符的值会让整个结果被**拒绝**。
+  形状无害但不是哈希的值（`HEAD`、分支名、tag 名）会被存下来，但 review 时会被拦掉并标上
+  `checkpoint_commit_rejected: true` —— reviewer 拿不到 diff，只能报告这个缺口。所以别
+  用它们：等到 review 时它们指向的已经不是这次 checkpoint 的提交了。没有提交就用
+  `outcome: "blocked"`，不要编一个值。
+- `files_changed` —— 每一项都必须是非空字符串，**相对于项目根目录**的路径。对象、数字、
+  null、空串会让整个结果被拒绝。解析后落在项目外的条目（绝对路径、`..`、指向项目外的
+  符号链接）会被**剔除**，不拒绝整个结果 —— 剔除数量通过 `files_changed_rejected: <n>`
+  告诉编排器。你删掉的文件照常列出，那是正常的变更。
+</result_constraints>
+
 `blockers` 形状 (仅 `outcome: "blocked"` 时非空):
 - `reason` — 阻塞的具体原因，会存入 task 的 `blocked_reason` 并展示给用户
 - `unblock_condition` — 用户需要做什么才能解除，会存入 `unblock_condition`；确实无法给出时填 `null`

@@ -34,6 +34,55 @@ export function safeCommitRef(value) {
   return typeof value === 'string' && COMMIT_REF.test(value) ? value : null;
 }
 
+// Inert, which is a different question from "is a commit hash" — see
+// commitRefIsInert. Word characters, dot and hyphen only: no whitespace, no
+// shell metacharacter, no quote, no path separator, no NUL, no newline.
+const COMMIT_REF_INERT = /^[\w.-]{1,64}$/;
+
+/**
+ * Could this value do harm if a model pasted it into a command?
+ *
+ * Deliberately NOT safeCommitRef, and the pair must not be collapsed again.
+ * They answer different questions at different boundaries:
+ *
+ *   safeCommitRef (READ)  — is this the hash `git diff <commit>~1..<commit>`
+ *                           needs? Anything else is withheld from the agent,
+ *                           because at that point the value is about to become
+ *                           a git argument and a non-hash is simply broken.
+ *   commitRefIsInert (WRITE) — could this value do harm sitting in state.json
+ *                           and being read back out? That is a narrower bar,
+ *                           and it has to be: `.gsd/state.json` has always held
+ *                           opaque checkpoint identifiers, and this repo's own
+ *                           fixtures use `c1`, `auth-commit` and `fix-1.3`
+ *                           across fifteen files. Refusing those at the write
+ *                           would be enforcing hash-ness, which no caller ever
+ *                           agreed to, under the banner of security.
+ *
+ * `HEAD` passes here and is still withheld by the read side, which is the right
+ * division: it is inert to store and useless as an anchor.
+ */
+export function commitRefIsInert(value) {
+  if (typeof value !== 'string') return false;
+  if (!COMMIT_REF_INERT.test(value)) return false;
+  // `..` is path syntax and a leading `-` reads as a flag. Neither can occur in
+  // anything legitimate here, and both cost nothing to refuse.
+  if (value.includes('..') || value.startsWith('-')) return false;
+  return true;
+}
+
+/**
+ * The shape a files_changed entry must have before containment is worth asking.
+ *
+ * Exported because the write boundary (src/schema.js's validateExecutorResult)
+ * needs the same rule, and a rule stated twice is a rule that will disagree with
+ * itself — which is how this file's own filter grew six members across six
+ * rounds. Shape only: it says nothing about where the path points, which is
+ * staysInWorkspace's job and needs a filesystem.
+ */
+export function isPathEntryShape(entry) {
+  return typeof entry === 'string' && entry.length > 0 && !entry.includes('\0');
+}
+
 /**
  * Does this entry, resolved for real, stay inside the workspace?
  *
@@ -207,8 +256,7 @@ export function safeWorkspacePaths(list, workspaceRoot) {
     return { kept: [], dropped: entries.length };
   }
   const kept = entries.filter((entry) => {
-    if (typeof entry !== 'string' || entry.length === 0) return false;
-    if (entry.includes('\0')) return false;
+    if (!isPathEntryShape(entry)) return false;
     return staysInWorkspace(entry, realRoot);
   });
   return { kept, dropped: entries.length - kept.length };

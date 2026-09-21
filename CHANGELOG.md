@@ -4,10 +4,38 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-**Do I have to do anything?** No, but your status line looks slightly different.
+**Do I have to do anything?** Only if something other than the packaged executor
+calls `orchestrator-handle-executor-result`. Two values in that result are now
+checked before they are stored. A `checkpoint_commit` carrying whitespace, a quote,
+`;` `|` `$`, a backtick, a newline or a path separator, and a `files_changed` entry
+that is not a non-empty string, each refuse the whole call with a message naming the
+field — correct it and resend. A `files_changed` entry that does not resolve inside
+the project is dropped rather than refused, and the count comes back as
+`files_changed_rejected`. Ordinary results are unaffected; the packaged executor
+prompt already reported the right shapes. Pin `gsd-lite@0.14.0` to go back.
+
+**Also:** your status line looks slightly different.
 The context percentage gsd-lite renders now reads `compact:44%` instead of `44%`.
 The number is identical — only the label is new. If you script against the status
 line output, that is the one thing that moved; pin `gsd-lite@0.14.0` to go back.
+
+- **The two values an agent substitutes into a command are now checked where they
+  are written, not only where they are read.** `handleExecutorResult` stored
+  `checkpoint_commit` and `files_changed` verbatim from the executor's own result,
+  and validation looked only at the outer shape: a string, and an array. Nothing
+  looked inside, so `files_changed: [{}, 42, "/etc/passwd"]` was a valid result and
+  was stored as one — into a file that is committed, displayed by `/gsd:status` and
+  returned verbatim by `state-read`. The threat is not the cloned-repository one
+  0.14.0 closed: the executor reads project files, and a file it reads can tell it
+  what to put in its result.
+
+  The bar at the write is **inert**, not "is a commit hash". Those are different
+  questions: the read side asks for a hash because that is where the value becomes a
+  `git diff` argument, while `.gsd/state.json` has always held opaque checkpoint
+  identifiers — `HEAD` is stored and then withheld one boundary later, with
+  `checkpoint_commit_rejected` telling the reviewer why. Paths that do not resolve
+  inside the project are dropped rather than refused, because a checkpoint whose work
+  is already committed must not be thrown away over one bad entry.
 
 - **The context meter now says what it measures.** A status line usually carries
   more than one context percentage, and ours was not measuring what the others
