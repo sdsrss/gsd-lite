@@ -9,7 +9,7 @@ Minor, not patch: a security fix changes which files reach a reviewing agent.
 not true.
 
 **Do I have to do anything?** Only if a file in your repository has `$`, a
-backtick, a backslash, a newline or a brace group like `{a,b}` in its *name*, or
+backtick, a backslash, a newline or a brace (`{` or `}`) in its *name*, or
 if its path *starts* with a `~` segment. (`docs/~backup/x.js` is fine — only the
 first segment is checked.) Those entries are now dropped from the
 `files_changed` list handed to the reviewer, debugger and executor, and counted
@@ -43,11 +43,16 @@ upgrades with no action.
   and is instructed to report the gap rather than substitute a value of its own.
 
 - **What is refused — and why that list is not a boundary.** Dropped today:
-  `..`, a leading `~` segment, `$`, a backtick, CR/LF, a brace group like
-  `{a,b}` or `{1..3}`, and any backslash. Six of those were added over six
-  review rounds, two of them *after* a round concluded the set was complete, so
-  this release does not claim the set is closed and you should not read it that
-  way.
+  `..`, a leading `~` segment, `$`, a backtick, CR/LF, any brace, and any
+  backslash. Six of those were added over six review rounds, two of them
+  *after* a round concluded the set was complete, so this release does not
+  claim the set is closed and you should not read it that way.
+
+  Braces and backslashes are refused whole rather than in the shapes that look
+  dangerous. A narrower brace rule shipped for one commit here, written to
+  spare a legitimate `c{1}.js`, and `{{},/etc/passwd}` walked through it — a
+  case the rule's own prose already covered. Refusing the whole character costs
+  a counted, reported entry and removes the analysis that was wrong.
 
   The reason it cannot be closed by listing characters: an agent that pastes a
   path into a shell command without quoting it can be steered by things no

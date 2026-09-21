@@ -321,6 +321,18 @@ describe('state values that get substituted into a command or a path are constra
       // A sequence expression expands to paths that were never validated too,
       // even when all of them land inside the workspace.
       'src/a{1..3}.js',
+      // Nested and empty groups. These were the cost of a rule that tried to
+      // spare `c{1}.js`: all three hold a comma, so all three were inside the
+      // rule as written in prose and outside the regex that implemented it,
+      // because `[^{}]*` cannot span a nested brace. Found by differential
+      // fuzzing the filter against a real bash, not by reading either.
+      '{{},/etc/passwd}',
+      '{/etc/passwd,{}}',
+      '{/etc/passwd,d{}}',
+      // And the carve-out itself, now refused: one character class has no
+      // nesting analysis to get wrong, and a brace in a real filename is the
+      // same counted, reported trade already taken for `$`.
+      'src/c{1}.js',
       // Backslash, the SIXTH member, found while fixing the fifth — which is
       // the finding, not the entry. bash unescapes `\/` to `/`, so this denotes
       // the absolute path an absolute path would have been refused for, and it
@@ -332,6 +344,22 @@ describe('state values that get substituted into a command or a path are constra
       const refs = taskRefsForAgent({ checkpoint_commit: null, files_changed: ['src/ok.js', entry] }, ws);
       assert.deepEqual(refs.files_changed, ['src/ok.js'], `kept ${JSON.stringify(entry)}`);
       assert.equal(refs.files_changed_rejected, 1, `did not flag ${JSON.stringify(entry)}`);
+    }
+  });
+
+  it('no brace survives, whatever shape the group is', () => {
+    // The enumerated cases above are the ones that were found; this is the
+    // rule. Three bypasses lived inside a regex whose prose description already
+    // excluded them, and what found them was generating shapes rather than
+    // reasoning about the pattern — so the assertion is the property, and the
+    // generator is deliberately dumber than the rule it checks.
+    const parts = ['', ',', '..', '{}', '{a,b}', '/etc/passwd', 'a', '{'];
+    const candidates = [];
+    for (const a of parts) for (const b of parts) candidates.push(`{${a},${b}}`, `src/x{${a}${b}}.js`);
+    assert.ok(candidates.length > 100, `generated only ${candidates.length} candidates`);
+    for (const entry of candidates) {
+      const refs = taskRefsForAgent({ checkpoint_commit: null, files_changed: ['src/ok.js', entry] }, ws);
+      assert.deepEqual(refs.files_changed, ['src/ok.js'], `kept ${JSON.stringify(entry)}`);
     }
   });
 
@@ -370,15 +398,11 @@ describe('state values that get substituted into a command or a path are constra
     mkdirSync(join(ws, 'weird'), { recursive: true });
     writeFileSync(join(ws, 'weird', 'a[1].js'), '//\n');
     writeFileSync(join(ws, 'weird', 'b*.js'), '//\n');
-    // A brace group bash does not expand. Only a group holding a comma or a
-    // `..` sequence produces a word other than itself, so refusing every `{`
-    // would cost this file for nothing.
-    writeFileSync(join(ws, 'weird', 'c{1}.js'), '//\n');
     const refs = taskRefsForAgent({
       checkpoint_commit: null,
-      files_changed: ['weird/a[1].js', 'weird/b*.js', 'weird/c{1}.js'],
+      files_changed: ['weird/a[1].js', 'weird/b*.js'],
     }, ws);
-    assert.deepEqual(refs.files_changed, ['weird/a[1].js', 'weird/b*.js', 'weird/c{1}.js']);
+    assert.deepEqual(refs.files_changed, ['weird/a[1].js', 'weird/b*.js']);
     assert.ok(!('files_changed_rejected' in refs));
   });
 
