@@ -53,9 +53,15 @@ const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 
 function parseArgs(argv) {
   const opts = { base: null, at: 'HEAD', files: [] };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--base') opts.base = argv[++i];
-    else if (argv[i] === '--at') opts.at = argv[++i];
-    else if (argv[i].startsWith('-')) throw new Error(`unknown flag ${argv[i]}`);
+    // `--base` as the final argument takes undefined, and `opts.base ||=` below
+    // then falls back to `at^` — a silent answer to a different question, which
+    // is the defect this whole script is about.
+    if (argv[i] === '--base' || argv[i] === '--at') {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('-')) throw new Error(`${argv[i - 1]} needs a revision`);
+      if (argv[i - 1] === '--base') opts.base = value;
+      else opts.at = value;
+    } else if (argv[i].startsWith('-')) throw new Error(`unknown flag ${argv[i]}`);
     else opts.files.push(argv[i]);
   }
   if (!opts.files.length) throw new Error('usage: gate-replay.js [--base <rev>] [--at <rev>] <test file>...');
@@ -65,7 +71,16 @@ function parseArgs(argv) {
   return opts;
 }
 
-const opts = parseArgs(process.argv.slice(2));
+let opts;
+try {
+  opts = parseArgs(process.argv.slice(2));
+} catch (err) {
+  // A usage error exits 2 with its own sentence, like every other question this
+  // script declines to answer. Letting it throw printed a stack trace, which is
+  // the shape a reader reads as "the tool broke", not "you asked it wrong".
+  console.log(`REFUSED — ${err.message}`);
+  process.exit(2);
+}
 const baseSha = git('rev-parse', '--short', opts.base);
 const atSha = git('rev-parse', '--short', opts.at);
 
