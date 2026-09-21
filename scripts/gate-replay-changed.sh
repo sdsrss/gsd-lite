@@ -25,6 +25,14 @@
 #   CRASHED        (other) gate-replay.js did not finish — no verdict was
 #                       reached. FAILS: a checker that crashed has cleared nothing.
 #
+# WHAT THIS DOES NOT CATCH, stated because the alternative is implying otherwise:
+# the verdict is per FILE, so one vacuous `it()` hides behind a real one in the
+# same file — demonstrated by appending an `includes('e')` assertion to a file
+# with four genuinely-red tests and getting DISCRIMINATIVE and a green job. That
+# is the same defect class one level down from the one this script fixes, and
+# closing it needs per-test replay (`--test-name-pattern`), which is a different
+# build. Do not read a green job as "no vacuous assertion was added".
+#
 # Usage: scripts/gate-replay-changed.sh <base-rev> [at-rev]
 
 set -uo pipefail # NOT -e: a non-zero verdict is this script's input, not a crash.
@@ -67,9 +75,39 @@ fi
 # The subshell's status is captured rather than assumed: `mapfile < <(...)` never
 # inspects it and `pipefail` does not cross process substitution, so a failing
 # `git diff` became "nothing to replay" and a green job.
-FILE_LIST=$(git -C "$ROOT" diff --name-only --diff-filter=AMR "$BASE" "$AT" -- tests) \
+FILE_LIST_ALL=$(git -C "$ROOT" diff --name-only --diff-filter=AMR "$BASE" "$AT") \
   || not_run "git diff failed for $BASE..$AT — the file list is unknown, not empty"
+FILE_LIST=$(printf '%s\n' "$FILE_LIST_ALL" | grep -E '^tests/' || true)
 mapfile -t FILES < <(printf '%s\n' "$FILE_LIST" | grep -E '\.test\.js$')
+
+# A range that changes no source file cannot have its tests red on the base tree,
+# because the base tree IS the tree those tests describe. VACUOUS there is not a
+# finding, it is the question being unanswerable — which is what INCONCLUSIVE
+# means, so that is what it gets.
+#
+# Measured by the pre-tag reviewer before this existed: ~9% of this repo's
+# test-touching commits are test-only, and of six sampled, four came back VACUOUS
+# and two INCONCLUSIVE — none passed. Shipping that would have put a job in the
+# required-checks list that fails on ordinary work, which this script's own
+# header argues against; the only available remedy would have been to bypass it,
+# and a gate people bypass is worse than no gate.
+#
+# NOT-SOURCE is an explicit list, not "anything that looks like docs". The first
+# version excluded every `*.md`, which classified 71271dd — the documented
+# vacuous commit this whole script exists for — as test-only, because it changed
+# `agents/executor.md` and `agents/reviewer.md` and nothing else. Those are
+# SHIPPED PROMPT TEMPLATES: they steer agent behaviour at runtime, a test over
+# them is a test over behaviour, and the exemption would have neutered the one
+# case the gate was built to catch. Caught by running the rule against 71271dd
+# before trusting it.
+#
+# So: an unknown path counts as source and the gate fires. Only these are not.
+NOT_SOURCE='^tests/|^tasks/|^docs/|^CHANGELOG\.md$|^README\.md$|^LICENSE$'
+SOURCE_TOUCHED=$(
+  printf '%s\n' "$FILE_LIST_ALL" | grep -vE "$NOT_SOURCE" | grep -c . || true
+)
+TEST_ONLY=0
+[ "$SOURCE_TOUCHED" -eq 0 ] && TEST_ONLY=1
 
 if [ "${#FILES[@]}" -eq 0 ]; then
   echo "no test files added or modified between $(git -C "$ROOT" rev-parse --short "$BASE") and $(git -C "$ROOT" rev-parse --short "$AT") — nothing to replay"
@@ -126,6 +164,15 @@ if [ "${#crashed[@]}" -gt 0 ]; then
   for f in "${crashed[@]}"; do echo "  $f"; done
   echo "No verdict was reached. A checker that crashed has not cleared anything."
   exit 1
+fi
+
+if [ "${#vacuous[@]}" -gt 0 ] && [ "$TEST_ONLY" = "1" ]; then
+  echo
+  echo "TEST-ONLY RANGE — ${#vacuous[@]} file(s) came back VACUOUS and that is not a finding."
+  echo "This range changes no source file, so its tests describe the base tree and pass on it"
+  echo "by construction. The question this job asks cannot be answered here; it is not being"
+  echo "answered in the affirmative."
+  exit 0
 fi
 
 if [ "${#vacuous[@]}" -gt 0 ]; then

@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { init, read, update, buildExecutorContext } from '../src/tools/state/index.js';
-import { safeCommitRef, taskRefsForAgent } from '../src/agent-payload.js';
+import { commitRefIsInert, safeCommitRef, taskRefsForAgent } from '../src/agent-payload.js';
 import { handleExecutorResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1095,6 +1095,59 @@ describe('the two substituted fields are constrained where they are written', ()
       assert.equal(target.files_changed_rejected, 2,
         'the agent is told to report this gap and cannot, unless the count survives to dispatch');
     });
+  });
+
+  it('resolves against the project root, not the basePath it was called with', async () => {
+    // Both reviewers found this line had NO reader: mutating
+    // `getProjectRoot(basePath)` to `basePath` survived all 1498 tests. It is not
+    // an equivalent mutant. getGsdDir walks UP, so resuming from a subdirectory
+    // is ordinary, and under the mutation the workspace root becomes that
+    // subdirectory — which puts an escaping entry's parent "inside" it and lets
+    // the entry into the committed state file. Ordinary relative paths mask it,
+    // because the parent-walk fallback keeps them either way; only an escaping
+    // symlink separates the two.
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-subdir-root-'));
+    try {
+      mkdirSync(join(dir, 'src'));
+      writeFileSync(join(dir, 'src', 'ok.js'), '//\n');
+      symlinkSync('/etc/passwd', join(dir, 'evil'));
+      await init({
+        project: 'subdir-root',
+        phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }],
+        basePath: dir,
+      });
+
+      // basePath is the subdirectory. getGsdDir walks up to <dir>/.gsd, so this
+      // is a supported way to call it, not a misuse.
+      const res = await handleExecutorResult({
+        basePath: join(dir, 'src'),
+        result: {
+          task_id: '1.1',
+          outcome: 'checkpointed',
+          summary: 'did the thing',
+          checkpoint_commit: 'a1b2c3d',
+          files_changed: ['src/ok.js', 'evil'],
+          decisions: [], blockers: [], contract_changed: false, evidence: [],
+        },
+      });
+      assert.ok(!res.error, `${res.message}`);
+      assert.equal(res.files_changed_rejected, 1, 'the escaping entry must be withheld');
+
+      const stored = (await read({ basePath: dir })).phases[0].todo[0];
+      assert.deepEqual(stored.files_changed, ['src/ok.js'],
+        'a symlink out of the project must not be stored because the caller passed a subdirectory');
+      const raw = readFileSync(join(dir, '.gsd', 'state.json'), 'utf8');
+      assert.ok(!raw.includes('"evil"'), 'and it must not reach the committed state file');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('caps the length of an inert commit ref', () => {
+    // The {1,64} bound had no reader either. A 64-char cap is the difference
+    // between an identifier and a payload.
+    assert.equal(commitRefIsInert('a'.repeat(64)), true, '64 is the boundary and must be allowed');
+    assert.equal(commitRefIsInert('a'.repeat(65)), false, 'past it is not an identifier any more');
   });
 
   it('tells the executor the shape it has to report', () => {
