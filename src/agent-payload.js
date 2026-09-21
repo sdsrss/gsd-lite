@@ -111,10 +111,18 @@ function staysInWorkspace(entry, realRoot) {
   // Brace expansion, found by review after four rounds of this rule. Nothing
   // above catches it: `{,/etc/passwd}` resolves here to a directory named `{,`
   // inside the workspace, so it was kept and handed over unflagged, while bash
-  // expands it to the single word `/etc/passwd`. Only a group containing a
-  // comma or a `..` sequence expands — `c{1}.js` is a filename bash leaves
-  // alone, and refusing every brace would cost it for nothing.
-  if (/\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(entry)) return false;
+  // expands it to the single word `/etc/passwd`.
+  //
+  // Every brace, not the groups that look expandable. The first version of this
+  // was `/\{[^{}]*(?:,|\.\.)[^{}]*\}/`, written to spare `c{1}.js`, which bash
+  // leaves alone. `[^{}]*` cannot span a nested brace, so `{{},/etc/passwd}`
+  // and `{/etc/passwd,{}}` — both squarely inside the rule that comment
+  // described — evaded the regex implementing it and read /etc/passwd through a
+  // real shell. A differential fuzz found them in minutes. The carve-out was
+  // the whole cost: one character class has no nesting analysis to get wrong.
+  // `c{1}.js` is now a counted, reported entry, the same trade already taken
+  // for `$`.
+  if (/[{}]/.test(entry)) return false;
   // Backslash, the sixth member, found while closing the fifth — which is the
   // reason the comment above stopped claiming a complete list. Any `\X` is
   // unescaped to `X`, so every backslash denotes a path other than this string:
