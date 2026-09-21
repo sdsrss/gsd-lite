@@ -47,6 +47,13 @@ line output, that is the one thing that moved; pin `gsd-lite@0.14.0` to go back.
   branch can read the unfiltered list; `files_changed_rejected` is reported on all
   three outcomes rather than only on `checkpointed`.
 
+  The withheld count is also **persisted on the task**, not just returned. Moving
+  the drop to the write boundary without moving the count with it would have made
+  the agent view worse than before the filter existed: the reviewer and debugger
+  are instructed to report the gap when they see `files_changed_rejected`, and
+  with the entries already gone from state there was nothing left for the read
+  side to notice.
+
 - **The context meter now says what it measures.** A status line usually carries
   more than one context percentage, and ours was not measuring what the others
   measure. Claude Code hands out two numbers: `used_percentage`, which is tokens

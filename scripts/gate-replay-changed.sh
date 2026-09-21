@@ -22,6 +22,8 @@
 #                       that imports something new is ordinary work, and a check
 #                       that fires on ordinary work is one people learn to click
 #                       through.
+#   CRASHED        (other) gate-replay.js did not finish — no verdict was
+#                       reached. FAILS: a checker that crashed has cleared nothing.
 #
 # Usage: scripts/gate-replay-changed.sh <base-rev> [at-rev]
 
@@ -52,12 +54,22 @@ if [ "$(git -C "$ROOT" rev-parse "$BASE")" = "$(git -C "$ROOT" rev-parse "$AT")"
   not_run "base and at are the same commit; a file replayed on its own tree passes by construction"
 fi
 
-# --diff-filter=AM: a test file this range DELETED does not exist at `at`, and
-# gate-replay.js refuses a path it cannot read there. Renames arrive as A.
-mapfile -t FILES < <(
-  git -C "$ROOT" diff --name-only --diff-filter=AM "$BASE" "$AT" -- tests \
-    | grep -E '\.test\.js$'
-)
+# D is excluded because a test file this range DELETED does not exist at `at`,
+# and gate-replay.js refuses a path it cannot read there.
+#
+# R is included, and the first version of this line said "Renames arrive as A".
+# That is false. Git's default rename detection reports `R097 old new`, and
+# `--diff-filter=AM` returns NOTHING for it — so renaming a test file while
+# editing it skipped the gate entirely and the job went green. Found by the
+# pre-tag reviewer and reproduced against real git. `--name-only` yields the new
+# path for an R, which is the one that exists at `at`.
+#
+# The subshell's status is captured rather than assumed: `mapfile < <(...)` never
+# inspects it and `pipefail` does not cross process substitution, so a failing
+# `git diff` became "nothing to replay" and a green job.
+FILE_LIST=$(git -C "$ROOT" diff --name-only --diff-filter=AMR "$BASE" "$AT" -- tests) \
+  || not_run "git diff failed for $BASE..$AT — the file list is unknown, not empty"
+mapfile -t FILES < <(printf '%s\n' "$FILE_LIST" | grep -E '\.test\.js$')
 
 if [ "${#FILES[@]}" -eq 0 ]; then
   echo "no test files added or modified between $(git -C "$ROOT" rev-parse --short "$BASE") and $(git -C "$ROOT" rev-parse --short "$AT") — nothing to replay"
@@ -67,14 +79,23 @@ fi
 vacuous=()
 inconclusive=()
 discriminative=()
+crashed=()
 
 for file in "${FILES[@]}"; do
   echo "::group::gate-replay $file"
   node "$ROOT/scripts/gate-replay.js" --base "$BASE" --at "$AT" "$file"
-  case $? in
+  code=$?
+  # `*)` used to mean INCONCLUSIVE, which silently absorbed every code the
+  # script never emits: a `node --test` killed by the OOM killer exits 137 and
+  # the job passed green, reported as "nothing was evaluated". That is a verdict
+  # this run never reached. Only 2 is INCONCLUSIVE; an unknown code is a failure
+  # of the gate itself and has to be loud, because the alternative is a checker
+  # that reports a clean result when it crashed.
+  case $code in
     0) discriminative+=("$file") ;;
     1) vacuous+=("$file") ;;
-    *) inconclusive+=("$file") ;;
+    2) inconclusive+=("$file") ;;
+    *) crashed+=("$file (exit $code)") ;;
   esac
   echo "::endgroup::"
 done
@@ -83,6 +104,7 @@ echo
 echo "── gate-replay: ${#FILES[@]} changed test file(s) ──"
 for f in "${discriminative[@]+"${discriminative[@]}"}"; do echo "  DISCRIMINATIVE  $f"; done
 for f in "${inconclusive[@]+"${inconclusive[@]}"}"; do echo "  INCONCLUSIVE    $f"; done
+for f in "${crashed[@]+"${crashed[@]}"}"; do echo "  CRASHED         $f"; done
 for f in "${vacuous[@]+"${vacuous[@]}"}"; do echo "  VACUOUS         $f"; done
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -93,8 +115,17 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo
     for f in "${discriminative[@]+"${discriminative[@]}"}"; do echo "- ✅ DISCRIMINATIVE \`$f\`"; done
     for f in "${inconclusive[@]+"${inconclusive[@]}"}"; do echo "- ⚠️ INCONCLUSIVE \`$f\` — nothing was evaluated; read the log"; done
+    for f in "${crashed[@]+"${crashed[@]}"}"; do echo "- ❌ CRASHED \`$f\` — no verdict reached"; done
     for f in "${vacuous[@]+"${vacuous[@]}"}"; do echo "- ❌ VACUOUS \`$f\` — green on the base tree"; done
   } >>"$GITHUB_STEP_SUMMARY"
+fi
+
+if [ "${#crashed[@]}" -gt 0 ]; then
+  echo
+  echo "FAILED — gate-replay.js did not finish for ${#crashed[@]} file(s):"
+  for f in "${crashed[@]}"; do echo "  $f"; done
+  echo "No verdict was reached. A checker that crashed has not cleared anything."
+  exit 1
 fi
 
 if [ "${#vacuous[@]}" -gt 0 ]; then

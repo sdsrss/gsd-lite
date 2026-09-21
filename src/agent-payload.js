@@ -284,12 +284,21 @@ export function safeWorkspacePaths(list, workspaceRoot) {
 export function taskRefsForAgent(task, workspaceRoot) {
   const commit = safeCommitRef(task?.checkpoint_commit);
   const { kept, dropped } = safeWorkspacePaths(task?.files_changed, workspaceRoot);
+  // Entries the WRITE boundary already removed. They are gone from the stored
+  // list, so `dropped` above cannot see them and the agent would be handed a
+  // short list with no flag — the exact silent blanking the comment above
+  // forbids. Summed rather than replaced: both boundaries can withhold, and the
+  // agent is owed the total, not whichever half ran last.
+  const withheldAtWrite = Number.isInteger(task?.files_changed_rejected) && task.files_changed_rejected > 0
+    ? task.files_changed_rejected
+    : 0;
+  const totalWithheld = dropped + withheldAtWrite;
   return {
     checkpoint_commit: commit,
     files_changed: kept,
     ...(commit === null && task?.checkpoint_commit != null
       ? { checkpoint_commit_rejected: true }
       : {}),
-    ...(dropped > 0 ? { files_changed_rejected: dropped } : {}),
+    ...(totalWithheld > 0 ? { files_changed_rejected: totalWithheld } : {}),
   };
 }
