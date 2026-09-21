@@ -143,6 +143,26 @@ describe('the vacuity gate fires on source changes and not on test-only ones', (
       'ALL_CHANGED must be built with no --diff-filter at all');
   });
 
+  it('pins the test reporter instead of inheriting Node\'s default', () => {
+    // A source-level gate, because the bug is version-dependent and a
+    // behavioural test can only ever exercise whichever Node is running it.
+    //
+    // Node picks its default reporter from whether stdout is a TTY: 20 and 22
+    // emit TAP when piped, 24+ emit `spec` either way. gate-replay.js parsed
+    // only `spec` (`ℹ tests N`), so under 20 and 22 it read a good TAP summary
+    // as "no summary printed" and returned INCONCLUSIVE — which does not fail
+    // anything. The gate was blind on two of the three supported Node versions
+    // and said nothing, because INCONCLUSIVE is a legitimate verdict. It
+    // surfaced only when a test of the gate ran under the CI matrix.
+    const src = readFileSync(join(repoRoot, 'scripts', 'gate-replay.js'), 'utf8');
+    assert.match(src, /'--test-reporter=tap'/,
+      'the reporter must be pinned, or the verdict depends on which Node runs it');
+    assert.match(src, /\^# \$\{label\} \(\\\\d\+\)\$/,
+      'and the summary parser must read TAP, matching the reporter that is pinned');
+    assert.doesNotMatch(src, /\^ℹ \$\{label\}/,
+      'the spec-format parser is what made this version-dependent');
+  });
+
   it('passes an ordinary fix whose tests were red on the base tree', (t) => {
     // The other direction: the gate must be quiet on work that earns it, or it
     // becomes a check people route around.
