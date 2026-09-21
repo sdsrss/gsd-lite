@@ -2,6 +2,55 @@
 
 All notable changes to this project are documented here.
 
+## [0.13.0] - 2026-09-21
+
+Minor, not patch: two contracts changed shape. **Most projects need to do
+nothing** — the paragraph below tells you when that is not true.
+
+**Do I have to do anything?** Only if you wrote your own MCP client against
+`state-read` or `orchestrator-*`. If you use GSD-Lite through its commands and
+agents, no — upgrade and carry on. To go back, pin `gsd-lite@0.12.1`.
+
+- **Agents were told to read files that were not there.** Every place the
+  prompt layer named a shipped doc — `references/questioning.md`,
+  `workflows/execution-flow.md`, and the `workflows/tdd-cycle.md` and
+  `deviation-rules.md` handed to every executor — it used a path relative to
+  the *plugin*, while an agent's working directory is *your project*. So the
+  executor was told to read the TDD cycle and the anti-rationalization rules,
+  found nothing, and carried on silently. It survived this long because the
+  one directory where those paths do resolve is the GSD-Lite source repo, so
+  nothing run from there could see it. Paths are now absolute, resolved by the
+  server from its own install location, which is correct whether you installed
+  the plugin or used `npx`. **You do not need to do anything.**
+  - *If you wrote your own client*: `orchestrator-*` now returns absolute paths
+    in `workflows`, and the `health` tool gained a `docs` map with the
+    `references/` and `workflows/` directories of your install. Ask `health`
+    for a doc's location rather than assuming a relative path.
+
+- **`state-read` could not tell you which of three things happened.** Asking
+  for a field returned `{}` when the name was misspelled, when the field was
+  absent from that project's state, and when it was genuinely empty — and a
+  caller reading `{}` concludes "empty", which is the one of the three it is
+  not. Migration leaves an older project's state without 10 of the 14 canonical
+  fields, so this was the common path, not a corner. Now a name that is not
+  readable is **rejected** with `INVALID_INPUT` naming it, and a readable name
+  that is absent is listed in a new `_absent` array instead of vanishing.
+  - *If you wrote your own client*: a `fields` list containing a name outside
+    the canonical fields (plus `_version`) now errors instead of being quietly
+    dropped. That is the fix — the silent drop is what hid your typo — but it
+    is a behaviour change. Check any hard-coded field list.
+
+- **`phase-complete`, `run_verify` without `verification`.** Already fixed in
+  0.12.1; 0.13.0 adds the test for the one case it missed — a project
+  directory with no `.gsd/` now answers `INVALID_INPUT` rather than
+  `NO_PROJECT_DIR`, consistent with the argument checks that already ran first.
+
+- **Internal:** the `skip_failed` recovery guard is now pinned by a test that
+  enumerates sibling task shapes in both directions, rather than by an example
+  per bug report (closes #10 — its reported defect was already fixed in
+  0.12.0). A test fixture no longer races the background updater it never meant
+  to start.
+
 ## [0.12.1] - 2026-09-20
 
 Patch: one contract fix, one README that was missing three things, and a
