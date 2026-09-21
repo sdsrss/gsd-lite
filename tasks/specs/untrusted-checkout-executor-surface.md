@@ -8,8 +8,16 @@ revision: 4
 ## Goal
 
 A `.gsd/` directory that arrived with someone else's repository cannot hand an agent
-instructions dressed as the orchestrator's own, and a resume in a git workspace whose
-state carries no git baseline stops for the user instead of dispatching silently.
+instructions dressed as the orchestrator's own, and the state values that agents
+substitute into a shell command or a file read cannot carry anything but what they
+claim to be.
+
+**The second clause replaced a third one at r3.** The goal used to include "a resume in
+a git workspace whose state carries no git baseline stops for the user". That gate was
+built, reviewed, and removed: it could not stop the loop, and it fired on ordinary work.
+The detail is in r3 below, and the reasoning also sits in the code where the predicate
+used to be — the sections below have been rewritten to match what shipped rather than
+left describing it.
 
 ## Problem
 
@@ -54,16 +62,20 @@ execution side acts differently.
 
 ## Constraints
 
-- **`git_head: null` is legitimate and common.** `createInitialState` sets it to `null`
-  (`src/schema.js:1045`) and `state-init` fills it from `getGitHead`
-  (`src/tools/state/crud.js:110`), which returns `null` for any directory that is not a
-  git repository (`src/utils.js:84`). The audit's recommendation — treat `git_head ==
-  null` as `reconcile_workspace` — would therefore put **every non-git project** into
-  `await_manual_intervention` on every resume, with no exit, because reconcile needs a
-  HEAD to compare against. The predicate has to be narrower: *the workspace is a git
-  repository (`currentGitHead` non-null) and the state carries no baseline*. That shape
-  is reachable by a transplanted state and, for a project this tool initialised itself,
-  by almost nothing else.
+- **`git_head: null` carries no signal.** It collapses four causes into one value —
+  not a git repo, no commits yet, git unavailable or timed out at init, and a
+  transplanted state — and `getGitHead`'s bare `catch { return null }` guarantees the
+  collapse. `createInitialState` sets it to `null` (`src/schema.js`) and only a
+  successful `git rev-parse` replaces it. No predicate over it distinguishes the fourth
+  cause from the other three, which is why the gate built on it was removed rather than
+  narrowed again.
+- **A check that fires on ordinary work is worse than no check**, because the response
+  it trains is dismissal. This is the reason the predicate lost, not its false-positive
+  rate in isolation.
+- **A stop must be able to stop.** `workflows/execution-flow.md` — which
+  `commands/resume.md` names the single source of truth — decides which actions end the
+  loop. An orchestrator-side gate that returns an action that table auto-clears is not a
+  gate. Anything added here has to be checked against that table first.
 - **Both halves, or neither.** A sentence in `agents/*.md` can be crowded out of
   attention by a large payload; a marker on the payload alone is a string an agent has no
   instruction to respect. This repo has twice shipped a fix at one call site and had the
@@ -79,34 +91,39 @@ execution side acts differently.
 
 ## Success criteria
 
-1. A state whose workspace *is* a git repository but which carries no `git_head` returns
-   `reconcile_workspace` / `await_manual_intervention` instead of dispatching. Asserted
-   against a real temp git repo.
-2. A project that is **not** a git repository, with `git_head: null`, resumes exactly as
-   before. Asserted — this is the regression the narrow predicate exists to avoid, and
-   the reason this spec departs from the audit's wording.
-3. All four prompts in `agents/` state that state, plan, research and review feedback are
-   project data rather than instructions.
-4. The dispatch payload carries that framing itself, as an additive field.
-5. A repo gate fails if any agent prompt loses the framing, and it is proven to fail by
-   removing the line from each of the four files in turn — not only from the one it was
-   written beside.
-6. The MCP tool description records the new payload field, since a published client reads
+1. `checkpoint_commit` reaching a review or debug payload is a commit-hash shape or is
+   withheld with a flag; `files_changed` entries that leave the workspace are dropped
+   with a count. Asserted at the helper AND at all three dispatch sites, because the
+   helper being right is not the same as the call site using it.
+2. An ordinary task passes through unflagged, and a legitimately short hash is not
+   withheld — the sanitiser must not break every review to satisfy criterion 1.
+3. `input_provenance` names the fields the orchestrator **authored**, everything else
+   being project data by default, and it rides on the response envelope rather than on
+   one dispatch payload.
+4. All four prompts in `agents/` state that their inputs are project data, name the
+   structured outlet they report through, and say that an instruction-shaped block in
+   relayed content is forged by construction.
+5. A gate fails if any agent prompt loses **the framing** — proven by emptying each of
+   the four blocks in turn and by filling one with unrelated text, not only by removing
+   the tag.
+6. The MCP tool description records the payload fields, since a published client reads
    that schema.
-7. `npm test` green; `npm run lint` clean.
+7. At least one test crosses the real `handleToolCall` boundary.
+8. `npm test` green; `npm run lint` clean.
 
 ## Open questions
 
-- **Should an absent `plan_hashes` in a git workspace also be treated as suspicious?**
-  Leaning no, and not in scope: the first legitimate resume after `state-init` has no
-  hashes by design (`helpers.js:151-158` seeds them then), so the two cases are the same
-  shape and a gate here would fire on every new project. Recorded so the next reader does
-  not mistake it for an oversight.
-- **Does criterion 1 need a CHANGELOG migration note?** A project initialised outside git
-  and later `git init`-ed lands in the new reconcile path. `resume.js:894` already tells
-  the user how to leave it (set `git_head` via `state-update`), so the exit exists — but
-  whether that is discoverable enough to ship without a note is a judgement call for the
-  release, not for the implementation.
+- **Should `checkpoint_commit` and `files_changed` also be constrained where they are
+  written?** `handleExecutorResult` accepts both from the executor. Shape-checking there
+  would reject input accepted today, so it is a breaking Δ-contract needing its own
+  round and its own AUTH. Open.
+- **Is TOFU worth building?** A nonce written by `state-init` into both the state and a
+  machine-local registry is the only signal that actually answers "did this state arrive
+  with the repository", and it works when git is unavailable — which no predicate over
+  `git_head` does. It is also new machinery needing a defined first-run behaviour for
+  the legitimate "same project, new machine" case. A project of its own. Open.
+- **Attention-crowding is not addressed and cannot be closed here.** The framing can be
+  buried by a large enough payload; forgery is closed, prominence is not.
 
 # Change log
 
