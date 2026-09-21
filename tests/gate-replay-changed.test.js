@@ -87,7 +87,24 @@ describe('the vacuity gate fires on source changes and not on test-only ones', (
 
   it('pins only commits that main can reach', (t) => {
     if (!haveCommit('ab5d536')) return void t.skip('shallow clone — nothing to check');
-    const unreachable = PINNED.filter((sha) => spawnSync(
+
+    // Scans the CODE for every SHA literal rather than trusting the PINNED
+    // list, because the first version trusted the list and that is exactly what
+    // let a stray through: a bulk rename updated `'71271dd'` but not
+    // `'71271dd^'`, the array looked right, and CI failed on missing history
+    // while this clone still had the object.
+    //
+    // Comments are stripped first — this file names retired SHAs in its own
+    // prose on purpose, and a raw scan would flag the history it is recording.
+    const code = readFileSync(join(repoRoot, 'tests', 'gate-replay-changed.test.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+    const shas = [...new Set((code.match(/'[0-9a-f]{7,40}\^?'/g) || []).map((m) => m.slice(1, -1).replace(/\^$/, '')))];
+    assert.ok(shas.length >= 4, `expected the pinned fixtures in code, found ${shas.length}`);
+    assert.deepEqual(shas.slice().sort(), PINNED.slice().sort(),
+      'the SHAs used in code and the PINNED list have drifted apart; one of them is wrong');
+
+    const unreachable = shas.filter((sha) => spawnSync(
       'git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, 'main'],
     ).status !== 0);
     assert.deepEqual(unreachable, [],
@@ -107,7 +124,7 @@ describe('the vacuity gate fires on source changes and not on test-only ones', (
     // unreachable. CI's clone then cannot see them and the suite fails on
     // missing history rather than on the code. Pin what main can reach.
     if (!requireCommit(t, 'ab5d536')) return;
-    const { code, out } = replay('71271dd^', 'ab5d536');
+    const { code, out } = replay('ab5d536^', 'ab5d536');
     assert.equal(code, 1, `a vacuous gate over shipped prompts must fail the job:\n${out.slice(-600)}`);
     assert.match(out, /VACUOUS/, 'and say why');
     assert.doesNotMatch(out, /TEST-ONLY RANGE/, 'agents/*.md are shipped prompt templates, which are source');
