@@ -117,5 +117,5 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
   return buildExecutorDispatch(refreshed, refreshedInfo.phase, refreshedInfo.task, {
     resumed_from_debugger: true,
     debugger_guidance: refreshedInfo.task.debug_context,
-  });
+  }, basePath);
 }

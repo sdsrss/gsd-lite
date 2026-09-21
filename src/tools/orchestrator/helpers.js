@@ -8,6 +8,7 @@ import {
   computePlanHashes,
 } from '../state/index.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
+import { taskRefsForAgent } from '../../agent-payload.js';
 
 const MAX_DEBUG_RETRY = 3;
 const MAX_RESUME_DEPTH = 3;
@@ -163,9 +164,9 @@ async function evaluatePreflight(state, basePath) {
   //
   // A security prompt that fires on ordinary work trains people to click
   // through it, which is worse than not having it. The defence that does hold
-  // is mechanical and lives at the dispatch boundary: see safeCommitRef and
-  // safeWorkspacePaths below, which constrain the state-sourced values that
-  // agents/reviewer.md substitutes into a shell command and a file read.
+  // is mechanical and lives in src/agent-payload.js: taskRefsForAgent
+  // constrains the state-sourced values that agents/reviewer.md substitutes
+  // into a shell command and a file read.
 
   // Plan drift detection — only run when no prior blocking hint (git_head mismatch)
   // exists, because establishing a baseline in a suspect workspace state would
@@ -287,75 +288,6 @@ function getBlockedTasks(phase) {
     }));
 }
 
-// `.gsd/state.json` is committable, so in a cloned repository every string in
-// it was written by the repository's author. Two of them are not inert: the
-// context protocol in `agents/reviewer.md` tells an agent that holds Bash to
-// build `git diff <commit>~1..<commit>` out of `checkpoint_commit`, and to Read
-// every entry of `files_changed`. Schema validation accepts any string for the
-// first (`schema.js`: "string or null") and any array of strings for the
-// second.
-//
-// To be precise about the mechanism, because an overstatement here would send
-// the next reader looking in the wrong place: NO CODE IN THIS PACKAGE passes
-// either value to a shell. Every exec site uses execFile with a fixed argv
-// (`utils.js` getGitHead, `tools/verify.js`), and the only code that touches
-// checkpoint_commit stores it. The route is the reviewing MODEL interpolating
-// the value into its own Bash tool call because its prompt told it to — so the
-// `files_changed` half is the likelier of the two to fire, since reading a
-// listed path needs no adversarial step at all, only a path pointing outside
-// the workspace.
-//
-// Telling agents these fields are data (input_provenance) is advisory — it asks
-// a model to decline. Constraining the values is not, so it is the half that
-// runs first. Both are kept: the shapes below let malicious-but-well-formed
-// content through, and that is what the framing is for.
-//
-// Validation deliberately does NOT move into validateState. Rejecting a whole
-// state at read would brick a project whose state is already malformed, with no
-// way to repair it — the failure mode fb61e34 fixed and the state-read spec
-// records. These sanitise at the point of use instead: a bad value is dropped
-// from the payload, the rest of the review proceeds, and the agent is told what
-// went missing rather than silently receiving a short list.
-// 4 is git's own floor for an abbreviated hash (`core.abbrev`), not 7: the
-// default display length is 7+, but a small repo or a configured abbrev can
-// produce shorter, and an over-strict shape would withhold a legitimate commit
-// and break every review for that project. The job here is excluding shell
-// metacharacters and path syntax, not judging entropy, so the loosest shape
-// that is still inert is the right one.
-const COMMIT_REF = /^[0-9a-f]{4,40}$/;
-
-/** A value safe to substitute into a git command, or null. */
-function safeCommitRef(value) {
-  return typeof value === 'string' && COMMIT_REF.test(value) ? value : null;
-}
-
-/** The entries that stay inside the workspace, and a count of those dropped. */
-function safeWorkspacePaths(list) {
-  const kept = (Array.isArray(list) ? list : []).filter((entry) => {
-    if (typeof entry !== 'string' || entry.length === 0) return false;
-    if (entry.includes('\0')) return false;
-    if (entry.startsWith('/') || /^[A-Za-z]:[\\/]/.test(entry)) return false; // absolute
-    if (entry.startsWith('~')) return false;
-    return !entry.split(/[\\/]/).includes('..');
-  });
-  const dropped = (Array.isArray(list) ? list.length : 0) - kept.length;
-  return { kept, dropped };
-}
-
-/** The review/debug projection of a task, with the two substituted fields constrained. */
-function safeTaskRefs(task) {
-  const commit = safeCommitRef(task.checkpoint_commit);
-  const { kept, dropped } = safeWorkspacePaths(task.files_changed);
-  return {
-    checkpoint_commit: commit,
-    files_changed: kept,
-    ...(commit === null && task.checkpoint_commit != null
-      ? { checkpoint_commit_rejected: true }
-      : {}),
-    ...(dropped > 0 ? { files_changed_rejected: dropped } : {}),
-  };
-}
-
 function getReviewTargets(phase, reviewScope, scopeId) {
   if (!phase) return [];
   if (reviewScope === 'task') {
@@ -373,7 +305,7 @@ function getPhaseAndTask(state, taskId) {
   return { phase: null, task: null };
 }
 
-function getDebugTarget(phase, task, currentReview) {
+function getDebugTarget(phase, task, currentReview, workspaceRoot) {
   if (!phase || !task) return null;
   return {
     id: task.id,
@@ -381,7 +313,7 @@ function getDebugTarget(phase, task, currentReview) {
     retry_count: task.retry_count || 0,
     error_fingerprint: task.last_error_fingerprint || currentReview?.error_fingerprint || null,
     last_failure_summary: task.last_failure_summary || currentReview?.summary || null,
-    ...safeTaskRefs(task),
+    ...taskRefsForAgent(task, workspaceRoot),
     debug_context: task.debug_context || null,
   };
 }
@@ -460,8 +392,8 @@ async function persistAndRead(basePath, updates, { _append_decisions, _propagati
   return result.state;
 }
 
-function buildExecutorDispatch(state, phase, task, extras = {}) {
-  const context = buildExecutorContext(state, task.id, phase.id);
+function buildExecutorDispatch(state, phase, task, extras = {}, workspaceRoot) {
+  const context = buildExecutorContext(state, task.id, phase.id, workspaceRoot);
   if (context.error) return context;
   return {
     success: true,
@@ -541,7 +473,4 @@ export {
   persistAndRead,
   buildExecutorDispatch,
   tryAutoUnblock,
-  safeCommitRef,
-  safeWorkspacePaths,
-  safeTaskRefs,
 };

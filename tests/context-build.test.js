@@ -1,7 +1,7 @@
 // tests/context-build.test.js
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { buildExecutorContext } from '../src/tools/state/index.js';
@@ -12,22 +12,34 @@ describe('buildExecutorContext', () => {
       phases: [{
         id: 1,
         todo: [
-          { id: '1.1', lifecycle: 'accepted', files_changed: ['a.js'], checkpoint_commit: 'abc', requires: [], research_basis: [] },
+          { id: '1.1', lifecycle: 'accepted', files_changed: ['a.js'], checkpoint_commit: 'abc1234', requires: [], research_basis: [] },
           { id: '1.2', lifecycle: 'pending', requires: [{ kind: 'task', id: '1.1', gate: 'accepted' }], research_basis: ['decision:jwt'], level: 'L1', review_required: true, retry_count: 0 },
         ],
       }],
       research: { decision_index: { 'decision:jwt': { summary: 'Use JWT', source: 'Context7' } } },
     };
-    const ctx = buildExecutorContext(state, '1.2', 1);
-    assert.ok(ctx.task_spec !== undefined);
-    assert.ok(ctx.research_decisions !== undefined);
-    assert.ok(ctx.predecessor_outputs !== undefined);
-    assert.ok(ctx.project_conventions !== undefined);
-    assert.ok(ctx.workflows !== undefined);
-    assert.ok(ctx.constraints !== undefined);
-    assert.equal(ctx.constraints.level, 'L1');
-    assert.deepEqual(ctx.predecessor_outputs, [{ files_changed: ['a.js'], checkpoint_commit: 'abc' }]);
-    assert.equal(ctx.research_decisions[0].summary, 'Use JWT');
+    // predecessor_outputs now goes through taskRefsForAgent, which resolves
+    // paths against a real workspace — `.gsd/state.json` is committable, so a
+    // predecessor's files_changed can be the repository author's. That needs a
+    // real directory and a real file, and `abc` is below git's 4-character
+    // abbreviation floor, so the fixture uses a hash shape a reviewer could
+    // actually be handed.
+    const ws = mkdtempSync(join(tmpdir(), 'gsd-ctxbuild-'));
+    writeFileSync(join(ws, 'a.js'), '//\n');
+    try {
+      const ctx = buildExecutorContext(state, '1.2', 1, ws);
+      assert.ok(ctx.task_spec !== undefined);
+      assert.ok(ctx.research_decisions !== undefined);
+      assert.ok(ctx.predecessor_outputs !== undefined);
+      assert.ok(ctx.project_conventions !== undefined);
+      assert.ok(ctx.workflows !== undefined);
+      assert.ok(ctx.constraints !== undefined);
+      assert.equal(ctx.constraints.level, 'L1');
+      assert.deepEqual(ctx.predecessor_outputs, [{ files_changed: ['a.js'], checkpoint_commit: 'abc1234' }]);
+      assert.equal(ctx.research_decisions[0].summary, 'Use JWT');
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
   });
 
   it('returns a structured error when phase is missing', () => {
