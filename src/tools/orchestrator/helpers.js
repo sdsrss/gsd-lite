@@ -145,6 +145,40 @@ async function evaluatePreflight(state, basePath) {
     });
   }
 
+  // A `.gsd/` that arrived with the repository rather than being written here
+  // carries no baseline of its own, and the two gates below it both passed on
+  // that: the mismatch check above compares HEADs only when `state.git_head` is
+  // truthy, and plan-drift seeds its baseline from whatever plan files are
+  // present when none is stored. So a transplanted state reconciled against
+  // nothing and drifted from nothing, and resume dispatched an executor — which
+  // holds Bash — on a stranger's task spec.
+  //
+  // `git_head: null` alone is NOT that signal, and treating it as one (the
+  // audit's wording) breaks every non-git project permanently:
+  // createInitialState sets it to null and getGitHead returns null for any
+  // directory that is not a git repository, so a non-git project carries null
+  // forever and reconcile has no HEAD to offer it as an exit.
+  //
+  // The pair is the narrow form: the workspace IS under git, and the state
+  // still records no HEAD. state-init inside a git repo always writes one, so
+  // for a project this tool created, that pair is reachable by a state that was
+  // not created here — or by an init that ran before `git init`, which
+  // resume.js's reconcile guidance already tells the user how to leave.
+  //
+  // Placed beside the mismatch hint rather than after the drift block on
+  // purpose: drift runs only when no hint has fired, and seeding plan hashes
+  // from a workspace we have just declined to vouch for would install the
+  // stranger's files as the trusted baseline.
+  if (currentGitHead && !state.git_head) {
+    hints.push({
+      workflow_mode: 'reconcile_workspace',
+      action: 'await_manual_intervention',
+      updates: { workflow_mode: 'reconcile_workspace' },
+      current_git_head: currentGitHead,
+      message: 'The workspace is a git repository but this state records no git baseline — it may not have been created here. Confirm the plan and set git_head via state-update before resuming.',
+    });
+  }
+
   // Plan drift detection — only run when no prior blocking hint (git_head mismatch)
   // exists, because establishing a baseline in a suspect workspace state would
   // anchor hashes to potentially wrong files.
