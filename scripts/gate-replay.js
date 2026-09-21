@@ -28,9 +28,14 @@
  *                   earns its place.
  *   VACUOUS         every test passed on the base tree. The file encodes
  *                   nothing the commit fixed. Exit 1.
- *   INCONCLUSIVE    no tests ran — the file could not load against that tree.
- *                   NOT a pass and not a failure; the replay says nothing.
- *                   Exit 2.
+ *   INCONCLUSIVE    nothing was evaluated — the file could not load against
+ *                   that tree, or it declared no tests at all. NOT a pass and
+ *                   not a failure; the replay says nothing. Exit 2.
+ *
+ * A question that cannot have a vacuity answer is REFUSED (also exit 2) rather
+ * than answered: base and at the same commit, or a path that does not exist at
+ * `at`. Both used to produce a verdict — one a confident VACUOUS, the other a
+ * stack trace at exit 1, which is the code VACUOUS uses.
  *
  * Nothing is written inside the repo: the base tree is a detached worktree in a
  * temp dir, removed on exit, and node_modules is a symlink to this checkout's.
@@ -63,6 +68,29 @@ function parseArgs(argv) {
 const opts = parseArgs(process.argv.slice(2));
 const baseSha = git('rev-parse', '--short', opts.base);
 const atSha = git('rev-parse', '--short', opts.at);
+
+// A degenerate question deserves a refusal, not a verdict. Replaying a file on
+// its own tree passes by construction, and printing VACUOUS for it would be
+// this script making exactly the claim it exists to catch.
+if (git('rev-parse', opts.base) === git('rev-parse', opts.at)) {
+  console.log(`REFUSED — base and at are the same commit (${baseSha}). A file replayed on`);
+  console.log('its own tree passes by construction; that is not a vacuity result.');
+  process.exit(2);
+}
+
+// Read every file out of `at` BEFORE creating anything, so a typo fails here
+// with its own message rather than as a stack trace at exit 1 — the code that
+// also means VACUOUS, which would let a mistyped path read as a verdict.
+const sources = new Map();
+for (const file of opts.files) {
+  try {
+    sources.set(file, git('show', `${opts.at}:${file}`));
+  } catch {
+    console.log(`REFUSED — ${file} does not exist at ${atSha}. Nothing was replayed.`);
+    process.exit(2);
+  }
+}
+
 const work = mkdtempSync(join(tmpdir(), 'gsd-gate-replay-'));
 const tree = join(work, 'tree');
 
@@ -71,10 +99,10 @@ try {
   git('worktree', 'add', '--detach', tree, baseSha);
   symlinkSync(join(root, 'node_modules'), join(tree, 'node_modules'));
 
-  for (const file of opts.files) {
+  for (const [file, src] of sources) {
     // The test as written AT `at`, on the tree as it stood at `base`.
     mkdirSync(join(tree, dirname(file)), { recursive: true });
-    writeFileSync(join(tree, file), git('show', `${opts.at}:${file}`) + '\n');
+    writeFileSync(join(tree, file), `${src}\n`);
   }
 
   console.log(`replaying ${opts.files.join(', ')}\n  as written at ${atSha}\n  on the tree at ${baseSha}\n`);
@@ -101,13 +129,22 @@ try {
     .filter(Boolean)
     .map((m) => m[1]);
 
-  // A file that cannot load is not a file that discriminates. Node counts an
-  // unloadable test file as ONE failing test whose name is the file path, so
-  // `fail > 0` is true and a summary is printed — the first version of this
-  // script therefore certified a replay against a tree missing src/agent-payload.js
-  // as DISCRIMINATIVE. It reads identically to a real red. Found by running the
-  // control, not by reading the code, which is the whole argument of this file.
+  const passing = out.split('\n')
+    .map((l) => l.match(/^✔ (.+?) \(\d/))
+    .filter(Boolean)
+    .map((m) => m[1]);
+
+  // Node names a FILE as the test when the file contributed no test of its own,
+  // in both directions: one failing test named after the file when it could not
+  // load, one PASSING test named after it when it loaded and declared nothing.
+  // Both read as ordinary results. The first version of this script had neither
+  // check and certified a replay against a tree missing src/agent-payload.js as
+  // DISCRIMINATIVE; review then pointed a replay at a source file and got
+  // `VACUOUS — 1/1 passed`, which tells the reader their gate is worthless when
+  // the truth is that they typed the wrong path. A script whose whole thesis is
+  // verdicts that look real and are not does not get to have one.
   const didNotLoad = failing.filter((name) => opts.files.includes(name));
+  const declaredNothing = passing.filter((name) => opts.files.includes(name));
   // Message first, error code second: the code matches node's own `throw new
   // ERR_MODULE_NOT_FOUND(` line in the stack, which names the class and not the
   // module that is missing.
@@ -117,6 +154,12 @@ try {
   if (tests === null || fail === null) {
     console.log('INCONCLUSIVE — the runner printed no summary. Raw output:\n');
     console.log(out.trim().split('\n').slice(-25).join('\n'));
+    exitCode = 2;
+  } else if (declaredNothing.length) {
+    console.log(`INCONCLUSIVE — ${declaredNothing.join(', ')} declared no tests against ${baseSha}.`);
+    console.log('\nNode reports a file containing no test as ONE PASSING test named after the');
+    console.log('file, which is indistinguishable from a suite that passed. Nothing was');
+    console.log('gated, so there is no vacuity result to give. Check the path is a test file.');
     exitCode = 2;
   } else if (tests === 0 || didNotLoad.length) {
     console.log(`INCONCLUSIVE — ${didNotLoad.join(', ') || 'the file'} did not load against ${baseSha}.`);

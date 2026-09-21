@@ -62,7 +62,10 @@ function staysInWorkspace(entry, realRoot) {
   // Path-expanding forms are refused for the same reason, and the walk-up below
   // is what made it matter. PATH-expanding, not shell-expanding: the line is
   // whether the string denotes a different FILE than the one validated. `$VAR`,
-  // `~user`, `$(…)`, backticks and CR/LF do; `;`, `|` and a bare space do not —
+  // `~user`, `$(…)`, backticks, CR/LF, brace groups and backslash escapes do —
+  // examples, not an enumeration; the criterion is the sentence before them,
+  // and this list has been short by a member in six rounds running, twice after
+  // it was declared complete. `;`, `|` and a bare space do not —
   // they change argv when a consumer forgets to quote, which is quoting's job,
   // and refusing them would mean refusing spaces, and `My Document.md` is an
   // ordinary filename. `~/.aws/credentials` names no existing directory,
@@ -76,15 +79,34 @@ function staysInWorkspace(entry, realRoot) {
   // accident — dirname of a two-segment missing path is also missing, so it
   // gave up — and the walk-up removed the accident.
   //
-  // Glob characters are deliberately NOT here. `*` and `?` are legal in
-  // filenames, they passed before this change too, and adding them would be a
-  // denylist pretending to be a boundary. `$` in a real filename is legal and
-  // rare; refusing it costs a flagged entry the agent is told to report, which
-  // is the cheaper side of that trade.
+  // Glob characters are deliberately NOT here, and the reason is not taste:
+  // `*` and `?` only ever match files that already exist, and an absolute
+  // pattern (`/etc/pass*`) is refused by containment like any absolute path, so
+  // a glob cannot name a file outside the workspace. Brace groups can, because
+  // they are text substitution rather than matching — which is why they ARE
+  // here and globs are not. `$` in a real filename is legal and rare; refusing
+  // it costs a flagged entry the agent is told to report, which is the cheaper
+  // side of that trade.
   const segments = entry.split(/[\\/]/);
   if (segments.includes('..')) return false;
   if (segments[0].startsWith('~')) return false;
   if (/[$`\r\n]/.test(entry)) return false;
+  // Brace expansion, found by review after four rounds of this rule. Nothing
+  // above catches it: `{,/etc/passwd}` resolves here to a directory named `{,`
+  // inside the workspace, so it was kept and handed over unflagged, while bash
+  // expands it to the single word `/etc/passwd`. Only a group containing a
+  // comma or a `..` sequence expands — `c{1}.js` is a filename bash leaves
+  // alone, and refusing every brace would cost it for nothing.
+  if (/\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(entry)) return false;
+  // Backslash, the sixth member, found while closing the fifth — which is the
+  // reason the comment above stopped claiming a complete list. Any `\X` is
+  // unescaped to `X`, so every backslash denotes a path other than this string:
+  // `\/etc/passwd` passed all four checks above, resolved to a directory named
+  // `\` inside the workspace, and a real shell read /etc/passwd through it.
+  // Refusing all of them costs nothing git emits — `git diff --name-only`
+  // writes forward slashes on Windows too — and a filename that genuinely
+  // contains one is flagged and reported rather than silently dropped.
+  if (entry.includes('\\')) return false;
 
   const abs = resolve(realRoot, entry);
   try {
@@ -117,10 +139,18 @@ function staysInWorkspace(entry, realRoot) {
 /**
  * The entries that stay inside the workspace, and a count of those dropped.
  *
- * Absolute paths and Windows UNC / drive-relative forms need no special case:
- * resolve-then-contain rejects them for the same reason. `..` and the
- * shell-expanded forms DO need one — see staysInWorkspace — because the
- * validator and the agent disagree about what those strings mean.
+ * Absolute paths need no special case: resolve-then-contain rejects them.
+ * Windows UNC and drive-relative forms are refused by the backslash rule, not
+ * by containment — an earlier version of this comment credited containment,
+ * and on POSIX containment KEEPS `C:\Windows\win.ini`, which is one ordinary
+ * filename there.
+ *
+ * `..` and the path-expanding forms DO need a special case — see
+ * staysInWorkspace — because the validator and the agent disagree about what
+ * those strings mean. That list is NOT closed. Six members have been added to
+ * it across six review rounds, two of them after the round that declared it
+ * complete, so treat resolve-then-contain as the part that holds without
+ * enumeration and the refusals as what is known today.
  */
 export function safeWorkspacePaths(list, workspaceRoot) {
   // A caller that forgets the root is a programming error, and the quiet
