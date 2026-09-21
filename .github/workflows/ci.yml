@@ -27,6 +27,15 @@ jobs:
       # is a promise rather than a fact; the SHA is the fact. The trailing
       # comment records which major the SHA belongs to, so bumping stays legible.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # tests/gate-replay-changed.test.js pins the vacuity gate's
+          # classification against real commits in this repository's history
+          # (71271dd, 406fd3a, 331dcda, 14e64fa), because the two bugs found in
+          # that rule were about real commit shapes. The default depth-1 clone
+          # does not have them, and the tests fail rather than skip on purpose:
+          # in CI a missing commit means this line was lost, which would silently
+          # disable them.
+          fetch-depth: 0
 
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5

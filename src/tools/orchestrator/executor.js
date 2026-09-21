@@ -43,7 +43,12 @@ export async function handleExecutorResult({ result: rawResult, basePath = proce
   const { kept: keptFiles, dropped: droppedFiles } =
     safeWorkspacePaths(rawResult.files_changed || [], await getProjectRoot(basePath));
   const result = { ...rawResult, files_changed: keptFiles };
-  // Attached to whichever branch returns, so a drop is never silent.
+  // Attached to whichever branch returns, so a drop is never silent. Note the
+  // asymmetry, because it is deliberate and the next reader will assume
+  // otherwise: only the `checkpointed` branch PERSISTS the count, because only
+  // that branch stores the list it describes. On `blocked` and `failed` the
+  // count is returned to the caller and not written, so the tool response and
+  // the stored task mean different things on those two branches.
   const rejected = droppedFiles > 0 ? { files_changed_rejected: droppedFiles } : {};
 
   // Note: read() is outside the state lock. This is safe because the MCP server

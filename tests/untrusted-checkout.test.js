@@ -1143,6 +1143,30 @@ describe('the two substituted fields are constrained where they are written', ()
     }
   });
 
+  it('does not let a committed state inflate the withheld count', () => {
+    // The count became project data with this change: it lives in a committable
+    // state.json and validateState does not check it. The shape guard handles
+    // `-1`, `1.5`, `"3"` and `null`; a plausible-looking integer needs the cap.
+    // Worst case is a reviewer reporting a gap of the wrong size, not a carrier,
+    // which is why this is a cap and not a refusal.
+    const ws = mkdtempSync(join(tmpdir(), 'gsd-inflate-'));
+    try {
+      mkdirSync(join(ws, 'src'));
+      writeFileSync(join(ws, 'src', 'ok.js'), '//\n');
+      const refs = (stored) => taskRefsForAgent(
+        { checkpoint_commit: 'a1b2c3d', files_changed: ['src/ok.js'], files_changed_rejected: stored }, ws,
+      ).files_changed_rejected;
+
+      assert.equal(refs(999999), 10000, 'an inflated count is capped, not passed through');
+      assert.equal(refs(3), 3, 'and an ordinary one is untouched');
+      for (const junk of [-1, 1.5, '3', null, undefined, Number.NaN, Infinity]) {
+        assert.equal(refs(junk), undefined, `${JSON.stringify(junk)} is not a count and must be ignored`);
+      }
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   it('caps the length of an inert commit ref', () => {
     // The {1,64} bound had no reader either. A 64-char cap is the difference
     // between an identifier and a payload.
