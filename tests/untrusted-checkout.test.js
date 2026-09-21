@@ -528,6 +528,14 @@ describe('state values that get substituted into a command or a path are constra
         `agents/${agent} does not say the server could not CONFIRM the value — it claims more than the code knows`);
       assert.match(src, /不要替用户下定论|报告事实即可/,
         `agents/${agent} tells the agent to reach a verdict rather than report the fact`);
+      // The causes must read as examples, not as a closed list. Twice now a
+      // prompt has claimed an enumeration the code had outgrown — the flag
+      // description said "outside the workspace (absolute or `..`)" after
+      // symlinks were added, and would have said it again after the
+      // shell-expansion class. The criterion is whether the server can confirm
+      // the value, not whether it matches a list of bad shapes.
+      assert.match(src, /等|举例不是穷举/,
+        `agents/${agent} enumerates the rejection causes as a closed list; it will be wrong the next time the rule widens`);
     });
   }
 });
