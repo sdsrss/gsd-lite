@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update, patchPlan } from '../src/tools/state/index.js';
+import { ACTIONABLE_LIFECYCLES } from '../src/schema.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 async function withProject(name, fn, phases) {
@@ -709,4 +710,110 @@ describe('awaiting_user holds are not auto-cleared', () => {
       assert.equal((await read({ basePath })).workflow_mode, 'planning');
     });
   });
+});
+
+// The skip_failed guard predicts what resumeExecutingTask will do. Three
+// revisions during 0.11.0 got that prediction wrong in three different places,
+// and each round's test covered the shape review had just found — the
+// instance-not-class mistake wearing test clothes (issue #10).
+//
+// So this asserts an invariant over enumerated shapes instead of checking the
+// next example. Both directions, because each alone lets the other through:
+//
+//   accepted  → it must actually move, and resume must not come back offering
+//               skip_failed again. That loop IS the no-op the guard exists for;
+//               a guard gone inert (revision 1, plan-wide scope) fails here.
+//   refused   → the refusal claims "nothing else in that phase can run", so the
+//               claim is checked against ACTIONABLE_LIFECYCLES — the constant
+//               dispatch itself uses — and the alternatives it names are taken
+//               and required to work. A guard that refuses too much (revision
+//               3, blind to a `running` sibling) fails here.
+//
+// Known limit, stated rather than papered over: the refusal check cannot judge
+// a `checkpointed` sibling. Resume answers `trigger_review` with an identical
+// phase-scoped payload whether a task is waiting for review or the phase has
+// simply run out of work, so nothing observable separates them.
+describe('skip_failed either proceeds or offers a way out that works', () => {
+  // Legal routes through TASK_LIFECYCLE. Jumping straight to a terminal state
+  // is refused by update(), and a silently-refused setup would make every
+  // assertion below vacuous — build() asserts each hop for that reason.
+  const ROUTES = {
+    pending: [],
+    running: ['running'],
+    blocked: ['blocked'],
+    checkpointed: ['running', 'checkpointed'],
+    accepted: ['running', 'checkpointed', 'accepted'],
+    needs_revalidation: ['running', 'checkpointed', 'needs_revalidation'],
+  };
+
+  async function build(basePath, sibling) {
+    await init({
+      project: 'skipprop',
+      phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }, { index: 2, name: 'B' }] }],
+      basePath,
+    });
+    const drive = async (id, route) => {
+      for (const lifecycle of route) {
+        const r = await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle }] }] }, basePath });
+        assert.ok(!r.error, `setup ${id}->${lifecycle} refused: ${r.message}`);
+      }
+    };
+    await drive('1.1', ['running', 'failed']);
+    if (sibling === null) {
+      const r = await patchPlan({ operations: [{ op: 'remove_task', task_id: '1.2' }], basePath });
+      assert.ok(!r.error, `setup remove 1.2 refused: ${r.message}`);
+    } else {
+      await drive('1.2', ROUTES[sibling]);
+    }
+    const moded = await update({ updates: { workflow_mode: 'failed' }, basePath });
+    assert.ok(!moded.error, `setup workflow_mode=failed refused: ${moded.message}`);
+
+    // Vacuity guard: without this, a setup that silently did not land leaves
+    // every assertion below passing against a state nobody named.
+    const state = await read({ basePath });
+    assert.equal(state.workflow_mode, 'failed');
+    assert.equal(state.phases[0].todo.find(x => x.id === '1.1')?.lifecycle, 'failed',
+      'the failed task is what makes skip_failed meaningful');
+  }
+
+  for (const sibling of [null, 'pending', 'running', 'blocked', 'checkpointed', 'accepted', 'needs_revalidation']) {
+    const label = sibling === null ? 'no sibling at all' : `a ${sibling} sibling`;
+    it(`holds with ${label}`, async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'gsd-skipprop-'));
+      try {
+        await build(dir, sibling);
+        const applied = await resumeWorkflow({ basePath: dir, recovery: 'skip_failed' });
+
+        if (!applied.error) {
+          assert.ok(applied.action, `${label}: accepted skip_failed without an action`);
+          assert.notEqual(applied.workflow_mode, 'failed', `${label}: accepted skip_failed and stayed failed`);
+          const next = await resumeWorkflow({ basePath: dir });
+          assert.ok(!(next.recovery_options || []).includes('skip_failed'),
+            `${label}: skip_failed was accepted but resume offers it again — that is the loop`);
+          return;
+        }
+
+        assert.equal(applied.code, 'TRANSITION_ERROR', label);
+
+        const siblings = (await read({ basePath: dir })).phases[0].todo.filter(x => x.id !== '1.1');
+        const runnable = siblings.filter(x => ACTIONABLE_LIFECYCLES.includes(x.lifecycle));
+        assert.deepEqual(runnable.map(x => `${x.id}:${x.lifecycle}`), [],
+          `${label}: refused saying nothing else in the phase can run, while a sibling sits in a lifecycle dispatch acts on`);
+
+        const alternatives = applied.recovery_options || [];
+        assert.ok(alternatives.length > 0, `${label}: refused without naming a way out`);
+        assert.ok(!alternatives.includes('skip_failed'), `${label}: refused skip_failed while still offering it`);
+
+        // Take the option it named. "Refused, with options" over options that
+        // also fail is a dead end with better manners.
+        const fallback = await resumeWorkflow({ basePath: dir, recovery: alternatives[0] });
+        assert.ok(!fallback.error,
+          `${label}: pointed at ${alternatives[0]}, which also failed: ${fallback.message}`);
+        assert.notEqual(fallback.workflow_mode, 'failed',
+          `${label}: ${alternatives[0]} was accepted but left the workflow failed`);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
 });
