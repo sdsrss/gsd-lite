@@ -42,7 +42,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -112,6 +112,13 @@ const tree = join(work, 'tree');
 let exitCode = 0;
 try {
   git('worktree', 'add', '--detach', tree, baseSha);
+  // symlinkSync happily creates a DANGLING link when the target is absent, and
+  // the replay then fails to load every import and reports INCONCLUSIVE — which
+  // does not fail the job. A skipped `npm ci` would therefore read as "nothing
+  // was evaluated" rather than as a broken checker. Say so instead.
+  if (!existsSync(join(root, 'node_modules'))) {
+    throw new Error(`node_modules is missing at ${root} — run npm ci first; without it every replay is INCONCLUSIVE for the wrong reason`);
+  }
   symlinkSync(join(root, 'node_modules'), join(tree, 'node_modules'));
 
   for (const [file, src] of sources) {
