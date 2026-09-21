@@ -1,6 +1,6 @@
 import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask } from '../state/index.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
-import { getGitHead, getGsdDir } from '../../utils.js';
+import { getGitHead, getGsdDir, getProjectRoot } from '../../utils.js';
 import { join } from 'node:path';
 import { stat, unlink } from 'node:fs/promises';
 import {
@@ -307,7 +307,7 @@ async function resumeAwaitingClear(state, basePath, _depth = 0) {
   return resumeWorkflow({ basePath, _depth: _depth + 1 });
 }
 
-async function resumeExecutingTask(state, basePath) {
+async function resumeExecutingTask(state, basePath, projectRoot) {
   const phase = getCurrentPhase(state);
   if (!phase) {
     return { error: true, message: `Current phase ${state.current_phase} not found` };
@@ -325,7 +325,7 @@ async function resumeExecutingTask(state, basePath) {
       workflow_mode: 'executing_task',
       phase_id: phase.id,
       current_review: state.current_review,
-      debug_target: getDebugTarget(phase, task, state.current_review, basePath),
+      debug_target: getDebugTarget(phase, task, state.current_review, projectRoot),
     };
   }
 
@@ -350,7 +350,7 @@ async function resumeExecutingTask(state, basePath) {
         retry_count: runningTask.retry_count,
         last_failure_summary: runningTask.last_failure_summary,
       } : {}),
-    }, basePath);
+    }, projectRoot);
   }
 
   const selection = selectRunnableTask(phase, state);
@@ -376,7 +376,7 @@ async function resumeExecutingTask(state, basePath) {
       }],
     });
     if (persistError) return persistError;
-    const dispatch = buildExecutorDispatch(state, phase, task, {}, basePath);
+    const dispatch = buildExecutorDispatch(state, phase, task, {}, projectRoot);
     // Expose parallel-available tasks so callers can dispatch multiple subagents
     if (selection.parallel_available?.length > 0) {
       dispatch.parallel_available = selection.parallel_available.map(t => ({
@@ -525,6 +525,11 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
   if (state.error) {
     return state;
   }
+
+  // Resolved once, and it is NOT basePath: getGsdDir walks up, so resuming from
+  // a subdirectory is normal, and a project-relative files_changed entry has to
+  // resolve against the project root or a real file reads as outside it.
+  const projectRoot = await getProjectRoot(basePath);
 
   // Clear session-end marker if present (crash recovery)
   try {
@@ -677,7 +682,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
   } else {
     switch (state.workflow_mode) {
       case 'executing_task':
-        result = await resumeExecutingTask(state, basePath);
+        result = await resumeExecutingTask(state, basePath, projectRoot);
         break;
       case 'awaiting_clear':
         result = await resumeAwaitingClear(state, basePath, _depth);
@@ -783,7 +788,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           review_targets: getReviewTargets(phase, 'phase', current_review.scope_id).map((task) => ({
             id: task.id,
             level: task.level,
-            ...taskRefsForAgent(task, basePath),
+            ...taskRefsForAgent(task, projectRoot),
           })),
         };
         break;
@@ -810,7 +815,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           review_target: task ? {
             id: task.id,
             level: task.level,
-            ...taskRefsForAgent(task, basePath),
+            ...taskRefsForAgent(task, projectRoot),
           } : null,
         };
         break;

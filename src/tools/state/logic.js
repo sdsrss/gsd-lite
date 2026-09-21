@@ -3,7 +3,7 @@
 import { dirname, join } from 'node:path';
 import { writeFile, rename, unlink, open } from 'node:fs/promises';
 import { ensureDir, writeJson, getStatePath, fsyncDir, shippedDocPath } from '../../utils.js';
-import { taskRefsForAgent, PROVENANCE_NOTE, ORCHESTRATOR_AUTHORED } from '../../agent-payload.js';
+import { taskRefsForAgent } from '../../agent-payload.js';
 import {
   DEP_GATES,
   TASK_LIFECYCLE,
@@ -281,8 +281,6 @@ export function propagateCrossPhaseInvalidation(state, sourcePhaseId) {
  * Build executor context for a task: 6-field protocol.
  * Returns { task_spec, research_decisions, predecessor_outputs, project_conventions, workflows, constraints }.
  */
-export { PROVENANCE_NOTE, ORCHESTRATOR_AUTHORED };
-
 export function buildExecutorContext(state, taskId, phaseId, workspaceRoot) {
   const phase = state.phases.find(p => p.id === phaseId);
   if (!phase) {
@@ -343,40 +341,6 @@ export function buildExecutorContext(state, taskId, phaseId, workspaceRoot) {
     ? task.last_review_feedback
     : null;
 
-  // Which of these fields the orchestrator wrote, and which it merely relayed.
-  //
-  // `.gsd/` is committable, so a cloned repository can carry a complete
-  // project state and `/gsd:resume` is the documented way to act on one. When
-  // it does, research_decisions, debugger_guidance and rework_feedback are the
-  // repository author's prose arriving in the same payload as this tool's own
-  // instructions, and task_spec names a file written by the same hand. The
-  // executor that receives all of it holds Bash, and nothing here told it the
-  // two had different authors.
-  //
-  // `workflows` and `constraints` are the only fields here that are ours:
-  // shippedDocPath resolves the first from this package's own install location,
-  // and the second is schema-validated scalars.
-  //
-  // `project_conventions` is NOT, despite sitting beside `workflows` — it is
-  // the bare string 'CLAUDE.md' (see above), resolved against the USER'S
-  // workspace. In a cloned repository that file is the repository author's, and
-  // `agents/executor.md` separately instructs the executor to follow it. An
-  // earlier revision of this comment claimed both were shippedDocPath-resolved
-  // and the executor prompt repeated the claim, which made the block whose
-  // whole job is marking untrusted input vouch for the most dangerous field in
-  // it. Naming the trusted set rather than the untrusted one is what stops that
-  // from recurring: see ORCHESTRATOR_AUTHORED.
-  //
-  // Additive, and stays additive — the framing is its own field rather than a
-  // prefix glued onto the values, because a consumer may match on
-  // `research_decisions[].summary` and rewriting it in place would break them.
-  const input_provenance = {
-    orchestrator_authored: ORCHESTRATOR_AUTHORED
-      .filter(f => f.startsWith('executor_context.'))
-      .map(f => f.slice('executor_context.'.length)),
-    note: PROVENANCE_NOTE,
-  };
-
   return {
     task_spec,
     research_decisions,
@@ -386,7 +350,6 @@ export function buildExecutorContext(state, taskId, phaseId, workspaceRoot) {
     constraints,
     debugger_guidance,
     rework_feedback,
-    input_provenance,
   };
 }
 

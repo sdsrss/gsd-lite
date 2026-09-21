@@ -72,7 +72,11 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 - 读取 `current_review` (scope=task, scope_id, stage)
 - 加载对应 task 的 checkpoint 信息
 - 派发 reviewer 子代理，传递:
-  - task_id + checkpoint_commit + files_changed
+  - **`orchestrator-resume` 响应里的 `review_target` 原样转发** —— 不要自己从 state 里读
+    `checkpoint_commit` / `files_changed`。服务端已对这两个值做形状校验（提交哈希形状、
+    路径须落在项目内），因为 reviewer 会把它们拼进 `git diff` 命令和文件读取，而 `.gsd/`
+    可以随仓库提交。自己取原始值等于绕开这道校验。
+  - `review_target` 里若带 `checkpoint_commit_rejected` / `files_changed_rejected`，一并转发
   - 当前审查阶段 (spec / quality)
 - 审查完成后恢复正常调度
 
