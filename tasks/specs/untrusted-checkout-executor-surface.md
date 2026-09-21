@@ -408,6 +408,21 @@ execution side acts differently.
 
   Unchanged and still open: the write boundary, TOFU, attention-crowding, M10.
 
+- 2026-09-21, the three open items split out, each to its own file as this spec said
+  each needed:
+  - **Write boundary → `tasks/specs/executor-write-boundary.md`, implemented.** The
+    threat there is not this spec's: hostile input arrives from our own executor, not
+    from a committed state. The write bar is *inert*, not *is-a-hash* — reusing this
+    spec's `safeCommitRef` at the write turned 33 of our own tests red and that was
+    the codebase saying the field has always been an opaque identifier.
+  - **TOFU → `tasks/specs/tofu-trust-records.md`, analysed and recommended against.**
+    The r3 "a stop must be able to stop" objection does **not** apply — terminal
+    actions exist and a TOFU gate could reach one, which was checked rather than
+    assumed. It fails for a more basic reason: its discriminator cannot separate the
+    legitimate second machine from the clone, and its output is a prompt the user
+    already answered by invoking resume. r6's lesson in a new place.
+  - **Attention-crowding** is still open and still unaddressed here.
+
 - M10 closed 2026-09-21 outside this spec, as r5 said it should be (`14e64fa`).
   The finding was larger than the deferral recorded: the branch is unreachable
   with differing heads at all, because pre-flight answers first — so its message

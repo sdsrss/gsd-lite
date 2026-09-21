@@ -153,4 +153,18 @@ bad value came from — with the executor's result in hand — rather than as a
   1488 → 1495 pass / 0 fail; lint 109 files, 0 findings. No fixture was rewritten to
   accommodate the change, which after r2 is the point rather than a convenience.
 
-  Criterion 6 (mutation) and the open question below are recorded after the commit.
+- r3 (2026-09-21) — criterion 6. Six mutants, each red and the tree clean after: the
+  inert check removed, the entry-type check removed, the write storing the raw list
+  again, the dropped count removed from the response, and the `<result_constraints>`
+  block emptied to a bare tag pair.
+
+  **The sixth is the one worth recording, because reading would not have found it.**
+  Deleting the `..`/leading-dash clause from `commitRefIsInert` left the suite
+  **green**: every poison in the list carried a character the class already rejects,
+  so the clause had no reader. A rule nothing asserts is a rule the next person
+  tidying up deletes, correctly, with a green suite. `..`, `a..b` and `-rf` pass the
+  class and are refused only by that line; they are asserted now, and removing it is
+  red (`aec694a`).
+
+  `scripts/gate-replay-changed.sh` reports the file DISCRIMINATIVE against the tree
+  before the change.
