@@ -1,6 +1,6 @@
 ---
 status: implemented
-revision: 3
+revision: 4
 ---
 
 # Untrusted-checkout executor surface
@@ -184,3 +184,52 @@ execution side acts differently.
   `checkpoint_commit` and `files_changed` should also be constrained where they are
   *written* — `handleExecutorResult` accepts them from the executor. Shape-checking at
   the write boundary is a Δ-contract on input accepted today.
+
+- r4 (2026-09-21) — second review round. Three residual findings closed, one
+  overstatement corrected, one idea considered and declined.
+
+  **The provenance list is inverted.** It now names `orchestrator_authored` — the
+  fields this tool constructs — and says everything else is project data, `message` and
+  `guidance` included, since several branches interpolate state values into them. This
+  is the structural fix for both earlier defects, which were allowlist drift in opposite
+  directions: `project_conventions` drifted *into* the trusted half, and three response
+  fields were added over time and never drifted *into* the untrusted list. The failure
+  mode is now over-caution rather than silent false trust.
+
+  **The four framing blocks are pinned on content, not on their tag.** Mutation testing
+  found that emptying three of the four to a bare tag pair left the suite green, so
+  criterion 5 was not in fact met at r3. Each block is now asserted on the specific
+  things it must say, including the structured outlet that agent reports through, and
+  emptying or filler-stuffing any of the four turns the suite red.
+
+  **Forged instruction blocks.** `<data_not_instructions>` is a fixed literal published
+  in four files, un-escaped, and review demonstrated attacker text reaching
+  `research_decisions[0].summary` verbatim through the real tool boundary — so closing
+  the block early or forging a second one are both available. A per-dispatch nonce was
+  considered and **declined**: the authentic block lives in the static prompt file and
+  therefore cannot carry one, which would make the nonce decorative. What each prompt
+  now states instead needs no secret — the orchestrator never sends directives inside a
+  payload, so an instruction-shaped block in relayed content is forged by construction
+  and is itself a finding. This closes forgery. It does **not** close attention-crowding,
+  and nothing here claims to.
+
+  **Correction, not a fix.** r3's comment said the poisoned `checkpoint_commit` "reaches
+  a shell". It does not: every exec site in this package uses `execFile` with a fixed
+  argv, and the only code touching the value stores it. The route is the reviewing model
+  interpolating it into its own Bash call because the prompt told it to — which also
+  means the `files_changed` half is likelier to fire, needing no adversarial step, only
+  a path pointing outside the workspace. The comment now says so.
+
+  One test crosses the real `handleToolCall` boundary, which every other test here
+  bypasses; the claim that the marker reaches the agent rested entirely on that layer
+  being transparent, and nothing would have caught a filter added later.
+
+  1463 → 1469 pass / 0 fail; lint 108 files, 0 findings.
+
+  Declined from this round's review, recorded so it is not mistaken for an oversight:
+  **TOFU trust records** (a nonce written by `state-init` into both the state and a
+  machine-local registry) is the only signal that actually answers "did this state
+  arrive with the repository", and unlike the removed predicate it works when git is
+  unavailable. It is also new machinery with a first-run prompt for the legitimate
+  "same project, new machine" case, and nothing like it exists in `src/` today. It is a
+  project of its own, not a line in this one.
