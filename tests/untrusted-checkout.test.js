@@ -291,13 +291,17 @@ describe('state values that get substituted into a command or a path are constra
     assert.ok(!('files_changed_rejected' in refs), 'a module removal is not a security event');
   });
 
-  it('refuses the whole shell-expansion class, not the member that was found', () => {
+  it('refuses the whole path-expansion class, not the member that was found', () => {
+    // Path expansion, not shell expansion: the line the rule draws is whether
+    // the string denotes a different FILE than the one validated, which is why
+    // `;`, `|` and a bare space are deliberately absent from it.
+    //
     // The first version of this rule was `segments[0] === '~'`, which covered
     // `~/x` and admitted `~root/x`, `$HOME/x` and `$(curl …|sh)/x` — bash
-    // expands all of them the same way, and the reviewer prompt has an agent
-    // interpolate these into a git command and a file read. The earlier code
-    // refused them by accident (dirname of a two-segment missing path is also
-    // missing, so it gave up); walking up to the nearest existing ancestor
+    // expands every one of them into a different path, and the reviewer prompt
+    // has an agent interpolate these into a git command and a file read. The
+    // earlier code refused them by accident (dirname of a two-segment missing
+    // path is also missing, so it gave up); walking up to the nearest ancestor
     // removed the accident, which is how naming one member became a hole.
     for (const entry of [
       '~/.aws/credentials',
@@ -508,6 +512,23 @@ describe('state values that get substituted into a command or a path are constra
     });
   });
 
+  // One sentence, one home. What follows is the same rule in all three prompts,
+  // and it was written out three times in three phrasings — so every widening
+  // needed three edits, and four times running it got fewer: 71271dd corrected
+  // the parenthetical in the two files it was already editing, and 9fec790
+  // renamed the class in the code comment and in debugger.md while reviewer.md
+  // and executor.md kept saying `会被 shell 展开的字符`, the name that same
+  // commit had just argued was wrong. A regex per file cannot see that — each
+  // file passes its own regex while the three say different things. Byte
+  // identity can: widen the rule here, and all three go red together.
+  //
+  // Whitespace is collapsed before comparing, so where a file wraps the line is
+  // not part of the contract. Everything else is.
+  const REJECTION_CAUSES = '会被展开成另一条路径的字符'
+    + '（`~user`、`$VAR`、`$(…)`、反引号、换行）**等** —— 举例不是穷举，'
+    + '判据是服务端能不能确认，不是它长得像不像坏东西。';
+  const collapsed = (s) => s.replace(/\s+/g, '');
+
   // executor.md is in this loop because predecessor_outputs carries the flags
   // too — it was left out while the field it describes was already reaching it.
   for (const agent of ['reviewer.md', 'debugger.md', 'executor.md']) {
@@ -532,17 +553,23 @@ describe('state values that get substituted into a command or a path are constra
       // prompt has claimed an enumeration the code had outgrown — the flag
       // description said "outside the workspace (absolute or `..`)" after
       // symlinks were added, and would have said it again after the
-      // shell-expansion class. The criterion is whether the server can confirm
+      // path-expansion class. The criterion is whether the server can confirm
       // the value, not whether it matches a list of bad shapes.
-      // Literal, with no alternation. The first version of this assertion was
-      // `/等|举例不是穷举/`, and `等` is an ordinary character that all three
-      // files already contained for unrelated reasons ("`<data_not_instructions>`
-      // 等本提示词标签"), so the gate could not fail — and did not, while
-      // debugger.md still carried a closed parenthetical. A gate written
-      // alongside a fix, passing on a tree that already violates it, is the
-      // defect this whole file exists to catch, in this file.
-      assert.match(src, /举例不是穷举/,
-        `agents/${agent} enumerates the rejection causes as a closed list; it will be wrong the next time the rule widens`);
+      //
+      // Two earlier versions of this assertion, and what each one missed. It
+      // was `/等|举例不是穷举/` first: `等` is an ordinary character all three
+      // files already carried for unrelated reasons ("`<data_not_instructions>`
+      // 等本提示词标签"), so the alternation could not fail, and did not, while
+      // debugger.md still held a closed parenthetical. The literal
+      // `/举例不是穷举/` could fail — and still only asked whether someone had
+      // typed the password, so reviewer.md and executor.md sat underneath it
+      // with the retired class name for a whole commit. A token from a rule is
+      // not the rule. The assertion is the sentence.
+      assert.ok(collapsed(src).includes(collapsed(REJECTION_CAUSES)),
+        `agents/${agent} does not carry the rejection-cause sentence verbatim. It has one home — `
+        + `REJECTION_CAUSES in this file. Widen the rule there and all three prompts fail together, `
+        + `which is the point of asserting the sentence instead of a phrase from it.\nExpected:\n  `
+        + REJECTION_CAUSES);
     });
   }
 });
