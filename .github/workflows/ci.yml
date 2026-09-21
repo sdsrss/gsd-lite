@@ -71,3 +71,49 @@ jobs:
         # invokes — they are unreachable here. `overrides.hono` still pins hono to a
         # patched version, so this currently reports 0 vulnerabilities.
         run: npm audit --omit=dev --audit-level=high
+
+  gate-replay:
+    # A test added alongside a fix is worth its line count only if it was RED on
+    # the tree before the fix. Three times in this repo a gate was written that
+    # was green on the tree it named — `/等|举例不是穷举/` is the clearest, an
+    # ordinary character every prompt already contained, so the assertion could
+    # not fail and the defect it named shipped underneath it. scripts/gate-replay.js
+    # answers that question, and until now nothing ran it: it was a check you had
+    # to remember, which is the same class of defect one layer up.
+    #
+    # Its own job rather than a step in the matrix above: the question does not
+    # depend on the Node version, and asking it three times would say the same
+    # thing three times.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # The replay checks the BASE tree out into a detached worktree, so the
+          # default depth-1 clone cannot answer the question at all — it would
+          # take the `GATE NOT RUN` branch on every single run.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+
+      # node_modules is symlinked into the base worktree by gate-replay.js, so
+      # the install has to happen before the replay, not alongside it.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Replay changed test files against the tree they were written to change
+        # VACUOUS fails this job; INCONCLUSIVE is printed and does not. The
+        # reasoning is in scripts/gate-replay-changed.sh: a test importing a
+        # helper its own commit added is INCONCLUSIVE by construction, which is
+        # ordinary work, and a check that fires on ordinary work is one people
+        # learn to click through. Verified capable of failing by replaying
+        # 71271dd — the vacuous gate named above — which exits 1 here.
+        env:
+          # push: the branch tip before this push (all-zeros when the push
+          # created the ref — the script says so and stops).
+          # pull_request: the base branch tip. `HEAD` is the merge commit the
+          # checkout produced, so the diff is exactly this PR's test changes.
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/gate-replay-changed.sh "$BASE" HEAD
