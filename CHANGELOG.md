@@ -2,7 +2,11 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.15.0] - 2026-09-21
+
+Minor, not patch: the executor result contract narrows, and the status line reads
+differently. **Most projects need to do nothing.** The two paragraphs below say
+when that is not true.
 
 **Do I have to do anything?** Only if something other than the packaged executor
 calls `orchestrator-handle-executor-result`. Two values in that result are now
