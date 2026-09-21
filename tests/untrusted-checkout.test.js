@@ -229,6 +229,12 @@ describe('state values that get substituted into a command or a path are constra
     writeFileSync(join(ws, 'src', 'ok.js'), '//\n');
     writeFileSync(join(ws, 'src', 'other.js'), '//\n');
     symlinkSync('/etc/passwd', join(ws, 'docs', 'notes'));
+    // A directory symlink pointing out of the project, for the `..` case, and a
+    // nested tree the deleted-directory case removes.
+    symlinkSync('/etc', join(ws, 'link'));
+    mkdirSync(join(ws, 'src', 'gone', 'deeper'), { recursive: true });
+    writeFileSync(join(ws, 'src', 'gone', 'a.js'), '//\n');
+    writeFileSync(join(ws, 'src', 'gone', 'deeper', 'b.js'), '//\n');
   });
   after(() => rmSync(ws, { recursive: true, force: true }));
 
@@ -268,6 +274,34 @@ describe('state values that get substituted into a command or a path are constra
     const refs = taskRefsForAgent({ checkpoint_commit: null, files_changed: ['src/deleted.js'] }, ws);
     assert.deepEqual(refs.files_changed, ['src/deleted.js']);
     assert.ok(!('files_changed_rejected' in refs));
+  });
+
+  it('keeps a whole deleted directory, not just a deleted file', () => {
+    // The blocker the pre-tag reviewer caught. Stopping the walk at the
+    // immediate parent covered a deleted FILE and not a deleted DIRECTORY, so
+    // "remove the legacy module" came back with the removed paths withheld and
+    // a rejection count — an ordinary task producing a security finding. That
+    // is the failure this project already decided is worse than no check.
+    rmSync(join(ws, 'src', 'gone'), { recursive: true, force: true });
+    const refs = taskRefsForAgent({
+      checkpoint_commit: null,
+      files_changed: ['src/ok.js', 'src/gone/a.js', 'src/gone/deeper/b.js'],
+    }, ws);
+    assert.deepEqual(refs.files_changed, ['src/ok.js', 'src/gone/a.js', 'src/gone/deeper/b.js']);
+    assert.ok(!('files_changed_rejected' in refs), 'a module removal is not a security event');
+  });
+
+  it('refuses `..` even when it lexically lands inside the project', () => {
+    // The validator and the agent disagree about what a path means. resolve()
+    // collapses `..` BEFORE following symlinks; the agent gets the original
+    // string and the OS collapses it AFTER. With `link -> /etc` in the project,
+    // `link/../shadow` validates as <root>/shadow — inside, kept — and reads as
+    // /shadow. The check would be vouching for a different path than the one it
+    // hands back, so `..` is refused outright; git never reports one.
+    assert.equal(realpathSync(join(ws, 'link')), '/etc', 'premise: the fixture symlink must point out of the project');
+    const refs = taskRefsForAgent({ checkpoint_commit: null, files_changed: ['link/../shadow'] }, ws);
+    assert.deepEqual(refs.files_changed, []);
+    assert.equal(refs.files_changed_rejected, 1);
   });
 
   it('still refuses a deleted file under an escaping parent', () => {
@@ -436,7 +470,9 @@ describe('state values that get substituted into a command or a path are constra
     });
   });
 
-  for (const agent of ['reviewer.md', 'debugger.md']) {
+  // executor.md is in this loop because predecessor_outputs carries the flags
+  // too — it was left out while the field it describes was already reaching it.
+  for (const agent of ['reviewer.md', 'debugger.md', 'executor.md']) {
     it(`agents/${agent} tells the agent what the rejection flags mean`, () => {
       // A flag nothing reads is a field that only looks like a mitigation: the
       // agent would see a null checkpoint_commit, assume a missing value, and
