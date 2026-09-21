@@ -63,7 +63,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - requires 中每个依赖都满足对应 gate
   - 未超过 retry 上限
 - 构建 executor 上下文 → 派发 executor 子代理
-- 继续自动执行主路径 (按执行循环: `health` 的 `docs.references` + `/execution-loop.md`)
+- 继续自动执行主路径 (按 `<docs.references>/execution-loop.md` 的执行循环; 路径由 `health` 工具的 `docs.references` 给出)
 
 ---
 
