@@ -19,6 +19,15 @@ jobs:
       # mutable by the action's owner, the SHA is not. The trailing comment
       # records the major so a bump stays readable in review.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # This job runs the suite, and tests/gate-replay-changed.test.js pins
+          # the vacuity gate against real commits in this repository's history.
+          # The default depth-1 clone does not have them. ci.yml got this line
+          # one commit earlier and release.yml did not, which failed the v0.15.0
+          # tag before it could publish — the same call-site patching this
+          # release is otherwise about. tests/repo-gates.test.js now fails on any
+          # workflow job that runs the suite without it.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
