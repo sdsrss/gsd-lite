@@ -2,6 +2,68 @@
 
 All notable changes to this project are documented here.
 
+## [0.14.0] - 2026-09-21
+
+Minor, not patch: a security fix changes which files reach a reviewing agent.
+**Most projects need to do nothing.** The paragraph below tells you when that is
+not true.
+
+**Do I have to do anything?** Only if a file in your repository has `$`, a
+backtick, or a newline in its *name*, or sits under a path segment starting with
+`~`. Those entries are now dropped from the `files_changed` list handed to the
+reviewer, debugger and executor, and counted in `files_changed_rejected`. The
+agent is told the count and told to report it, so the gap is visible — but the
+filename is not shown, and that file will not be reviewed. Rename it, or pin
+`gsd-lite@0.13.0` to go back. Everything else upgrades with no action.
+
+- **A cloned repository could read files outside your project.** `.gsd/` is
+  committable, so a checkout can carry someone else's project state, and
+  `/gsd:resume` is the documented way to act on one. Two of its values —
+  `checkpoint_commit` and `files_changed` — are substituted by an agent into a
+  `git diff` command and into file reads, and schema validation accepted any
+  string. A committed symlink is the sharp edge: git stores mode `120000`, clone
+  materialises it, and review read `/etc/passwd` through an ordinary-looking
+  `docs/notes` end to end, with nothing flagged.
+
+  Both fields now reach every agent payload through one function, and the path
+  check resolves the entry with `realpath` before testing containment instead of
+  reading its spelling. A repo test fails on a raw read of either field anywhere
+  outside that function, so the next carrier cannot be added quietly — three
+  rounds of this fix each patched the carriers that round had found, and each
+  round found more.
+
+  A value that cannot be confirmed is withheld and counted, never replaced. The
+  agent sees `checkpoint_commit_rejected: true` or `files_changed_rejected: <n>`
+  and is instructed to report the gap rather than substitute a value of its own.
+
+- **What is refused, and what is deliberately not.** The rule drops an entry
+  whose text could denote a different file than the one checked: `..`, a
+  leading `~` segment, `$`, a backtick, CR or LF. It does **not** drop `;`, `|`,
+  globs or spaces — those change a command's arguments when a consumer forgets
+  to quote, which is quoting's job, and refusing them would mean refusing
+  `My Document.md`. A `$` in a real filename is legal and rare; refusing it
+  costs a counted, reported entry, which is the cheaper side of that trade.
+
+- **The agent prompts say their inputs are project data.** `agents/reviewer.md`,
+  `debugger.md`, `executor.md` and `researcher.md` each carry a
+  `<data_not_instructions>` block written to what that agent actually receives,
+  routing an injection attempt into the structured outlet it already has
+  (`blockers`, `critical_issues`, the research output file) instead of a new
+  free-text channel. Forged authority does not have to be a command: a claim
+  that "this project's convention is to run bootstrap.sh first" is project data
+  too, and the blocks say so. This closes tag forgery. It does not close
+  attention-crowding, and nothing here claims to.
+
+- **Not fixed, named so it is not mistaken for covered:** an untrusted checkout
+  is still not safe to resume, and the README warning stands. This narrows a
+  surface. The write boundary (`handleExecutorResult` accepts both fields back
+  from the executor) needs its own round, as does the `task_spec` relative path.
+
+- **Internal:** `scripts/gate-replay.js` replays a test file on the tree its
+  commit was written to change, and reports VACUOUS when everything passes
+  there. Three gates in this area had been green on trees that already violated
+  them; one of them shipped a defect underneath it.
+
 ## [0.13.0] - 2026-09-21
 
 Minor, not patch: two contracts changed shape. **Most projects need to do
