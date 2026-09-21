@@ -65,7 +65,16 @@ try {
   if (existsSync(claudeMdPath)) {
     const { execSync: exec } = await import('node:child_process');
     const testOutput = exec('npm test --silent 2>&1', { cwd: root, timeout: 120000 }).toString();
-    const countMatch = testOutput.match(/# tests (\d+)/);
+    // `ℹ tests N` (node's default spec reporter) or `# tests N` (TAP). This read
+    // `/# tests (\d+)/` and so matched nothing on every Node this repo supports:
+    // the suite ran for ~24s on every `npm version` and `prepublishOnly` and the
+    // result was discarded, silently, because no-match takes the same branch as
+    // nothing-to-update. Anchoring the digits to end of line keeps a test NAME
+    // containing "tests 12" out, and the last match is the trailing summary
+    // rather than the first line that happens to fit.
+    // tests/repo-gates.test.js pins this against both reporter forms.
+    const countMatches = [...testOutput.matchAll(/\btests (\d+)$/gm)];
+    const countMatch = countMatches.at(-1);
     if (countMatch) {
       const actualCount = countMatch[1];
       let claudeContent = readFileSync(claudeMdPath, 'utf8');
