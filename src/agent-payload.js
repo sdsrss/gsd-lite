@@ -59,13 +59,27 @@ function staysInWorkspace(entry, realRoot) {
   // resolves here to <root>/shadow — inside, so kept — and reads as /shadow
   // for the agent. The validator would be checking a different path from the
   // one it returns. Nothing git reports in files_changed contains `..`.
-  // `~` is refused for the same reason, and the walk-up below is what made it
-  // matter: `~/.aws/credentials` names no existing directory, so walking up
-  // reaches the project root and the entry reads as contained. Here `~` is a
-  // literal directory name; to the agent's file tools it is a home directory.
-  // Same disagreement, same answer.
+  // Shell-expanded forms are refused for the same reason, and the walk-up below
+  // is what made it matter. `~/.aws/credentials` names no existing directory,
+  // so the walk reaches the project root and the entry reads as contained —
+  // here these are literal directory names, and to the agent's tools they are a
+  // home directory, an environment variable, a command. Same disagreement.
+  //
+  // The rule names the CLASS, not the member that was found: `segments[0] ===
+  // '~'` covered `~/x` and admitted `~root/x`, `$HOME/x` and `$(curl …|sh)/x`,
+  // all of which bash expands the same way. The old code refused those by
+  // accident — dirname of a two-segment missing path is also missing, so it
+  // gave up — and the walk-up removed the accident.
+  //
+  // Glob characters are deliberately NOT here. `*` and `?` are legal in
+  // filenames, they passed before this change too, and adding them would be a
+  // denylist pretending to be a boundary. `$` in a real filename is legal and
+  // rare; refusing it costs a flagged entry the agent is told to report, which
+  // is the cheaper side of that trade.
   const segments = entry.split(/[\\/]/);
-  if (segments.includes('..') || segments[0] === '~') return false;
+  if (segments.includes('..')) return false;
+  if (segments[0].startsWith('~')) return false;
+  if (/[$`\r\n]/.test(entry)) return false;
 
   const abs = resolve(realRoot, entry);
   try {
@@ -98,10 +112,10 @@ function staysInWorkspace(entry, realRoot) {
 /**
  * The entries that stay inside the workspace, and a count of those dropped.
  *
- * Absolute paths, `~`, and Windows UNC / drive-relative forms need no special
- * case: resolve-then-contain rejects them for the same reason. `..` DOES need
- * one — see staysInWorkspace — because resolve() collapses it before symlinks
- * are followed and the agent is handed the un-collapsed string.
+ * Absolute paths and Windows UNC / drive-relative forms need no special case:
+ * resolve-then-contain rejects them for the same reason. `..` and the
+ * shell-expanded forms DO need one — see staysInWorkspace — because the
+ * validator and the agent disagree about what those strings mean.
  */
 export function safeWorkspacePaths(list, workspaceRoot) {
   // A caller that forgets the root is a programming error, and the quiet
