@@ -356,6 +356,59 @@ describe('statusline: non-numeric context percentage', () => {
     }
   });
 
+  // A status line carries more than one context meter, and ours is not measuring
+  // what the other one measures: Claude Code's `used_percentage` is tokens over
+  // the whole window, ours is progress toward auto-compaction. Live report: the
+  // two sat seven points apart on one line with nothing saying why. Every
+  // assertion above matches `/\d+%/`, which a bare number satisfies, so the label
+  // needs its own — in all four colour bands, since only the bands differ.
+  it('labels the percentage as compaction progress in every colour band', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-label-'));
+    try {
+      await mkdir(join(dir, '.gsd'), { recursive: true });
+      await writeFile(join(dir, '.gsd', 'state.json'), JSON.stringify({ project: 'p', phases: [] }));
+      // remaining → used, through the 16.5 reserve: 90→10 green, 50→60 yellow,
+      // 40→72 orange, 10→100 critical. One band each, which is the point.
+      for (const [remaining, band] of [[90, 'green'], [50, 'yellow'], [40, 'orange'], [10, 'critical']]) {
+        const { stdout: out } = runHook({
+          session_id: `label-${remaining}`,
+          workspace: { current_dir: dir },
+          model: { display_name: 'Opus' },
+          context_window: { remaining_percentage: remaining },
+        });
+        assert.match(out, /compact:\d+%/, `the ${band} band must name what the number measures: ${JSON.stringify(out)}`);
+        assert.doesNotMatch(out, /(?<!compact:)\b\d+%/,
+          `an unlabelled percentage in the ${band} band is the ambiguity this pins: ${JSON.stringify(out)}`);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Criterion 3 of tasks/specs/statusline-context-meter.md. The label is a
+  // rendering change; the same number still has to reach the bridge that
+  // gsd-context-monitor.cjs reads, or a display edit has quietly moved an
+  // exhaustion threshold.
+  it('does not change the number the bridge and .context-health carry', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-sl-bridge-'));
+    try {
+      await mkdir(join(dir, '.gsd'), { recursive: true });
+      await writeFile(join(dir, '.gsd', 'state.json'), JSON.stringify({ project: 'p', phases: [] }));
+      const { stdout: out } = runHook({
+        session_id: 'bridge-unchanged',
+        workspace: { current_dir: dir },
+        model: { display_name: 'Opus' },
+        context_window: { remaining_percentage: 50 },
+      });
+      // 50 remaining, 16.5 reserve → (50-16.5)/83.5*100 = 40.1 usable left → 60 used.
+      assert.match(out, /compact:60%/, `the rescale itself must be untouched: ${JSON.stringify(out)}`);
+      const health = readFileSync(join(dir, '.gsd', '.context-health'), 'utf8').trim();
+      assert.equal(health, '50', '.context-health carries the raw remaining, not the label or the rescale');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   // A planted symlink at the bridge path must be evicted, not honoured. Refusing
   // to write one was tried and reverted: the rename never followed a link in the
   // first place, so refusing added no safety and instead pinned the bridge to
