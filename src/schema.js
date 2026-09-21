@@ -1,6 +1,7 @@
 // State schema + lifecycle validation
 
 import { isPlainObject } from './utils.js';
+import { commitRefIsInert, isPathEntryShape } from './agent-payload.js';
 
 export const WORKFLOW_MODES = [
   'planning',
@@ -713,8 +714,35 @@ export function validateExecutorResult(r) {
   if (typeof r.summary !== 'string' || r.summary.length === 0) errors.push('summary must be non-empty string');
   if ('checkpoint_commit' in r && r.checkpoint_commit !== null && typeof r.checkpoint_commit !== 'string') {
     errors.push('checkpoint_commit must be string or null');
+  } else if (typeof r.checkpoint_commit === 'string' && !commitRefIsInert(r.checkpoint_commit)) {
+    // The write half. Until now nothing looked inside this value on the way IN —
+    // the executor reads project files, a file it reads can tell it what to put
+    // in its result, and the value lands in a committed file that /gsd:status
+    // displays and state-read returns verbatim.
+    //
+    // The bar here is INERT, not "is a commit hash". Those are different
+    // questions and the first draft of this conflated them: reusing the read
+    // side's hash predicate refused 50 fixture values across fifteen of this
+    // repo's own test files — `c1`, `auth-commit`, `fix-1.3` — which is the
+    // codebase saying that this field has always been an opaque identifier.
+    // Enforcing hash-ness at the write would be a correctness rule wearing a
+    // security rule's clothes. The read side keeps the hash bar, because that is
+    // where the value becomes a git argument.
+    errors.push(`checkpoint_commit must be an inert identifier (letters, digits, _ . -, no whitespace or shell characters), got ${JSON.stringify(r.checkpoint_commit)}`);
   }
-  if (!Array.isArray(r.files_changed)) errors.push('files_changed must be array');
+  if (!Array.isArray(r.files_changed)) {
+    errors.push('files_changed must be array');
+  } else {
+    // Not a narrowing — there was no rule here at all. `files_changed: [{}, 42,
+    // null]` validated and was stored into a file that is committed, displayed
+    // by /gsd:status and returned verbatim by state-read.
+    const badEntries = r.files_changed
+      .map((entry, i) => (isPathEntryShape(entry) ? null : `files_changed[${i}] (${JSON.stringify(entry)})`))
+      .filter(Boolean);
+    if (badEntries.length) {
+      errors.push(`${badEntries.join(', ')} must each be a non-empty path string`);
+    }
+  }
   if (!Array.isArray(r.decisions)) errors.push('decisions must be array');
   if (!Array.isArray(r.blockers)) errors.push('blockers must be array');
   if (typeof r.contract_changed !== 'boolean') errors.push('contract_changed must be boolean');
