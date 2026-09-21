@@ -91,25 +91,27 @@ execution side acts differently.
 
 ## Success criteria
 
-1. `checkpoint_commit` reaching a review or debug payload is a commit-hash shape or is
-   withheld with a flag; `files_changed` entries that leave the workspace are dropped
-   with a count. Asserted at the helper AND at all three dispatch sites, because the
-   helper being right is not the same as the call site using it.
-2. An ordinary task passes through unflagged, and a legitimately short hash is not
-   withheld — the sanitiser must not break every review to satisfy criterion 1.
-3. `input_provenance` names the fields the orchestrator **authored**, everything else
-   being project data by default, and it rides on the response envelope rather than on
-   one dispatch payload.
-4. All four prompts in `agents/` state that their inputs are project data, name the
-   structured outlet they report through, and say that an instruction-shaped block in
-   relayed content is forged by construction.
-5. A gate fails if any agent prompt loses **the framing** — proven by emptying each of
-   the four blocks in turn and by filling one with unrelated text, not only by removing
-   the tag.
-6. The MCP tool description records the payload fields, since a published client reads
-   that schema.
-7. At least one test crosses the real `handleToolCall` boundary.
-8. `npm test` green; `npm run lint` clean.
+*(r5. The r3 list is superseded; what it asked for is either shipped or restated here.)*
+
+1. **One projection.** A task's `checkpoint_commit` and `files_changed` reach an agent
+   payload through exactly one function, and all four carriers call it —
+   `getDebugTarget`, both `review_target(s)` sites, and `predecessor_outputs`.
+2. **A gate on the class, not the members.** A repo gate fails on a raw read of either
+   field outside that function, proven by re-introducing a raw read at each of the four
+   sites in turn. This is the deliverable; fixing the fourth site is not.
+3. **One envelope.** `input_provenance` is attached where every tool response passes
+   (`dispatchToolCall`), so the four `handle*Result` tools carry it, and a tool added
+   later carries it without anyone remembering. Asserted per dispatching tool.
+4. **The path filter resolves.** `realpath`-and-contain replaces the lexical check, so a
+   committed symlink pointing outside the workspace is dropped and counted. Asserted
+   against a real symlink, and against a legitimate relative path that must survive.
+5. **The doc comment is true.** Whatever the filter does is what its comment claims.
+6. **The note is accurate**: `guidance` and `recovery_options` are reconciled with the
+   claim that the orchestrator sends no directives in a payload, the marker no longer
+   filters itself out of its own list, and "closes forgery" is narrowed to tag forgery.
+7. `safeCommitRef` accepts uppercase hex.
+8. Every new assertion is mutation-verified: reverting the thing it guards turns it red.
+9. `npm test` green; `npm run lint` clean.
 
 ## Open questions
 
