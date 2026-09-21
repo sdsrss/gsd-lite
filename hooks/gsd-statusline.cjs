@@ -134,14 +134,25 @@ process.stdin.on('end', () => {
       const filled = Math.floor(used / 10);
       const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(10 - filled);
 
+      // The percentage is labelled, in every band, because this is not the only
+      // context meter a status line carries and it is not measuring what the
+      // other one measures. Claude Code hands out two numbers: `used_percentage`
+      // (tokens over the WHOLE window, which is what the claudemd plugin's
+      // `ctx:N%` prints verbatim) and `remaining_percentage`, which is what the
+      // block above rescales past the auto-compact reserve. Ours reaches 100% when
+      // compaction fires, not when the window fills, so on one line the two sit
+      // several points apart and a reader has no way to tell which is which \u2014
+      // reported live as "your statusline and claudemd's disagree, which is
+      // right". Both are. `compact:` says which question this one answers.
+      const label = `compact:${used}%`;
       if (used < 50) {
-        ctx = ` \x1b[32m${bar} ${used}%\x1b[0m`;
+        ctx = ` \x1b[32m${bar} ${label}\x1b[0m`;
       } else if (used < 65) {
-        ctx = ` \x1b[33m${bar} ${used}%\x1b[0m`;
+        ctx = ` \x1b[33m${bar} ${label}\x1b[0m`;
       } else if (used < 80) {
-        ctx = ` \x1b[38;5;208m${bar} ${used}%\x1b[0m`;
+        ctx = ` \x1b[38;5;208m${bar} ${label}\x1b[0m`;
       } else {
-        ctx = ` \x1b[5;31m\uD83D\uDC80 ${bar} ${used}%\x1b[0m`;
+        ctx = ` \x1b[5;31m\uD83D\uDC80 ${bar} ${label}\x1b[0m`;
       }
     }
 

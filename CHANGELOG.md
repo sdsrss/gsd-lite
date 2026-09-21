@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+**Do I have to do anything?** No, but your status line looks slightly different.
+The context percentage gsd-lite renders now reads `compact:44%` instead of `44%`.
+The number is identical — only the label is new. If you script against the status
+line output, that is the one thing that moved; pin `gsd-lite@0.14.0` to go back.
+
+- **The context meter now says what it measures.** A status line usually carries
+  more than one context percentage, and ours was not measuring what the others
+  measure. Claude Code hands out two numbers: `used_percentage`, which is tokens
+  over the whole window, and `remaining_percentage`. We rescale the second past
+  the auto-compact reserve, so ours reaches 100% when compaction fires rather than
+  when the window fills — which is the more useful of the two and was the one with
+  no label. Side by side with a plugin printing the raw figure, the line showed
+  `ctx:37%` and `44%` seven points apart with nothing saying why. Both were right.
+  Now the second one says `compact:`. The rescale, the context-bridge write and
+  `.gsd/.context-health` are untouched, and a test asserts that.
+
 - **`/gsd:resume` announced a git HEAD mismatch between a commit and itself.**
   Sitting in `reconcile_workspace`, every resume after the divergence was
   resolved — and before the mode was cleared — printed `Git HEAD mismatch:
