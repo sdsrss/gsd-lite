@@ -1,7 +1,7 @@
 // State schema + lifecycle validation
 
 import { isPlainObject } from './utils.js';
-import { commitRefIsInert, isPathEntryShape } from './agent-payload.js';
+import { commitRefIsInert } from './agent-payload.js';
 
 export const WORKFLOW_MODES = [
   'planning',
@@ -714,7 +714,7 @@ export function validateExecutorResult(r) {
   if (typeof r.summary !== 'string' || r.summary.length === 0) errors.push('summary must be non-empty string');
   if ('checkpoint_commit' in r && r.checkpoint_commit !== null && typeof r.checkpoint_commit !== 'string') {
     errors.push('checkpoint_commit must be string or null');
-  } else if (typeof r.checkpoint_commit === 'string' && !commitRefIsInert(r.checkpoint_commit)) {
+  } else if (r.outcome === 'checkpointed' && typeof r.checkpoint_commit === 'string' && !commitRefIsInert(r.checkpoint_commit)) {
     // The write half. Until now nothing looked inside this value on the way IN —
     // the executor reads project files, a file it reads can tell it what to put
     // in its result, and the value lands in a committed file that /gsd:status
@@ -730,19 +730,20 @@ export function validateExecutorResult(r) {
     // where the value becomes a git argument.
     errors.push(`checkpoint_commit must be an inert identifier (letters, digits, _ . -, no whitespace or shell characters), got ${JSON.stringify(r.checkpoint_commit)}`);
   }
-  if (!Array.isArray(r.files_changed)) {
-    errors.push('files_changed must be array');
-  } else {
-    // Not a narrowing — there was no rule here at all. `files_changed: [{}, 42,
-    // null]` validated and was stored into a file that is committed, displayed
-    // by /gsd:status and returned verbatim by state-read.
-    const badEntries = r.files_changed
-      .map((entry, i) => (isPathEntryShape(entry) ? null : `files_changed[${i}] (${JSON.stringify(entry)})`))
-      .filter(Boolean);
-    if (badEntries.length) {
-      errors.push(`${badEntries.join(', ')} must each be a non-empty path string`);
-    }
-  }
+  if (!Array.isArray(r.files_changed)) errors.push('files_changed must be array');
+  // NOT a per-entry refusal. That was tried and reverted before tagging: the
+  // check ran for every outcome while the drop-and-count mercy existed only on
+  // `checkpointed`, so an `outcome: 'failed'` result carrying the entirely
+  // ordinary `[{ path, action }]` shape was refused, nothing persisted,
+  // retry_count never incremented, MAX_DEBUG_RETRY was never reached and the
+  // task sat in `running` forever — the executor could not escape by failing
+  // harder. A `blocked` result lost its blocker text over a checkpoint_commit
+  // that branch discards anyway.
+  //
+  // Refusing a whole call is only safe where refusing costs nothing. Entry shape
+  // is enforced by dropping instead, in handleExecutorResult, where the same
+  // filter also handles containment and a count goes back to the caller.
+  // isPathEntryShape lives in src/agent-payload.js so the two ends cannot drift.
   if (!Array.isArray(r.decisions)) errors.push('decisions must be array');
   if (!Array.isArray(r.blockers)) errors.push('blockers must be array');
   if (typeof r.contract_changed !== 'boolean') errors.push('contract_changed must be boolean');
