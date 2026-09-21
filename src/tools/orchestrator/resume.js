@@ -1,4 +1,5 @@
-import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask, PROVENANCE_NOTE, ORCHESTRATOR_AUTHORED } from '../state/index.js';
+import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask } from '../state/index.js';
+import { taskRefsForAgent } from '../../agent-payload.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
 import { join } from 'node:path';
 import { stat, unlink } from 'node:fs/promises';
@@ -12,7 +13,6 @@ import {
   getTaskById,
   getBlockedTasks,
   getReviewTargets,
-  safeTaskRefs,
   getDebugTarget,
   persist,
   buildExecutorDispatch,
@@ -325,7 +325,7 @@ async function resumeExecutingTask(state, basePath) {
       workflow_mode: 'executing_task',
       phase_id: phase.id,
       current_review: state.current_review,
-      debug_target: getDebugTarget(phase, task, state.current_review),
+      debug_target: getDebugTarget(phase, task, state.current_review, basePath),
     };
   }
 
@@ -350,7 +350,7 @@ async function resumeExecutingTask(state, basePath) {
         retry_count: runningTask.retry_count,
         last_failure_summary: runningTask.last_failure_summary,
       } : {}),
-    });
+    }, basePath);
   }
 
   const selection = selectRunnableTask(phase, state);
@@ -376,7 +376,7 @@ async function resumeExecutingTask(state, basePath) {
       }],
     });
     if (persistError) return persistError;
-    const dispatch = buildExecutorDispatch(state, phase, task);
+    const dispatch = buildExecutorDispatch(state, phase, task, {}, basePath);
     // Expose parallel-available tasks so callers can dispatch multiple subagents
     if (selection.parallel_available?.length > 0) {
       dispatch.parallel_available = selection.parallel_available.map(t => ({
@@ -783,7 +783,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           review_targets: getReviewTargets(phase, 'phase', current_review.scope_id).map((task) => ({
             id: task.id,
             level: task.level,
-            ...safeTaskRefs(task),
+            ...taskRefsForAgent(task, basePath),
           })),
         };
         break;
@@ -810,7 +810,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           review_target: task ? {
             id: task.id,
             level: task.level,
-            ...safeTaskRefs(task),
+            ...taskRefsForAgent(task, basePath),
           } : null,
         };
         break;
@@ -1006,41 +1006,12 @@ async function attachResearchWarning(basePath, result) {
   }
 }
 
-/**
- * Which fields of a resume response carry content read from the project.
- *
- * Marking only `executor_context` was not enough, and the gap was not academic:
- * state-sourced strings ride on responses that have no executor_context at all.
- * `summary.recent_decisions[].summary` and `summary.current_task.name` are
- * attached to every successful resume, `last_failure_summary` sits at the top
- * level, and the reviewer/debugger/researcher dispatches carried no marker of
- * any kind — three of the four dispatch paths.
- */
-function envelopeAuthored(result) {
-  return ORCHESTRATOR_AUTHORED.filter((field) => {
-    const [head, tail] = field.split('.');
-    return tail ? result[head] && tail in result[head] : head in result;
-  });
-}
-
-function withProvenance(result) {
-  if (!result || result.error) return result;
-  // A promise reaching here reads as a response with no state-sourced fields —
-  // every lookup is undefined, the list comes back empty, and the note is
-  // silently not attached. That is how the first version of this shipped: the
-  // call below had lost its `await`. Refuse instead of no-opping.
-  if (typeof result.then === 'function') {
-    throw new TypeError('withProvenance received a promise — await the response first');
-  }
-  return {
-    ...result,
-    input_provenance: { orchestrator_authored: envelopeAuthored(result), note: PROVENANCE_NOTE },
-  };
-}
-
 export async function resumeWorkflow(args = {}) {
   const result = await _resumeWorkflowWithRecovery(args);
-  return withProvenance(await attachResearchWarning(args.basePath ?? process.cwd(), result));
+  // Provenance is attached in server.js's dispatchToolCall, the one place
+  // every tool response passes. Attached here it covered one of five
+  // dispatching tools.
+  return attachResearchWarning(args.basePath ?? process.cwd(), result);
 }
 
 async function _resumeWorkflowWithRecovery(args = {}) {

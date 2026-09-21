@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 revision: 5
 ---
 
@@ -311,3 +311,39 @@ execution side acts differently.
   saved=X, current=X` for equal values) is real and confirmed, but it reaches through the
   pre-existing mismatch hint and predates all of this work — its own fix, not a rider
   here.
+
+  **Implemented 2026-09-21.** `src/agent-payload.js` holds both chokepoints, which is
+  the structural statement: `taskRefsForAgent` is the only path those two fields take to
+  any payload, and `withProvenance` is attached in `dispatchToolCall`. All four carriers
+  call the projection — `predecessor_outputs` included, the one that feeds the executor —
+  and all five dispatching tools carry provenance because the server attaches it, not
+  because anyone remembered to.
+
+  The workspace root is threaded to the four carriers, which changed three internal
+  signatures. A caller that omits it now **throws** rather than returning an empty list:
+  the quiet version tells a reviewer its files are outside a workspace nobody named, and
+  missing-root must not look like hostile-path.
+
+  Path containment resolves. Option (i) as asked, with one correction found while
+  implementing: resolving only the parent does **not** stop the attack, because the
+  parent of `docs/notes` is an ordinary directory — the entry itself is resolved, and the
+  parent is the fallback for the one legitimate case, a file the executor deleted. Both
+  are asserted, as is a deleted file under an escaping parent.
+
+  `guidance` and `recovery_options` joined `ORCHESTRATOR_AUTHORED` after checking every
+  `guidance:` site is a literal; the note now locates the orchestrator's directives
+  instead of denying they exist, and says a claim about project convention is project
+  data too — forged authority need not be imperative, which is what made "closes forgery"
+  an overstatement.
+
+  Mutation-verified, eight mutants, every one red and the tree clean after: sanitising
+  removed from `predecessor_outputs`; provenance removed from `dispatchToolCall`; the
+  path filter reverted to lexical; the parent fallback dropped; the marker no longer
+  listing itself; uppercase hex rejected; a missing root going quiet. And the one that
+  matters most — **a new file reading either field raw turns the class gate red**, which
+  is what makes "the class is closed" checkable rather than asserted.
+
+  1443 → 1480 pass / 0 fail; lint 108 files, 0 findings.
+
+  Still open and unchanged: the write boundary (`executor.js`), TOFU, attention-crowding,
+  and M10.
