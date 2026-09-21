@@ -128,33 +128,52 @@ try {
   }
 
   console.log(`replaying ${opts.files.join(', ')}\n  as written at ${atSha}\n  on the tree at ${baseSha}\n`);
+  // The reporter is PINNED, and the bug it closes was silent. Node picks its
+  // default reporter from whether stdout is a TTY: 20 and 22 emit TAP when
+  // piped, 24 and later emit `spec` either way. This parser only ever understood
+  // `spec` (`ℹ tests N`), so on Node 20 and 22 it read a perfectly good TAP
+  // summary as "no summary printed" and returned INCONCLUSIVE — which does not
+  // fail anything. The gate was blind on two of the three Node versions this
+  // project supports, and nothing said so, because INCONCLUSIVE is a legitimate
+  // verdict rather than an error. Surfaced only when a test OF the gate ran it
+  // under the CI matrix instead of on one developer's Node.
   const run = spawnSync(
     process.execPath,
-    ['--require', './tests/git-sandbox.cjs', '--test', ...opts.files],
+    ['--require', './tests/git-sandbox.cjs', '--test', '--test-reporter=tap', ...opts.files],
     { cwd: tree, encoding: 'utf8' },
   );
   const out = `${run.stdout || ''}${run.stderr || ''}`;
 
   const num = (label) => {
-    const m = out.match(new RegExp(`^ℹ ${label} (\\d+)$`, 'm'));
+    const m = out.match(new RegExp(`^# ${label} (\\d+)$`, 'm'));
     return m ? Number(m[1]) : null;
   };
   const tests = num('tests');
   const fail = num('fail');
 
-  // Parse the runner's trailing `failing tests:` section, not the inline ✖
-  // marks. Node prints one for the enclosing describe as well, so the inline
-  // marks outnumber `fail` — and a list longer than the count it sits under is
-  // the kind of small incoherence that teaches a reader to skim output.
-  const failing = out.split('✖ failing tests:').slice(1).join('').split('\n')
-    .map((l) => l.match(/^✖ (.+?) \(\d/))
-    .filter(Boolean)
-    .map((m) => m[1]);
-
-  const passing = out.split('\n')
-    .map((l) => l.match(/^✔ (.+?) \(\d/))
-    .filter(Boolean)
-    .map((m) => m[1]);
+  // TAP names every result on its own line, and a failing SUITE gets one too —
+  // so the naive list came out longer than the count above it (3 names under
+  // "2/42 failed"), which is the small incoherence that teaches a reader to skim
+  // output. Each result carries a YAML block naming its `type`, so leaves are
+  // separable from their enclosing describe without guessing from indentation.
+  const lines = out.split('\n');
+  const results = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)(not ok|ok) \d+ - (.+)$/);
+    if (!m) continue;
+    // The type sits in the YAML block between this result and the next one.
+    let type = null;
+    for (let j = i + 1; j < lines.length && !/^\s*(not ok|ok) \d+ - /.test(lines[j]); j++) {
+      const t = lines[j].match(/^\s*type: '(\w+)'/);
+      if (t) { type = t[1]; break; }
+    }
+    results.push({ ok: m[2] === 'ok', name: m[3].trim(), type });
+  }
+  // `type` is absent on a bare result line; keep those rather than dropping a
+  // real failure over a missing diagnostic.
+  const leaves = (ok) => results.filter((r) => r.ok === ok && r.type !== 'suite').map((r) => r.name);
+  const failing = leaves(false);
+  const passing = leaves(true);
 
   // Node names a FILE as the test when the file contributed no test of its own,
   // in both directions: one failing test named after the file when it could not
