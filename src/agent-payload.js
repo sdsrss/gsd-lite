@@ -39,6 +39,9 @@ export function safeCommitRef(value) {
 // shell metacharacter, no quote, no path separator, no NUL, no newline.
 const COMMIT_REF_INERT = /^[\w.-]{1,64}$/;
 
+// A withheld-entry count larger than this is not a file count. See taskRefsForAgent.
+const MAX_WITHHELD = 10_000;
+
 /**
  * Could this value do harm if a model pasted it into a command?
  *
@@ -289,8 +292,20 @@ export function taskRefsForAgent(task, workspaceRoot) {
   // short list with no flag — the exact silent blanking the comment above
   // forbids. Summed rather than replaced: both boundaries can withhold, and the
   // agent is owed the total, not whichever half ran last.
+  //
+  // It is also project data, and that is new as of this change: the count now
+  // lives in `.gsd/state.json`, which is committable, and `validateState` does
+  // not check it. A cloned state carrying `files_changed_rejected: 999999`
+  // reaches the payload and a reviewer reports a gap that size. The shape guard
+  // takes care of `-1`, `1.5`, `"3"` and `null`; the cap handles a plausible-
+  // looking integer.
+  //
+  // MAX_WITHHELD is a magnitude bound, not a derived one, and saying so matters:
+  // nothing at this boundary knows how long the executor's original list was, so
+  // there is no exact bound to compute. What it buys is that the number stays a
+  // number of files. Withholding is reported, never inflated without limit.
   const withheldAtWrite = Number.isInteger(task?.files_changed_rejected) && task.files_changed_rejected > 0
-    ? task.files_changed_rejected
+    ? Math.min(task.files_changed_rejected, MAX_WITHHELD)
     : 0;
   const totalWithheld = dropped + withheldAtWrite;
   return {

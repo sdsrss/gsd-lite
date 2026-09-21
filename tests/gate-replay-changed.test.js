@@ -59,29 +59,50 @@ function haveCommit(sha) {
   return spawnSync('git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${sha}^{commit}`]).status === 0;
 }
 
+// Missing history means two different things and they need different answers.
+//
+// In CI it means `fetch-depth: 0` was lost from the workflow, which would
+// silently disable every test in this file — the write-only shape the gate these
+// tests guard was built to stop. That must fail, loudly.
+//
+// On a developer's shallow clone it means the question cannot be asked here. A
+// failure there is noise, and noise is how a suite stops being read. Skip, and
+// say which commit is missing so the reason is never a mystery.
+//
+// The first version failed in both cases, which turned "unanswerable" into
+// "broken" and reddened CI on a correct tree.
+function requireCommit(t, sha) {
+  if (haveCommit(sha)) return true;
+  if (process.env.CI) {
+    assert.fail(`${sha} is missing in CI — .github/workflows/ci.yml lost its fetch-depth: 0, and these tests silently check nothing without it`);
+  }
+  t.skip(`${sha} not in this clone (shallow) — run \`git fetch --unshallow\` to exercise this`);
+  return false;
+}
+
 describe('the vacuity gate fires on source changes and not on test-only ones', () => {
-  it('fails on the documented vacuous commit, which changes only shipped prompts', () => {
+  it('fails on the documented vacuous commit, which changes only shipped prompts', (t) => {
     // 71271dd changes agents/executor.md, agents/reviewer.md and one test. Under
     // a naive "*.md is documentation" rule that reads as test-only and the whole
     // mechanism goes quiet on the one case it was built for.
-    if (!haveCommit('71271dd')) return assert.fail('71271dd missing — shallow clone cannot run this');
+    if (!requireCommit(t, '71271dd')) return;
     const { code, out } = replay('71271dd^', '71271dd');
     assert.equal(code, 1, `a vacuous gate over shipped prompts must fail the job:\n${out.slice(-600)}`);
     assert.match(out, /VACUOUS/, 'and say why');
     assert.doesNotMatch(out, /TEST-ONLY RANGE/, 'agents/*.md are shipped prompt templates, which are source');
   });
 
-  it('exempts a genuinely test-only range', () => {
+  it('exempts a genuinely test-only range', (t) => {
     // 406fd3a touches tests/recovery.test.js and nothing else. Its tests describe
     // the base tree, so they pass on it by construction; VACUOUS carries no
     // information and must not fail the job.
-    if (!haveCommit('406fd3a')) return assert.fail('406fd3a missing — shallow clone cannot run this');
+    if (!requireCommit(t, '406fd3a')) return;
     const { code, out } = replay('406fd3a^', '406fd3a');
     assert.equal(code, 0, `a test-only range must not fail:\n${out.slice(-600)}`);
     assert.match(out, /TEST-ONLY RANGE/, 'and must say that is why, not pass silently');
   });
 
-  it('does not exempt a range that DELETES a source file', () => {
+  it('does not exempt a range that DELETES a source file', (t) => {
     // 331dcda deletes src/tools/orchestrator.js and touches tests.
     //
     // HONEST LIMIT, because the alternative is a test that reads stronger than
@@ -92,7 +113,7 @@ describe('the vacuity gate fires on source changes and not on test-only ones', (
     // the shape. The behavioural case is proven in a scratch repo (see the
     // commit message); what pins the fix here is the source-level assertion
     // below, which does go red on the revert.
-    if (!haveCommit('331dcda')) return assert.fail('331dcda missing — shallow clone cannot run this');
+    if (!requireCommit(t, '331dcda')) return;
     const { out } = replay('331dcda^', '331dcda');
     assert.doesNotMatch(out, /TEST-ONLY RANGE/,
       `deleting source is a source change; this range must stay subject to the gate:\n${out.slice(-600)}`);
@@ -122,10 +143,10 @@ describe('the vacuity gate fires on source changes and not on test-only ones', (
       'ALL_CHANGED must be built with no --diff-filter at all');
   });
 
-  it('passes an ordinary fix whose tests were red on the base tree', () => {
+  it('passes an ordinary fix whose tests were red on the base tree', (t) => {
     // The other direction: the gate must be quiet on work that earns it, or it
     // becomes a check people route around.
-    if (!haveCommit('14e64fa')) return assert.fail('14e64fa missing — shallow clone cannot run this');
+    if (!requireCommit(t, '14e64fa')) return;
     const { code, out } = replay('14e64fa^', '14e64fa');
     assert.equal(code, 0, `an ordinary fix must pass:\n${out.slice(-600)}`);
     assert.match(out, /DISCRIMINATIVE/, 'because its tests were red on the base tree');
