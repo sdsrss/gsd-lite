@@ -81,12 +81,33 @@ function requireCommit(t, sha) {
 }
 
 describe('the vacuity gate fires on source changes and not on test-only ones', () => {
+  // The guard that would have caught the above at authoring time rather than
+  // months later when someone tidies up branches.
+  const PINNED = ['ab5d536', '406fd3a', '331dcda', '14e64fa'];
+
+  it('pins only commits that main can reach', (t) => {
+    if (!haveCommit('ab5d536')) return void t.skip('shallow clone — nothing to check');
+    const unreachable = PINNED.filter((sha) => spawnSync(
+      'git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, 'main'],
+    ).status !== 0);
+    assert.deepEqual(unreachable, [],
+      'these are reachable only from a feature branch, so deleting that branch makes them '
+      + `disappear from a fresh clone and this whole file fails on missing history: ${unreachable.join(', ')}`);
+  });
+
   it('fails on the documented vacuous commit, which changes only shipped prompts', (t) => {
-    // 71271dd changes agents/executor.md, agents/reviewer.md and one test. Under
+    // ab5d536 changes agents/executor.md, agents/reviewer.md and one test. Under
     // a naive "*.md is documentation" rule that reads as test-only and the whole
     // mechanism goes quiet on the one case it was built for.
-    if (!requireCommit(t, '71271dd')) return;
-    const { code, out } = replay('71271dd^', '71271dd');
+    //
+    // It is the rebased landing of 71271dd, which is the SHA the runbook and the
+    // script header name. This file used to pin 71271dd itself and that broke:
+    // the repo merges with --rebase, so a feature branch's original commits are
+    // never ancestors of main, and deleting the merged branch makes them
+    // unreachable. CI's clone then cannot see them and the suite fails on
+    // missing history rather than on the code. Pin what main can reach.
+    if (!requireCommit(t, 'ab5d536')) return;
+    const { code, out } = replay('71271dd^', 'ab5d536');
     assert.equal(code, 1, `a vacuous gate over shipped prompts must fail the job:\n${out.slice(-600)}`);
     assert.match(out, /VACUOUS/, 'and say why');
     assert.doesNotMatch(out, /TEST-ONLY RANGE/, 'agents/*.md are shipped prompt templates, which are source');
