@@ -120,6 +120,15 @@ export async function handleExecutorResult({ result: rawResult, basePath = proce
       lifecycle: autoAccept ? 'accepted' : 'checkpointed',
       checkpoint_commit: result.checkpoint_commit,
       files_changed: result.files_changed,
+      // Persisted, not just returned. The drop happens here now, so by dispatch
+      // time taskRefsForAgent has nothing left to drop and would report nothing
+      // — while agents/reviewer.md and agents/debugger.md tell the agent to
+      // report the gap when it sees this flag, and commands/resume.md tells the
+      // orchestrator to forward it FROM review_target. Moving the filter earlier
+      // without moving the count with it made the agent's view worse than before
+      // the filter existed. `null` rather than omitted so a later checkpoint
+      // clears a stale count instead of inheriting it.
+      files_changed_rejected: droppedFiles || null,
       evidence_refs: result.evidence || [],
       level: reviewLevel,
       blocked_reason: null,

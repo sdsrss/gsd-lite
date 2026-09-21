@@ -954,7 +954,38 @@ describe('the two substituted fields are constrained where they are written', ()
       const task = await storedTask(dir);
       assert.deepEqual(task.files_changed, ['src/ok.js', 'src/removed.js'],
         'a deleted file is still a file this task changed');
-      assert.equal(task.files_changed_rejected, undefined);
+      // null, not undefined: the count is persisted now, and a checkpoint that
+      // drops nothing must WRITE the absence rather than leave a stale count
+      // from an earlier checkpoint standing.
+      assert.equal(task.files_changed_rejected ?? null, null, 'nothing was withheld, so nothing is claimed');
+    });
+  });
+
+  it('clears a stale withheld-count when a later checkpoint drops nothing', async () => {
+    // The reason the stored value is null rather than omitted. Without it the
+    // task carries a count describing a list it no longer has, and
+    // taskRefsForAgent adds that phantom to every future dispatch.
+    await workspace('stale-count', async (dir) => {
+      symlinkSync('/etc/passwd', join(dir, 'src', 'notes'));
+      const first = await handleExecutorResult({
+        basePath: dir,
+        result: ok({ files_changed: ['src/ok.js', 'src/notes'] }),
+      });
+      assert.equal(first.files_changed_rejected, 1, 'setup: the first checkpoint withholds one');
+      assert.equal((await storedTask(dir)).files_changed_rejected, 1);
+
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'needs_revalidation' }] }] }, basePath: dir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'pending' }] }] }, basePath: dir });
+
+      const second = await handleExecutorResult({
+        basePath: dir,
+        result: ok({ files_changed: ['src/ok.js', 'src/two.js'] }),
+      });
+      assert.equal(second.files_changed_rejected, undefined, 'the second withholds nothing');
+      const task = await storedTask(dir);
+      assert.equal(task.files_changed_rejected ?? null, null, 'and the earlier count must not survive it');
+      assert.equal(taskRefsForAgent(task, dir).files_changed_rejected, undefined,
+        'a phantom count tells the reviewer to report a gap that does not exist');
     });
   });
 
@@ -1022,6 +1053,47 @@ describe('the two substituted fields are constrained where they are written', ()
       const task = await storedTask(dir);
       assert.match(task.blocked_reason || '', /STRIPE_KEY/, 'the blocker text must survive');
       assert.ok(!JSON.stringify(task).includes('curl'), 'and the discarded value must still not be stored');
+    });
+  });
+
+  it('still tells the reviewer how many entries were withheld, when the write withheld them', async () => {
+    // CONCERN 3 from the pre-tag review, and the sharpest of the three findings:
+    // moving the drop earlier made the agent's view WORSE. The count lived only
+    // in handleExecutorResult's transient return, so by dispatch time
+    // taskRefsForAgent had nothing left to drop and reported nothing — while
+    // agents/reviewer.md:42 and agents/debugger.md:28 instruct the agent to
+    // report the gap when it sees the flag, commands/resume.md:79 tells the
+    // orchestrator to forward it FROM review_target, and agent-payload.js's own
+    // doc comment states the rule: a withheld value is reported, never silently
+    // blanked. The write-side drop is also permanent where the read-side drop is
+    // not, so without this the only record of the entry was one number in a tool
+    // response the orchestrator may never have relayed.
+    await workspace('drop-is-reported', async (dir) => {
+      symlinkSync('/etc/passwd', join(dir, 'src', 'notes'));
+      const res = await handleExecutorResult({
+        basePath: dir,
+        result: ok({
+          files_changed: ['src/ok.js', 'src/notes', '/etc/hosts'],
+          contract_changed: true,
+          summary: 'changed the auth contract',
+        }),
+      });
+      assert.ok(!res.error, `${res.message}`);
+      assert.equal(res.files_changed_rejected, 2, 'the write return still carries it');
+
+      // trigger_review first, then the dispatch that carries the payload.
+      let resumed = await resumeWorkflow({ basePath: dir });
+      let target = resumed.review_target
+        ?? (resumed.review_targets || []).find((t) => t.id === '1.1');
+      for (let i = 0; i < 3 && !target; i++) {
+        resumed = await resumeWorkflow({ basePath: dir });
+        target = resumed.review_target
+          ?? (resumed.review_targets || []).find((t) => t.id === '1.1');
+      }
+      assert.ok(target, `expected a review target: ${JSON.stringify(resumed).slice(0, 240)}`);
+      assert.deepEqual(target.files_changed, ['src/ok.js']);
+      assert.equal(target.files_changed_rejected, 2,
+        'the agent is told to report this gap and cannot, unless the count survives to dispatch');
     });
   });
 
