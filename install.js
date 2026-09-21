@@ -355,6 +355,20 @@ export function main() {
   if (!DRY_RUN) abandonStaging();
 
   copyDir(join(__dirname, 'src'), join(STAGING_DIR, 'src'), 'runtime/src → ~/.claude/gsd/src/');
+  // The server resolves shipped docs relative to its own location
+  // (shippedDocPath, src/utils.js). Under the plugin system that lands inside
+  // the plugin root, which has these directories. This runtime did not: the
+  // user-scope copies above go to ~/.claude/{references,workflows}/gsd/, a
+  // different depth, so every path the server handed an executor pointed at
+  // nothing and `health` advertised a directory that was not there.
+  //
+  // Staging them here rather than teaching the resolver a second layout: a
+  // fallback would be one more model of where files are, and that is the class
+  // of bug this whole change exists to remove. The runtime tree becomes
+  // self-contained instead, and uninstall removes it wholesale either way.
+  for (const sub of ['references', 'workflows']) {
+    copyDir(join(__dirname, sub), join(STAGING_DIR, sub), `runtime/${sub} → ~/.claude/gsd/${sub}/`);
+  }
   // Write a sanitized package.json: strip dev-only npm lifecycle scripts
   // (prepare/prepublishOnly/version use POSIX shell + dev tooling absent from
   // the runtime). Leaving them in means a later manual `npm install` in

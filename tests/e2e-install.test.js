@@ -664,3 +664,50 @@ describe('Layer B: npx from tarball E2E', { timeout: 120000 }, () => {
     await assertMcpServerStarts(serverPath);
   });
 });
+
+// The server resolves shipped docs from its own location (shippedDocPath). The
+// variable that breaks that is the INSTALL LAYOUT, not the working directory —
+// so every unit test of it passes from this checkout, where the package root
+// always holds references/ and workflows/, and none of them could see that the
+// manual/npx runtime is staged without those directories. An independent
+// reviewer caught it by doing what this test now does.
+describe('Layer A: shipped docs resolve from the installed runtime', { timeout: 60000 }, () => {
+  let claudeDir;
+
+  before(async () => {
+    claudeDir = await mkdtemp(join(tmpdir(), 'gsd-docs-layout-'));
+    execFileSync(process.execPath, [join(PROJECT_ROOT, 'install.js')], {
+      env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, HOME: claudeDir },
+      encoding: 'utf8',
+      timeout: 55000,
+    });
+  });
+
+  after(async () => { await rm(claudeDir, { recursive: true, force: true }); });
+
+  it('the staged runtime carries the docs the server will point at', async () => {
+    // Asserted against the runtime's OWN copy of utils.js, not this repo's:
+    // importing from the checkout is exactly the shortcut that hid the defect.
+    const { shippedDocPath } = await import(join(claudeDir, 'gsd', 'src', 'utils.js'));
+    for (const sub of ['references', 'workflows']) {
+      const dir = shippedDocPath(sub);
+      assert.ok(existsSync(dir), `the installed server resolves ${sub}/ to ${dir}, which does not exist`);
+    }
+    // Name the files the prompt layer actually asks for. A correct directory
+    // with the doc missing fails identically from the agent's side.
+    for (const [sub, file] of [['references', 'questioning.md'], ['references', 'execution-loop.md'], ['workflows', 'execution-flow.md'], ['workflows', 'tdd-cycle.md']]) {
+      const full = shippedDocPath(sub, file);
+      assert.ok(existsSync(full), `an agent is told to read ${full}, which does not exist in this install`);
+    }
+  });
+
+  it('health reports those paths over the real MCP surface', async () => {
+    const { handleToolCall } = await import(join(claudeDir, 'gsd', 'src', 'server.js'));
+    const result = await handleToolCall('health', { basePath: claudeDir });
+    assert.ok(result.docs, 'health must report where this install keeps its docs');
+    for (const key of ['references', 'workflows']) {
+      assert.ok(existsSync(result.docs[key]),
+        `health advertises docs.${key} = ${result.docs[key]}, which does not exist — worse than saying nothing`);
+    }
+  });
+});

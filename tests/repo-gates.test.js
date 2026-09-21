@@ -220,11 +220,27 @@ describe('repo gates — the prompt layer never hands an agent a bare relative d
     for (const file of promptFiles) {
       const lines = readFileSync(join(repoRoot, file), 'utf8').split('\n');
       lines.forEach((line, i) => {
-        // Only backticked paths: prose that merely says the word "workflows"
-        // is not an instruction to read a file. A path reached through the
-        // server's `docs` map is written `<docs.workflows>/x.md` and does not
-        // match, which is the point — the gate accepts the resolved form.
-        for (const m of line.matchAll(/`((?:references|workflows)\/[A-Za-z0-9._-]+\.md)`/g)) {
+        // Backticks are NOT required. Requiring them is how this gate shipped
+        // matching zero lines on its own tree: the six sites fixed alongside it
+        // were backticked, two live instructions were not
+        // (`commands/prd.md` "使用 references/questioning.md 的提问技巧",
+        // `commands/resume.md` "按 references/execution-loop.md 执行循环"), and
+        // the gate could see only the form already fixed. A gate that cannot
+        // fail on the tree it ships with is the vacuous kind this file exists
+        // to prevent.
+        //
+        // Backticks are not excluded here: excluding them was the first
+        // attempt and it simply swapped one blind spot for the other, seeing
+        // the bare form and missing the quoted one. The only exclusions are a
+        // preceding `/` or word character, so a longer path that legitimately
+        // contains these segments (~/.claude/references/gsd/x.md) is not a
+        // false positive.
+        //
+        // The resolved form needs no exclusion: `<docs.workflows>/x.md` spells
+        // `workflows>` rather than `workflows/`, so it cannot match. Prose that
+        // merely says the word "workflows" cannot match either — a filename is
+        // required.
+        for (const m of line.matchAll(/(?:^|[^/\w])((?:references|workflows)\/[A-Za-z0-9._-]+\.md)/g)) {
           offenders.push(`${file}:${i + 1} → ${m[1]}`);
         }
       });

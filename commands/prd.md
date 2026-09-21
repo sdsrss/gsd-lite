@@ -65,10 +65,10 @@ argument-hint: File path to requirements doc, or inline description text
 - 提出补充问题，每个问题提供选项:
   - 标识推荐选项
   - 允许用户自定义回答
-- 使用 references/questioning.md 的提问技巧 (如可用)
+- 使用提问技巧 (如可用): 调用 `health` 工具取 `docs.references`, Read `<docs.references>/questioning.md`
 - 用户回答后，可适当追问直到需求清晰
 
-<!-- STEP 5-12: 共享执行流程 — 修改 workflows/execution-flow.md 即同步所有入口 -->
+<!-- STEP 5-12: 共享执行流程 — 编辑 execution-flow.md (仓库内 workflows/ 目录) 即同步所有入口 -->
 
 调用 `health` 工具取 `docs.workflows`，Read `<docs.workflows>/execution-flow.md`，严格按照其中 STEP 5-12 执行。
 

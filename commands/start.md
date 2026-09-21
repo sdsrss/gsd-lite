@@ -54,7 +54,7 @@ argument-hint: Optional feature or project description
     └── 否 → 追问
 ```
 
-<!-- STEP 5-12: 共享执行流程 — 修改 workflows/execution-flow.md 即同步所有入口 -->
+<!-- STEP 5-12: 共享执行流程 — 编辑 execution-flow.md (仓库内 workflows/ 目录) 即同步所有入口 -->
 
 调用 `health` 工具取 `docs.workflows`，Read `<docs.workflows>/execution-flow.md`，严格按照其中 STEP 5-12 执行。
 
