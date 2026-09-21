@@ -10,7 +10,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize } from 'node:path';
 
@@ -303,5 +304,118 @@ describe('repo gates — markdown links resolve', () => {
       .filter(l => !existsSync(join(repoRoot, dirname(l.mdPath), l.target)))
       .map(l => `${l.mdPath} → ${l.target}`);
     assert.deepEqual(broken, [], `markdown links to paths that do not exist:\n  ${broken.join('\n  ')}`);
+  });
+});
+
+// Two scripts scrape the suite's own summary line for a test count:
+// scripts/pre-commit.sh syncs it into CLAUDE.md, and scripts/sync-versions.js
+// does the same on `npm version` and `prepublishOnly`. Both matched `# tests N`,
+// which is the TAP reporter's form. `npm test` here is plain `node --test`, whose
+// default reporter prints `ℹ tests N`, so both parsers matched nothing on every
+// Node this repo supports — and both failed silently, because "found no count"
+// runs the same code path as "count already correct".
+//
+// In pre-commit.sh the empty result was load-bearing rather than merely useless:
+// section 4's "skip if the tests already ran" guard keys off that same variable,
+// so an always-empty count made every commit touching tests/ run the full suite
+// twice.
+//
+// The gate feeds each parser BOTH reporter forms. Checking only the one node
+// prints today would be passed by a parser pinned to today's reporter, which is
+// the defect itself — this repo has now shipped that shape twice (the prompt-path
+// gate above matched only the form it was written beside).
+describe('repo gates — the test-count parsers read the reporter this repo actually runs', () => {
+  // Both decoys are load-bearing, and they pin different halves of the parse.
+  //
+  // The one BEFORE the summary is why the parser must take the last match: a
+  // test name ending in digits otherwise wins on a first-match read.
+  //
+  // The one AFTER the summary is why the digits must be anchored to end of line.
+  // It is not hypothetical: node's spec reporter reprints every failing test's
+  // name under `✖ failing tests:`, below the counts. So on a red run — the run
+  // where this matters — a test name is the LAST line mentioning "tests", and an
+  // unanchored pattern reads 99 out of it no matter which match it takes.
+  const REPORTERS = {
+    spec: [
+      '✔ parses tests 7',
+      'ℹ tests 1439',
+      'ℹ suites 313',
+      'ℹ pass 1439',
+      'ℹ fail 1',
+      '✖ failing tests:',
+      '✖ counts the tests 99 it was given (0.4ms)',
+    ].join('\n'),
+    tap: [
+      'ok 1 - parses tests 7',
+      'not ok 2 - counts the tests 99 it was given',
+      '1..2',
+      '# tests 1439',
+      '# suites 313',
+      '# pass 1438',
+      '# fail 1',
+    ].join('\n'),
+  };
+
+  // Comment lines are stripped first, for the reason withoutComments() above
+  // exists: both scripts explain the old broken pattern in a comment beside the
+  // fixed one, so a raw search finds the prose and reports the fix as unmade.
+  // Caught by this gate on its own first run.
+  function lineContaining(file, marker) {
+    const src = readFileSync(join(repoRoot, 'scripts', file), 'utf8');
+    const line = src
+      .split('\n')
+      .filter(l => !/^\s*(\/\/|#)/.test(l))
+      .find(l => l.includes(marker));
+    assert.ok(line, `scripts/${file} has no non-comment line containing ${marker} — this gate is pointed at nothing`);
+    return line;
+  }
+
+  // Both tests below RUN the parsing line out of the script rather than
+  // re-implementing it here. Re-implementing is what makes a gate drift from the
+  // thing it guards: an earlier draft of this one extracted only the regex and
+  // did the "take the last match" step itself, so deleting `tail -1` from the
+  // hook would have left it green.
+  it('pre-commit.sh reads the count in both reporter formats', () => {
+    const line = lineContaining('pre-commit.sh', 'ACTUAL_COUNT=$(');
+    for (const [name, output] of Object.entries(REPORTERS)) {
+      const got = execFileSync('bash', ['-c', `TEST_OUT=$(cat)\n${line.trim()}\nprintf '%s' "$ACTUAL_COUNT"`], {
+        input: output, encoding: 'utf8',
+      });
+      assert.equal(got, '1439',
+        `pre-commit.sh read ${JSON.stringify(got)} from ${name}-reporter output, not the summary count 1439. The line run was:\n  ${line.trim()}`);
+    }
+  });
+
+  it('sync-versions.js reads the count in both reporter formats', () => {
+    const matchLine = lineContaining('sync-versions.js', 'matchAll(');
+    const pickLine = lineContaining('sync-versions.js', 'countMatches.at(');
+    const parse = new Function('testOutput', `${matchLine}\n${pickLine}\nreturn countMatch?.[1];`);
+    for (const [name, output] of Object.entries(REPORTERS)) {
+      const got = parse(output);
+      assert.equal(got, '1439',
+        `sync-versions.js read ${JSON.stringify(got)} from ${name}-reporter output, not the summary count 1439. The lines run were:\n  ${matchLine.trim()}\n  ${pickLine.trim()}`);
+    }
+  });
+
+  it('the runner these scripts shell out to still prints a line the patterns can read', () => {
+    // The fixtures above are this gate's model of node's output. If node changes
+    // its reporter again, the fixtures keep passing while the real thing breaks —
+    // exactly the failure being fixed. So assert against a real run too, on a
+    // throwaway file rather than this suite, which would recurse.
+    const dir = mkdtempSync(join(tmpdir(), 'gsd-reporter-'));
+    try {
+      const probe = join(dir, 'probe.test.js');
+      writeFileSync(probe, "import {it} from 'node:test';it('probe',()=>{});\n");
+      // NODE_TEST_CONTEXT is set in every file the runner spawns. A grandchild
+      // that inherits it switches to the machine protocol the parent runner
+      // consumes, and prints no human summary at all — which reads here exactly
+      // like "node stopped printing the line", the thing this asserts about.
+      const { NODE_TEST_CONTEXT: _drop, ...env } = process.env;
+      const real = execFileSync('node', ['--test', probe], { encoding: 'utf8', timeout: 60000, env });
+      assert.match(real, /^\s*[#ℹ] tests \d+\s*$/m,
+        `the runner no longer prints a \`tests N\` summary line in either known form, so both parsers above are reading a format that no longer exists:\n${real}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
