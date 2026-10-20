@@ -88,4 +88,24 @@ describe('prompt layer — doctor checks what the code actually does', () => {
     const orphans = named.filter((name) => !code.includes(`'${name}'`));
     assert.deepEqual(orphans, [], `doctor.md checks files no code reads or writes: ${orphans.join(', ')}`);
   });
+
+  it('compares the source version only inside the gsd-lite repository', () => {
+    // In any other project the root package.json is that project's version: a
+    // v0.112.0 app was reported as "server v0.13.0 but source is v0.112.0".
+    const pkgName = JSON.parse(read('package.json')).name;
+    const bullets = doctor.split(/\n(?=\s*[-*]\s)/)
+      .filter((b) => /`package\.json`/.test(b) && /project root/i.test(b));
+    assert.ok(bullets.length >= 1, 'premise: doctor.md no longer reads package.json from the project root');
+    for (const b of bullets) {
+      assert.ok(b.includes('`name`') && b.includes(pkgName),
+        `doctor.md reads the current project's package.json as the gsd source version without checking it is ${pkgName}:\n  ${b.trim()}`);
+    }
+  });
+
+  it("records the health tool's own version-drift warning", () => {
+    const server = read('src/server.js');
+    const health = server.slice(server.indexOf("case 'health':"), server.indexOf("case 'state-init':"));
+    assert.match(health, /\bwarning:/, 'premise: the health response no longer carries `warning`');
+    assert.match(section(doctor, '## STEP 5'), /`warning`/, 'doctor.md ignores the health response `warning`');
+  });
 });

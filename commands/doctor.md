@@ -83,7 +83,10 @@ Check if `.gsd/state.lock` exists:
 
 Check for update-related information:
 - Read the `health` tool response for running server version
-- Read `package.json` in the current project root for source version (if in a dev repo with `.git`)
+- If the `health` response carries `warning` (the server's own version-drift check): record it as WARN
+- Read `package.json` in the current project root for a source version only when its `name` is `gsd-lite`,
+  i.e. you are inside the gsd-lite repository itself. In any other project that file is the project's own
+  version, not gsd's: skip the server-vs-source comparison
 - Read `~/.claude/gsd/package.json` for runtime version (if exists)
 - Compare all available versions:
   - All match: record PASS with version number
