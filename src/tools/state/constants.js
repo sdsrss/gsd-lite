@@ -129,10 +129,10 @@ export async function loadState(statePath) {
  * being debugged is `executing_task` with a task-scoped current_review, and
  * reading only the scope sent it to a task review instead. A refresh that
  * invalidated tasks drops an interrupted review — what it was reviewing may
- * have to be redone first, and the scheduler raises the review again when it
- * is due. A debugging hold survives: a running task is never invalidated.
- * awaiting_user and paused_by_user never reach here: preflight does not
- * refresh over a state that waits on the user.
+ * have to be redone first, and a phase review is raised again once that work
+ * is checkpointed. A debugging hold survives: a running task is never
+ * invalidated. Only execution and review modes reach here (REFRESH_MODES in
+ * orchestrator/helpers.js).
  */
 export function inferWorkflowModeAfterResearch(state, { invalidated = false } = {}) {
   const review = state.current_review;

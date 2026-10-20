@@ -220,7 +220,7 @@ stateDiagram-v2
 2. 计划文件被外部修改 -> `replan_required`
 3. 方向漂移 -> `awaiting_user`
 4. `current_phase` 之前的 phase 有 `needs_revalidation` task -> `rollback_to_dirty_phase`
-5. 研究缓存过期 -> `research_refresh_needed` (`awaiting_user` 与 `paused_by_user` 时不检测：用户先做决定)
+5. 研究缓存过期 -> `research_refresh_needed` (只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时检测，见 `REFRESH_MODES`；其他状态先回到执行)
 
 **Research 刷新后恢复**:
 `storeResearch()` 中: 如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()`：调试中 (`current_review.stage === 'debugging'`) → `executing_task` 并保留 `current_review`；刷新让 task 失效 → `executing_task` 并清掉被打断的审查；否则按 `current_review.scope` 恢复到 `reviewing_phase` / `reviewing_task`，没有审查时 `executing_task`。

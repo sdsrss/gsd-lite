@@ -11,10 +11,12 @@
 // tasks/specs/research-in-state-0.17.md.
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildExecutorContext, init, phaseComplete, read, storeResearch, update } from '../src/tools/state/index.js';
+import { WORKFLOW_MODES } from '../src/schema.js';
+import { REFRESH_MODES } from '../src/tools/orchestrator/helpers.js';
 import {
   handleExecutorResult,
   handleResearcherResult,
@@ -152,6 +154,8 @@ describe('a store lands whole or changes nothing', () => {
     ['the research expires_at is already past', () => payload({ 'decision:a': { summary: 'A2', source: 'docs' } }, { expires_at: past() })],
     ['one decision expires_at is already past', () => payload({ 'decision:a': { summary: 'A2', source: 'docs', expires_at: past() } })],
     ['the research expires_at is not a date', () => payload({ 'decision:a': { summary: 'A2', source: 'docs' } }, { expires_at: 'next week' })],
+    // Two seconds out was stored and expired before the next resume (pre-tag review).
+    ['the research expires in two seconds', () => payload({ 'decision:a': { summary: 'A2', source: 'docs' } }, { expires_at: new Date(Date.now() + 2000).toISOString() })],
   ]) {
     it(`refuses research that would expire on arrival (${label}), writing nothing`, async () => {
       // Stored as-is it was expired on the next resume, and the refresh it
@@ -163,6 +167,42 @@ describe('a store lands whole or changes nothing', () => {
       assert.deepEqual(await snapshot(), before, 'a refused store changed the project');
     });
   }
+
+  it('refuses to let a blocked result replace the research on record', async () => {
+    // With every source down the researcher returns a [BLOCKED] placeholder.
+    // As a refresh it replaced every decision on record, sent every task
+    // citing them back, reopened accepted phases and overwrote the four
+    // documents with "研究受阻" (pre-tag review).
+    const before = await seeded();
+    const blocked = payload({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用，请提供替代信息或缩小范围', source: 'none' } });
+    const res = await handleResearcherResult({ ...blocked, basePath: dir });
+    assert.equal(res.error, true, JSON.stringify(res));
+    assert.match(res.message, /blocked research result/, res.message);
+    assert.deepEqual(await snapshot(), before, 'a refused store changed the project');
+  });
+
+  it('stores a blocked result when there is no research on record yet', async () => {
+    // Planning with no sources: there is nothing to keep, and the blocked
+    // decision is what tells the user.
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    const blocked = payload({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用，请提供替代信息或缩小范围', source: 'none' } });
+    const res = await handleResearcherResult({ ...blocked, basePath: dir });
+    assert.equal(res.action, 'research_stored', JSON.stringify(res));
+  });
+
+  it('keeps the commit marker when a write fails after some documents were renamed in', async () => {
+    // The catch removed the marker even after three of four renames, so
+    // state.json disagreed with the documents and nothing reported it.
+    await seeded();
+    const summary = join(dir, '.gsd', 'research', 'SUMMARY.md');
+    await unlink(summary);
+    await mkdir(summary);
+    await assert.rejects(storeResearch({ ...payload({ 'decision:a': { summary: 'A2', source: 'docs' } }), basePath: dir }));
+    const marker = await stat(join(dir, '.gsd', '.research-commit-pending')).then(() => true, () => false);
+    assert.ok(marker, 'the marker was removed although documents had already been replaced');
+    const r = await resumeWorkflow({ basePath: dir });
+    assert.ok((r.research_warnings ?? []).length > 0 || r.warnings?.length > 0, `resume does not report the half-written research: ${JSON.stringify(r).slice(0, 400)}`);
+  });
 
   it('refuses when the resulting state is invalid, before touching the research documents', async () => {
     // It used to rewrite all four documents, then validate, then drop the
@@ -294,6 +334,45 @@ describe('an invalidating refresh still reaches completion', () => {
     assert.deepEqual(state.phases.map((p) => p.lifecycle), ['accepted', 'accepted', 'accepted']);
   });
 
+  it('a reopened phase carries no record of its old review or handoff', async () => {
+    await init({ project: 'p', phases: [
+      { name: 'One', tasks: [{ index: 1, name: 'cites b', research_basis: ['decision:b'] }] },
+      { name: 'Two', tasks: [{ index: 1, name: 'plain' }] },
+    ], basePath: dir });
+    const both = { 'decision:a': { summary: 'A', source: 'docs' }, 'decision:b': { summary: 'B', source: 'docs' } };
+    assert.equal((await handleResearcherResult({ ...payload(both), basePath: dir })).action, 'research_stored');
+    await drive(dir, { stopWhen: (s) => s.current_phase === 2 });
+    const res = await handleResearcherResult({ ...payload({ 'decision:a': { summary: 'A', source: 'docs' } }), basePath: dir });
+    assert.deepEqual(res.invalidated_tasks, ['1.1'], JSON.stringify(res));
+    const one = (await read({ basePath: dir })).phases[0];
+    assert.equal(one.lifecycle, 'active');
+    assert.deepEqual(one.phase_review, { status: 'pending', retry_count: 0 });
+    assert.equal(one.phase_handoff.required_reviews_passed, false);
+  });
+
+  it('completing the last unfinished phase completes the project, whatever its number', async () => {
+    // After a rollback the phase being redone can be the only one left; the
+    // phases after it are accepted already.
+    await init({ project: 'p', phases: [
+      { name: 'One', tasks: [{ index: 1, name: 'a' }] },
+      { name: 'Two', tasks: [{ index: 1, name: 'b' }] },
+      { name: 'Three', tasks: [{ index: 1, name: 'c' }] },
+    ], basePath: dir });
+    const verification = { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } };
+    for (const id of [2, 3]) {
+      await update({ updates: { phases: [{ id, lifecycle: 'active' }] }, basePath: dir });
+      await walk(dir, id, `${id}.1`, ['running', 'checkpointed', 'accepted']);
+      await update({ updates: { phases: [{ id, lifecycle: 'reviewing', phase_review: { status: 'accepted', retry_count: 0 } }] }, basePath: dir });
+      const done = await phaseComplete({ phase_id: id, basePath: dir, verification, direction_ok: true });
+      assert.ok(done.success, `premise: phase ${id} completes out of order: ${JSON.stringify(done)}`);
+    }
+    await walk(dir, 1, '1.1', ['running', 'checkpointed', 'accepted']);
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing', phase_review: { status: 'accepted', retry_count: 0 } }] }, basePath: dir });
+    const last = await phaseComplete({ phase_id: 1, basePath: dir, verification, direction_ok: true });
+    assert.ok(last.success, JSON.stringify(last));
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'completed');
+  });
+
   it('drops the phase review it interrupted and re-runs the invalidated task first', async () => {
     // Restoring reviewing_phase would review a phase whose work just changed.
     await init({ project: 'p', phases: [{ name: 'One', tasks: [
@@ -316,9 +395,12 @@ describe('an invalidating refresh still reaches completion', () => {
 describe('a refresh that changes nothing returns the workflow to the action it was about to take', () => {
   // Each shape is a state preflight runs in, built twice: once with research
   // that has not expired, once with the same research expired. The fresh one
-  // says what resume would do; the expired one must refresh and then do the
-  // same. inferWorkflowModeAfterResearch read only current_review.scope, so a
-  // task being debugged came back as a task review.
+  // says what resume would do. In a mode the server refreshes in, the expired
+  // one must refresh and then do the same; in any other mode, expiry must not
+  // change what resume does at all. inferWorkflowModeAfterResearch read only
+  // current_review.scope, so a task being debugged came back as a task review;
+  // and refreshing over a state that was not executing (planning, reconciling,
+  // re-planning, waiting for /clear, waiting on the user) resumed execution.
   const INDEX = { 'decision:a': { summary: 'A', source: 'docs' } };
   const research = (expired) => (expired ? expiredResearch(INDEX) : { ...expiredResearch(INDEX), expires_at: future(), decision_index: payload(INDEX).decision_index });
 
@@ -327,8 +409,8 @@ describe('a refresh that changes nothing returns the workflow to the action it w
   }
 
   const SHAPES = {
-    'executing a pending task': async () => { await project(); },
-    'debugging a task': async () => {
+    'executing a pending task': { mode: 'executing_task', build: async () => { await project(); } },
+    'debugging a task': { mode: 'executing_task', build: async () => {
       await project();
       await walk(dir, 1, '1.1', ['running']);
       await update({ updates: {
@@ -336,32 +418,90 @@ describe('a refresh that changes nothing returns the workflow to the action it w
         current_review: { scope: 'task', scope_id: '1.1', stage: 'debugging', retry_count: 3, error_fingerprint: 'e', summary: 's' },
         phases: [{ id: 1, todo: [{ id: '1.1', retry_count: 3 }] }],
       }, basePath: dir });
-    },
-    'reviewing a task': async () => {
+    } },
+    'reviewing a task': { mode: 'reviewing_task', build: async () => {
       await project('L2');
       await walk(dir, 1, '1.1', ['running', 'checkpointed']);
       await update({ updates: { workflow_mode: 'reviewing_task', current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' } }, basePath: dir });
-    },
-    'reviewing a phase': async () => {
+    } },
+    'reviewing a phase': { mode: 'reviewing_phase', build: async () => {
       await project();
       for (const id of ['1.1', '1.2']) await walk(dir, 1, id, ['running', 'checkpointed']);
       await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 }, phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: dir });
-    },
+    } },
   };
+
+  const HOLDS = {
+    'paused by the user': { mode: 'paused_by_user', build: async () => {
+      await project();
+      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+    } },
+    'a review that ran out of retries': { mode: 'awaiting_user', build: async () => {
+      await project();
+      for (const id of ['1.1', '1.2']) await walk(dir, 1, id, ['running', 'checkpointed']);
+      await update({ updates: {
+        workflow_mode: 'awaiting_user',
+        current_review: { scope: 'phase', scope_id: 1, stage: 'review_retry_exhausted', retry_count: 6 },
+        phases: [{ id: 1, phase_review: { status: 'rework_required', retry_count: 6 } }],
+      }, basePath: dir });
+    } },
+    'a blocked task': { mode: 'awaiting_user', build: async () => {
+      await project();
+      await walk(dir, 1, '1.1', ['running', 'blocked']);
+      await update({ updates: { workflow_mode: 'awaiting_user', phases: [{ id: 1, todo: [{ id: '1.1', blocked_reason: 'needs a credential', unblock_condition: 'user provides it' }, { id: '1.2', lifecycle: 'running' }] }] }, basePath: dir });
+      await walk(dir, 1, '1.2', ['blocked']);
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.2', blocked_reason: 'needs a credential too', unblock_condition: 'user provides it' }] }] }, basePath: dir });
+    } },
+    're-planning': { mode: 'planning', build: async () => {
+      await project();
+      await update({ updates: { workflow_mode: 'planning' }, basePath: dir });
+    } },
+    'a workspace to reconcile': { mode: 'reconcile_workspace', build: async () => {
+      await project();
+      await update({ updates: { workflow_mode: 'reconcile_workspace' }, basePath: dir });
+    } },
+    'a plan to re-align': { mode: 'replan_required', build: async () => {
+      await project();
+      await update({ updates: { workflow_mode: 'replan_required' }, basePath: dir });
+    } },
+    'waiting for /clear with little context left': { mode: 'awaiting_clear', build: async () => {
+      await project();
+      await update({ updates: { workflow_mode: 'awaiting_clear' }, basePath: dir });
+      await writeFile(join(dir, '.gsd', '.context-health'), '10');
+    } },
+  };
+
+  it('covers every workflow mode, on the side the server puts it', () => {
+    // Preflight skips completed and failed; research_refresh_needed is the
+    // refresh itself. A mode added later fails here until it has a shape.
+    const covered = new Set(['completed', 'failed', 'research_refresh_needed']);
+    for (const [name, { mode }] of Object.entries(SHAPES)) {
+      assert.ok(REFRESH_MODES.includes(mode), `${name}: ${mode} is not a mode the server refreshes in`);
+      covered.add(mode);
+    }
+    for (const [name, { mode }] of Object.entries(HOLDS)) {
+      assert.ok(!REFRESH_MODES.includes(mode), `${name}: the server refreshes in ${mode}`);
+      covered.add(mode);
+    }
+    assert.deepEqual(WORKFLOW_MODES.filter((m) => !covered.has(m)), [], 'workflow modes with no shape');
+  });
 
   const key = (r) => JSON.stringify([r.action, r.task_id ?? null, r.review_scope ?? null, r.debug_target?.id ?? null]);
 
-  for (const [name, build] of Object.entries(SHAPES)) {
+  async function rebuild(build, expired) {
+    await rm(dir, { recursive: true, force: true });
+    dir = await mkdtemp(join(tmpdir(), 'gsd-research-refresh-'));
+    await build();
+    await update({ updates: { research: research(expired) }, basePath: dir });
+  }
+
+  for (const [name, { build }] of Object.entries(SHAPES)) {
     it(name, async () => {
-      await build();
-      await update({ updates: { research: research(false) }, basePath: dir });
+      await rebuild(build, false);
       const expected = await resumeWorkflow({ basePath: dir });
       assert.ok(!expected.error && expected.action !== 'dispatch_researcher', `premise: ${JSON.stringify(expected)}`);
 
-      await rm(dir, { recursive: true, force: true });
-      dir = await mkdtemp(join(tmpdir(), 'gsd-research-refresh-'));
-      await build();
-      await update({ updates: { research: research(true) }, basePath: dir });
+      await rebuild(build, true);
       const refresh = await resumeWorkflow({ basePath: dir });
       assert.equal(refresh.action, 'dispatch_researcher', JSON.stringify(refresh));
       const stored = await handleResearcherResult({ ...payload(INDEX), basePath: dir });
@@ -371,43 +511,13 @@ describe('a refresh that changes nothing returns the workflow to the action it w
     });
   }
 
-  const HOLDS = {
-    'paused by the user': async () => {
-      await project();
-      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
-    },
-    'a review that ran out of retries': async () => {
-      await project();
-      for (const id of ['1.1', '1.2']) await walk(dir, 1, id, ['running', 'checkpointed']);
-      await update({ updates: {
-        workflow_mode: 'awaiting_user',
-        current_review: { scope: 'phase', scope_id: 1, stage: 'review_retry_exhausted', retry_count: 6 },
-        phases: [{ id: 1, phase_review: { status: 'rework_required', retry_count: 6 } }],
-      }, basePath: dir });
-    },
-    'a blocked task': async () => {
-      await project();
-      await walk(dir, 1, '1.1', ['running', 'blocked']);
-      await update({ updates: { workflow_mode: 'awaiting_user', phases: [{ id: 1, todo: [{ id: '1.1', blocked_reason: 'needs a credential', unblock_condition: 'user provides it' }, { id: '1.2', lifecycle: 'running' }] }] }, basePath: dir });
-      await walk(dir, 1, '1.2', ['blocked']);
-      await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.2', blocked_reason: 'needs a credential too', unblock_condition: 'user provides it' }] }] }, basePath: dir });
-    },
-  };
-
-  for (const [name, build] of Object.entries(HOLDS)) {
-    it(`expired research does not take over a state waiting on the user: ${name}`, async () => {
-      // Refreshing first and restoring the mode afterwards returned these as
-      // reviews or as execution, which skipped the user's decision; a paused
-      // project came back running.
-      await build();
-      await update({ updates: { research: research(false) }, basePath: dir });
+  for (const [name, { build }] of Object.entries(HOLDS)) {
+    it(`expired research does not take over ${name}`, async () => {
+      await rebuild(build, false);
       const expected = await resumeWorkflow({ basePath: dir });
       assert.ok(!expected.error, `premise: ${JSON.stringify(expected)}`);
 
-      await rm(dir, { recursive: true, force: true });
-      dir = await mkdtemp(join(tmpdir(), 'gsd-research-refresh-'));
-      await build();
-      await update({ updates: { research: research(true) }, basePath: dir });
+      await rebuild(build, true);
       const held = await resumeWorkflow({ basePath: dir });
       assert.equal(key(held), key(expected), JSON.stringify(held));
     });

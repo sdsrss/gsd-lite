@@ -533,12 +533,21 @@ export function applyResearchRefresh(state, newResearch) {
   return { warnings, invalidated };
 }
 
+// The shortest expiry a store accepts. The researcher's shortest TTL is three
+// days and its blocked fallback asks for 24 hours; anything under an hour is a
+// computation gone wrong, and stored it expires before the next resume.
+const MIN_RESEARCH_TTL_MS = 60 * 60 * 1000;
+
+// The summary prefix of the researcher's blocked fallback (agents/researcher.md,
+// uncertainty_handling): every source failed, or the scope would not converge.
+export const BLOCKED_DECISION_PREFIX = '[BLOCKED]';
+
 /**
  * The expiry dates a researcher result carries, refused when any is not a
- * date later than now. Stored as-is, an expired date made the research expire
- * on the next resume, and the refresh that triggered could store it again.
- * Checked here, at the store, and not in validateState: research on record is
- * supposed to expire with time.
+ * date at least MIN_RESEARCH_TTL_MS away. Stored as-is, an expired date made
+ * the research expire on the next resume, and the refresh that triggered
+ * could store it again. Checked here, at the store, and not in validateState:
+ * research on record is supposed to expire with time.
  */
 function staleExpiryErrors(result, decisionIndex) {
   const now = Date.now();
@@ -547,6 +556,7 @@ function staleExpiryErrors(result, decisionIndex) {
     const at = Date.parse(value);
     if (!Number.isFinite(at)) errors.push(`${label} must be an ISO 8601 date (got ${JSON.stringify(value)})`);
     else if (at <= now) errors.push(`${label} ${value} has already passed`);
+    else if (at - now < MIN_RESEARCH_TTL_MS) errors.push(`${label} ${value} is less than an hour away`);
   };
   check('expires_at', result.expires_at);
   for (const [id, entry] of Object.entries(decisionIndex)) {
@@ -596,6 +606,21 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // commit marker that would have said so was removed with the refusal.
     const state = loaded.state;
     const previousIndex = state.research?.decision_index || {};
+
+    // A blocked result says the research could not be done. On a refresh it
+    // replaced every decision on record, sent every task citing them back for
+    // revalidation, reopened accepted phases and overwrote the four documents
+    // with placeholders. What is on record stays; the refresh is retried once
+    // sources are back. With nothing on record (planning), it is stored: the
+    // blocked decision is how the user hears about it.
+    const blocked = Object.keys(decision_index).filter((id) => decision_index[id].summary.startsWith(BLOCKED_DECISION_PREFIX));
+    if (state.research && blocked.length > 0) {
+      return {
+        error: true,
+        code: ERROR_CODES.VALIDATION_FAILED,
+        message: `A blocked research result (${blocked.join(', ')}) would replace the research on record; it is kept, and the refresh can be retried when the researcher has sources again`,
+      };
+    }
     // The one writer of the decision index; with no research on record the old
     // index is empty and nothing is invalidated.
     const { warnings, invalidated } = applyResearchRefresh(state, { decision_index });
@@ -651,6 +676,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     const normalizedArtifacts = normalizeResearchArtifacts(artifacts);
     const tmpSuffix = `.${process.pid}-${Date.now()}.tmp`;
     const tmpPaths = [];
+    let renamed = 0;
     try {
       for (const fileName of RESEARCH_FILES) {
         const finalPath = join(researchDir, fileName);
@@ -669,6 +695,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       // the renames themselves survive a power loss.
       for (const { tmp, final: finalPath } of tmpPaths) {
         await rename(tmp, finalPath);
+        renamed += 1;
       }
       await fsyncDir(researchDir);
     } catch (err) {
@@ -676,7 +703,12 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       for (const { tmp } of tmpPaths) {
         try { await unlink(tmp); } catch {}
       }
-      try { await unlink(sentinelPath); } catch {}
+      // The marker exists for exactly this: once a document has been renamed
+      // in, the research directory no longer matches state.json. Removing it
+      // here left that disagreement with nothing to report it.
+      if (renamed === 0) {
+        try { await unlink(sentinelPath); } catch {}
+      }
       throw err;
     }
 

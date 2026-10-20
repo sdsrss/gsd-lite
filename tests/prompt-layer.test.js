@@ -27,8 +27,10 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
 import { LOCK_STALE_MS } from '../src/utils.js';
-import { TASK_LEVELS } from '../src/schema.js';
+import { TASK_LEVELS, WORKFLOW_MODES } from '../src/schema.js';
+import { REFRESH_MODES } from '../src/tools/orchestrator/helpers.js';
 import { init, update } from '../src/tools/state/index.js';
+import { BLOCKED_DECISION_PREFIX } from '../src/tools/state/logic.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -520,14 +522,23 @@ describe('prompt layer — research found at planning time reaches the server', 
     assert.deepEqual(skips, [], 'research.md still skips research because research already exists');
   });
 
-  it('the state diagram draws no refresh out of a state that waits on the user', () => {
-    const helpers = read('src/tools/orchestrator/helpers.js');
-    const holds = helpers.match(/const USER_HOLD_MODES = \[([^\]]+)\]/)?.[1];
-    assert.ok(holds, 'premise: USER_HOLD_MODES not found in orchestrator/helpers.js');
+  it("the researcher's blocked fallback carries the prefix the server refuses on a refresh", () => {
+    // storeResearch keeps the research on record when a refresh comes back
+    // [BLOCKED]; it recognises the result only by this prefix.
+    const fallback = tagBlock(read('agents/researcher.md'), 'uncertainty_handling');
+    const summaries = [...fallback.matchAll(/"summary": "([^"]*)"/g)].map((m) => m[1]);
+    const items = [...fallback.matchAll(/decision 摘要改为 "([^"]*)"/g)].map((m) => m[1]);
+    assert.ok(summaries.length >= 1 && items.length >= 1, 'premise: the blocked fallback examples are gone');
+    const unmarked = [...summaries, ...items].filter((s) => !s.startsWith(BLOCKED_DECISION_PREFIX));
+    assert.deepEqual(unmarked, [], `storeResearch recognises a blocked result by ${BLOCKED_DECISION_PREFIX}`);
+  });
+
+  it('the state diagram draws a refresh only out of the modes the server refreshes in', () => {
     const diagram = read('references/state-diagram.md');
-    const edges = [...holds.matchAll(/'(\w+)'/g)].map((m) => m[1])
-      .filter((mode) => new RegExp(`^\\s*${mode} --> research_refresh_needed`, 'm').test(diagram));
-    assert.deepEqual(edges, [], 'preflight does not refresh research over these modes');
+    const edges = [...diagram.matchAll(/^\s*(\w+) --> research_refresh_needed/gm)].map((m) => m[1]);
+    assert.ok(edges.length >= 1, 'premise: the diagram draws no edge into research_refresh_needed');
+    const stray = edges.filter((mode) => WORKFLOW_MODES.includes(mode) && !REFRESH_MODES.includes(mode));
+    assert.deepEqual(stray, [], `preflight refreshes only in ${REFRESH_MODES.join(', ')}`);
   });
 });
 
@@ -700,6 +711,11 @@ describe('prompt layer — the instruction sentences', () => {
     // without a bound looped on a researcher that kept returning past dates.
     ['commands/resume.md', '把错误原文交给 researcher 重新派发一次；第二次仍然报错就停下，把错误展示给用户'],
     ['commands/resume.md', '把响应里的 `expired_research` 和 `current_decision_index` (已记录的决策) 一并交给它'],
+    // REFRESH_MODES; a refresh over planning or a reconcile hold resumed execution.
+    ['commands/resume.md', '研究过期只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时走到这里'],
+    // storeResearch refuses a [BLOCKED] result while research is on record.
+    ['commands/resume.md', 'researcher 因来源不可用返回 `[BLOCKED]` 结果时，服务端拒收并保留已记录的研究：停下告诉用户'],
+    ['agents/researcher.md', '服务端不会用它替换已记录的研究，编排器会停下来告诉用户。'],
     // A12: planning research reaches the server after state-init.
     ['agents/researcher.md', '你不直接写这些文件'],
     ['workflows/execution-flow.md', '这一步不写任何文件、也不调用 `orchestrator-handle-researcher-result`'],
