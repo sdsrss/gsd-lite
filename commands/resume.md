@@ -160,11 +160,11 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - 过期时间
   - 可能受影响的 task (引用了过期 decision 的 task)
 - 自动派发 researcher 子代理刷新研究
-- 刷新后处理 decision ID 变更:
+- 把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`。服务端写入 `.gsd/research/`，并按下面的规则处理 decision ID 变更 —— 这些都由服务端完成，不要自己改 state 或写这些文件:
   - 结论一致 → 保留引用，更新 expires_at
   - 结论变了 → 标记引用 task 为 needs_revalidation
   - ID 消失 → 标记引用 task 为 needs_revalidation + 警告
-- 更新 state.json → 恢复执行
+- 返回 `research_stored` 后恢复执行；`research_warnings` 里的警告先转达给用户
 
 ---
 

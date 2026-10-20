@@ -38,6 +38,8 @@ tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 - PITFALLS.md — 领域陷阱 + 规避方案 (来自真实项目经验)
 - SUMMARY.md — 摘要 + 路线图建议 + volatility / expires_at / key decision ids
 
+服务端每次都整份覆盖这四个文件。增量研究 (只研究新方向) 时，先 Read `.gsd/research/` 里的现有文档，把仍然成立的内容并进新文档一起返回，否则旧结论会被删掉。
+
 每个发现标注置信度: HIGH / MEDIUM / LOW
 每个推荐标注来源: [Context7] / [官方文档] / [社区经验]
 关键推荐生成 decision id，供 plan/task 的 `research_basis` 引用
