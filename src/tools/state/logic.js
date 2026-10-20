@@ -482,15 +482,22 @@ export function applyResearchRefresh(state, newResearch) {
     if (id in newIndex) {
       const newDecision = newIndex[id];
       if (oldDecision.summary === newDecision.summary) {
-        // Rule 1: same conclusion — update metadata
+        // Rule 1: same conclusion — update metadata. An entry without its own
+        // expires_at takes the refresh's: keeping the old, already-past one
+        // sends the next resume straight back to the researcher.
         mergedIndex[id] = { ...oldDecision, ...newDecision };
+        const expiresAt = newDecision.expires_at ?? newResearch.expires_at;
+        if (expiresAt) mergedIndex[id].expires_at = expiresAt;
       } else {
         // Rule 2: changed conclusion — replace and invalidate
         mergedIndex[id] = newDecision;
         invalidatedIds.add(id);
       }
     } else {
-      // Rule 3: old ID missing from new research
+      // Rule 3: old ID missing from new research. The entry stays, without
+      // its expires_at: no refresh can renew an ID it no longer returns.
+      const { expires_at: _dropped, ...kept } = oldDecision;
+      mergedIndex[id] = kept;
       invalidatedIds.add(id);
       warnings.push(`Decision "${id}" removed in new research — dependent tasks invalidated`);
     }
