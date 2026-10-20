@@ -1,9 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read } from '../src/tools/state/index.js';
+import { getGsdDir } from '../src/utils.js';
 import { handleResearcherResult } from '../src/tools/orchestrator/index.js';
 
 function makeValidResearcherResult(overrides = {}) {
@@ -137,9 +138,17 @@ describe('handleResearcherResult', () => {
     assert.ok(Array.isArray(result.research_warnings), 'should have research_warnings array');
   });
 
-  it('returns structured error when storeResearch fails (no .gsd dir)', async () => {
-    // Use a basePath with no .gsd directory — storeResearch should fail gracefully
+  it('returns NO_PROJECT_DIR and writes nothing when there is no .gsd dir', async (t) => {
+    // Use a basePath with no .gsd directory — storeResearch should fail gracefully.
+    // `error: true` alone also holds for a crash further down, so the code is
+    // what pins the check (storeResearch's getStatePath guard).
     const emptyDir = await mkdtemp(join(tmpdir(), 'gsd-empty-'));
+    // getGsdDir walks up to /: under a directory that already has a .gsd/, the
+    // call would succeed — and write research into that project.
+    if (await getGsdDir(emptyDir)) {
+      await rm(emptyDir, { recursive: true, force: true });
+      return void t.skip(`an ancestor of ${emptyDir} has a .gsd/ — this case cannot be checked here`);
+    }
 
     try {
       const result = await handleResearcherResult({
@@ -150,6 +159,8 @@ describe('handleResearcherResult', () => {
       });
 
       assert.equal(result.error, true, 'should return error when no .gsd dir');
+      assert.equal(result.code, 'NO_PROJECT_DIR', JSON.stringify(result));
+      assert.deepEqual(await readdir(emptyDir), [], 'a refused store left files behind');
     } finally {
       await rm(emptyDir, { recursive: true, force: true });
     }
