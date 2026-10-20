@@ -1,5 +1,5 @@
 # 提示词审计 2026-10-17 的修复
-状态：进行中（实现与验证完成，待发版）
+状态：进行中（两轮评审修复完成，待第三次增量复审后发版）
 
 ## 背景与目标
 
@@ -83,7 +83,7 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 - [x] S1：新增 `tests/prompt-layer.test.js`（先红）— 覆盖 AC1–AC12 — 执行：主会话
 - [x] S2：逐条修改，每个逻辑改动一个提交 — 执行：主会话
 - [x] S3：全套测试 + lint + gate-replay — 覆盖 AC14
-- [ ] S4：独立 reviewer（新子代理，克隆仓库，不在本工作树里切换版本）
+- [x] S4：独立 reviewer（新子代理，克隆仓库，不在本工作树里切换版本）— 两轮，见决策与进展
 - [ ] S5：CHANGELOG + `npm version minor`（临时 `CLAUDE_CONFIG_DIR`）→ PR → CI → rebase 合并 → tag → 核对产物 — 覆盖 AC15
 
 ## 决策与进展
@@ -107,11 +107,29 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   负载高（另一个会话同时在跑发版检查，load 9–12）时超时。与本次改动无关，测试未改。超时只杀掉 `/bin/sh`，
   留下的 `npm exec` 孤儿进程和临时目录已清理。列为遗留。
 
-- 本次不改、留给后续的（审计未点名，或改动超出本次范围）：
-  - `workflows/tdd-cycle.md:10`、`workflows/debugging.md:10` 仍有全大写的 "NO … WITHOUT …"；executor/debugger 按规则 0 会读这两份工作流。
-  - researcher 的 `tools` 仍含 `Write`（见上）。
+- 2026-10-20 发版受阻于两件与本分支无关的事，问过用户后按"依赖 + 三步落地"处理：
+  - `npm audit` 在 main 上也红（GHSA-6qxp-vccf-f47h、GHSA-jqcg-44mw-7w3h，main 上次绿之后才公布）；release.yml 的 validate 也跑它。
+    用户授权依赖改动：PR #33（7f422d6）把 `@modelcontextprotocol/sdk` 升到 ^1.32.1、加 override `proxy-addr` ^2.0.8。
+  - `tests/gate-replay-changed.test.js` 在 PR 检出里没有本地 `main`，四个 SHA 全报"不可达"。修复是改测试自身逻辑，
+    在混合范围里必然被 vacuity 门禁判 VACUOUS，所以单独走纯测试 PR #32（cc85dd5）。
+- 发版前独立评审跑了两轮（第一轮看 9a5ade6..9c742bf，第二轮看此后的修复与 #32/#33），每条发现都先在代码里核实再修：
+  - 第一轮：HIGH 1（规划阶段研究无人写入）、MEDIUM 3（review_required:false 绕过审查、debugger 第 3 次失败两种说法、
+    L3 测试只查词）、LOW 若干（11 个变异保持绿、CHANGELOG 6 处不准等）。修复见 81b2703…bfb48e5。
+  - 第二轮：HIGH 1（交接测试截到文件末尾，删掉交接仍绿）、MEDIUM 6（STEP 8 读尚未写入的 PITFALLS、重新开始路径、
+    研究过期这一用户可见变化未写进 CHANGELOG、review-classification 与代码矛盾、review-cycle 留着旧判定规则、
+    15 个变异保持绿）。修复见 9efc959…d814202。
+- 本次不改、留给后续的（审计未点名、属于代码改动，或超出本次范围）：
+  - researcher 的 `tools` 仍含 `Write`（去掉它能从机制上保证不自写）。
+  - `fix_attempts` 没有代码递增，`architecture_concern` 也不由服务端强制，"第 3 次失败 → phase 失败"只靠提示词。
+  - reviewer 反复漏掉通过的 L3 task 时会无限绕圈（审查记为 accepted、retry_count 每轮清零）。
+  - STEP 5 保留的研究只在上下文里，STEP 10 之前 `/clear` 或压缩会丢；规划阶段因已有 `.gsd/research/` 跳过研究时，
+    state 里不记研究，`research_basis` 解析不到（本次之前也是如此）。
+  - `storeResearch` 校验 `expires_at` 失败前已覆盖部分文档并删掉提交标记（logic.js:633-636）。
+  - `references/execution-loop.md:72-80` 的级别说明没有 L3；`commands/start.md:19` 写"STEP 3 的 `state-init`"，实际在 STEP 10。
   - `scripts/sync-versions.js:98,110` 写 `claude plugin update gsd`（没带 `@gsd`）；scripts/ 不随包发布。
-  - e2e-install Layer B 在高负载下超时（见上）。
+  - e2e-install Layer B 用空 npm 缓存从 registry 装依赖、90 秒超时，机器负载高时超时，超时后会留下孤儿 `npm exec` 进程；
+    本次跑过的孤儿与临时目录都已清理，测试未改。
+  - 本地分支 `fix/ci-pr-main-ref`、`fix/deps-audit-2026-10` 已经 rebase 合并，`git branch -d` 拒绝删除（SHA 不同），保留。
 
 ## 验证记录
 
