@@ -12,6 +12,15 @@ import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 
+// It takes no arguments, and says so before touching anything. It writes on
+// every run — here and under $CLAUDE_CONFIG_DIR — and it used to ignore what it
+// was given: a reviewer ran it as `--check`, expecting a dry run, and it
+// rewrote a manual install's ~/.claude/gsd/package.json.
+if (process.argv.length > 2) {
+  console.error(`sync-versions.js takes no arguments (got: ${process.argv.slice(2).join(' ')}). It writes on every run; there is no check mode.`);
+  process.exit(2);
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 
@@ -95,7 +104,7 @@ try {
 // tree makes the running server pick up changes without a release.
 //
 // It is opt-in because it is not free: it hand-builds a cache directory and
-// rewrites installed_plugins.json to point at it, so `claude plugin update gsd`
+// rewrites installed_plugins.json to point at it, so `claude plugin update gsd@gsd`
 // afterwards reports "already at the latest version" for a version the plugin
 // manager never installed. Worse, anything the copy below misses is missing from
 // the only copy the developer ever exercises — a packaging bug then cannot be
@@ -107,7 +116,7 @@ const pluginsFile = join(claudeDir, 'plugins', 'installed_plugins.json');
 const syncPluginCache = process.env.GSD_SYNC_PLUGIN_CACHE === '1';
 
 if (existsSync(pluginsFile) && !syncPluginCache) {
-  console.log('Plugin cache not touched (set GSD_SYNC_PLUGIN_CACHE=1 to sync, or run: claude plugin update gsd)');
+  console.log('Plugin cache not touched (set GSD_SYNC_PLUGIN_CACHE=1 to sync, or run: claude plugin update gsd@gsd)');
 }
 
 if (existsSync(pluginsFile) && syncPluginCache) {

@@ -483,3 +483,46 @@ describe('every workflow job that runs the suite checks out full history', () =>
     });
   }
 });
+
+describe('repo gates — scripts/sync-versions.js has no dry-run to mistake', () => {
+  // It rewrites version fields in the repo and under $CLAUDE_CONFIG_DIR on
+  // every run, and it ignored its arguments: a pre-tag reviewer ran it with
+  // `--check`, expecting a check, and it rewrote a manual install's
+  // ~/.claude/gsd/package.json (0.16.0 release, ship-runbook Trap 20).
+  it('refuses any argument before writing anything', () => {
+    const cfg = mkdtempSync(join(tmpdir(), 'gsd-sync-versions-'));
+    try {
+      // The file the `--check` run rewrote: a manual install's runtime package.json.
+      const runtimePkg = join(cfg, 'gsd', 'package.json');
+      execFileSync('mkdir', ['-p', join(cfg, 'gsd')]);
+      writeFileSync(runtimePkg, `${JSON.stringify({ name: 'gsd-lite', version: '0.0.1' })}\n`);
+      let status = 0;
+      let stderr = '';
+      try {
+        execFileSync(process.execPath, [join(repoRoot, 'scripts', 'sync-versions.js'), '--check'], {
+          env: { ...process.env, CLAUDE_CONFIG_DIR: cfg, GSD_SYNC_PLUGIN_CACHE: '' },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 60_000,
+        });
+      } catch (err) {
+        status = err.status;
+        stderr = String(err.stderr);
+      }
+      assert.equal(status, 2, 'sync-versions.js accepted --check and ran');
+      assert.match(stderr, /--check/, 'the refusal does not name the argument');
+      assert.equal(JSON.parse(readFileSync(runtimePkg, 'utf8')).version, '0.0.1', 'a refused run still rewrote the runtime package.json');
+    } finally {
+      rmSync(cfg, { recursive: true, force: true });
+    }
+  });
+
+  it('names the plugin id the marketplace defines when it points at claude plugin update', () => {
+    const marketplace = JSON.parse(readFileSync(join(repoRoot, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    const pluginId = `${marketplace.plugins[0].name}@${marketplace.name}`;
+    const src = readFileSync(join(repoRoot, 'scripts', 'sync-versions.js'), 'utf8');
+    const mentions = [...src.matchAll(/claude plugin update (\S+?)[`'")\s]/g)].map((m) => m[1]);
+    assert.ok(mentions.length >= 1, 'premise: sync-versions.js no longer mentions claude plugin update');
+    assert.deepEqual(mentions.filter((id) => id !== pluginId), [], `claude plugin update takes ${pluginId}`);
+  });
+});
