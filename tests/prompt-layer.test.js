@@ -208,4 +208,37 @@ describe('prompt layer — agents', () => {
       assert.match(description, /\bNot for\b/, `${file} description does not say what it is not for: ${description}`);
     }
   });
+
+  it('the reviewer takes the level from the task and reports it in the vocabulary the server accepts', () => {
+    const schema = read('src/schema.js');
+    const accepted = schema.match(/if \(!\[([^\]]+)\]\.includes\(r\.review_level\)\)/)?.[1];
+    assert.ok(accepted, 'premise: review_level validation not found in src/schema.js');
+    const levels = [...accepted.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+
+    const reviewer = read('agents/reviewer.md');
+    const contract = reviewer.match(/"review_level":\s*"([^"]+)"/)?.[1];
+    assert.ok(contract, 'premise: reviewer result contract has no review_level');
+    assert.deepEqual(contract.split('|').map((s) => s.trim()).sort(), levels);
+
+    // The level is decided at planning time. A second rule here was the
+    // defect: it omitted L3 and contradicted the file's own L3 section.
+    assert.doesNotMatch(reviewer, /→\s*L[0-3]\b/, 'reviewer.md maps work types to levels again');
+    const strategy = tagBlock(reviewer, 'review_strategy');
+    assert.match(strategy, /`level`/, 'review_strategy does not take the level from the task');
+    assert.match(strategy, /`review_level`/, 'review_strategy does not say where the level is reported');
+  });
+
+  it('the reviewer lists a passing L3 task in accepted_tasks, which is what the server holds', () => {
+    // handleReviewerResult holds an L3 task for human confirmation only when it
+    // arrives in accepted_tasks (src/tools/orchestrator/reviewer.js). A reviewer
+    // told the task "enters awaiting_user instead of accepted" may leave it out,
+    // and then it stays checkpointed and never reaches the hold.
+    assert.match(read('src/tools/orchestrator/reviewer.js'),
+      /result\.accepted_tasks \|\| \[\]\)\.filter\(\(taskId\) => \{[\s\S]{0,200}task\.level === 'L3'/,
+      'premise: the L3 hold no longer filters accepted_tasks');
+    const l3 = tagBlock(read('agents/reviewer.md'), 'review_strategy').split('\n').filter((l) => /L3/.test(l)).join('\n');
+    for (const field of ['accepted_tasks', 'requires_human_confirmation', 'security_implications', 'OWASP']) {
+      assert.ok(l3.includes(field), `reviewer L3 guidance does not mention ${field}`);
+    }
+  });
 });
