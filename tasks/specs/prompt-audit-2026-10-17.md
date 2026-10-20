@@ -1,5 +1,5 @@
 # 提示词审计 2026-10-17 的修复
-状态：进行中
+状态：进行中（实现与验证完成，待发版）
 
 ## 背景与目标
 
@@ -22,20 +22,20 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 ## 验收标准
 
 - [x] AC0：13 条在当前源码里逐条核实仍存在 — 验证：按审计原文 grep（见验证记录）
-- [ ] AC1：doctor 读 `runtime/update-notification.json`，按 hook 实际写出的每个 `kind` 报告 — 验证：`tests/prompt-layer.test.js`
-- [ ] AC2：doctor 只在 `package.json` 的 `name` 为 `gsd-lite` 时比较源码版本，`health.warning` 记 WARN — 验证：同上
-- [ ] AC3：doctor 的锁过期阈值与 `LOCK_STALE_MS` 一致 — 验证：同上（从 `src/utils.js` 取值）
-- [ ] AC4：随包文字不再让用户运行 `/plugin update` — 验证：同上
-- [ ] AC5：stop.md 只经 `state-update` 写状态；start.md 不再提 `codebase-retrieval`
-- [ ] AC6：reviewer 按 task 已有 level 审查，`review_level` 取值与 `src/schema.js` 一致，L3 流程与 `reviewer.js` 一致
-- [ ] AC7：四个代理的 description 写明由 GSD-Lite 编排器派发、返回什么、不用于什么
-- [ ] AC8：commands/agents 里没有 `<EXTREMELY-IMPORTANT>`；debugger/executor/reviewer 的重复施压段并成带理由的规则
-- [ ] AC9：debugger 不再写"添加日志"；researcher 不自己写 `.gsd/research/`
-- [ ] AC10：命令 description 不再枚举触发短语
-- [ ] AC11：reviewer 的输入协议与 `orchestrator-resume` 实际载荷一致
-- [ ] AC12：示例里的 `expires_at` 不再是会过期的字面日期
-- [ ] AC13：executor 的 TDD 例外写明不降低审查级别；计划阶段级别规则把迁移/CI/CD/部署配置定为至少 L2、涉及生产定为 L3
-- [ ] AC14：`npm test`、`npm run lint` 全绿；新增与改动的测试经 `scripts/gate-replay.js` 判定为 DISCRIMINATIVE
+- [x] AC1：doctor 读 `runtime/update-notification.json`，按 hook 实际写出的每个 `kind` 报告 — 验证：`tests/prompt-layer.test.js`
+- [x] AC2：doctor 只在 `package.json` 的 `name` 为 `gsd-lite` 时比较源码版本，`health.warning` 记 WARN — 验证：同上
+- [x] AC3：doctor 的锁过期阈值与 `LOCK_STALE_MS` 一致 — 验证：同上（从 `src/utils.js` 取值）
+- [x] AC4：随包文字不再让用户运行 `/plugin update` — 验证：同上
+- [x] AC5：stop.md 只经 `state-update` 写状态；start.md 不再提 `codebase-retrieval`
+- [x] AC6：reviewer 按 task 已有 level 审查，`review_level` 取值与 `src/schema.js` 一致，L3 流程与 `reviewer.js` 一致
+- [x] AC7：四个代理的 description 写明由 GSD-Lite 编排器派发、返回什么、不用于什么
+- [x] AC8：commands/agents 里没有 `<EXTREMELY-IMPORTANT>`；debugger/executor/reviewer 的重复施压段并成带理由的规则
+- [x] AC9：debugger 不再写"添加日志"；researcher 不自己写 `.gsd/research/`
+- [x] AC10：命令 description 不再枚举触发短语
+- [x] AC11：reviewer 的输入协议与 `orchestrator-resume` 实际载荷一致
+- [x] AC12：示例里的 `expires_at` 不再是会过期的字面日期
+- [x] AC13：executor 的 TDD 例外写明不降低审查级别；计划阶段级别规则把迁移/CI/CD/部署配置定为至少 L2、涉及生产定为 L3
+- [x] AC14：`npm test`、`npm run lint` 全绿；新增与改动的测试经 `scripts/gate-replay.js` 判定为 DISCRIMINATIVE
 - [ ] AC15：发版 — CI 绿、tag、npm 与 GitHub Release 按 ship runbook 核对产物
 
 ## 方案
@@ -80,9 +80,9 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 
 ## 计划
 
-- [ ] S1：新增 `tests/prompt-layer.test.js`（先红）— 覆盖 AC1–AC12 — 执行：主会话
-- [ ] S2：逐条修改，每个逻辑改动一个提交 — 执行：主会话
-- [ ] S3：全套测试 + lint + gate-replay — 覆盖 AC14
+- [x] S1：新增 `tests/prompt-layer.test.js`（先红）— 覆盖 AC1–AC12 — 执行：主会话
+- [x] S2：逐条修改，每个逻辑改动一个提交 — 执行：主会话
+- [x] S3：全套测试 + lint + gate-replay — 覆盖 AC14
 - [ ] S4：独立 reviewer（新子代理，克隆仓库，不在本工作树里切换版本）
 - [ ] S5：CHANGELOG + `npm version minor`（临时 `CLAUDE_CONFIG_DIR`）→ PR → CI → rebase 合并 → tag → 核对产物 — 覆盖 AC15
 
@@ -95,10 +95,31 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   随 A12 一起改成"写入任何文件"；该段其余文字不动。
 - researcher 的 `tools` 仍含 `Write`。去掉它能从机制上杜绝自行写文件，但审计没有要求，且改变代理的工具面 → 不改，列为遗留。
 - `/plugin update gsd` 还出现在 hook 输出里（`hooks/gsd-session-init.cjs:309`、`hooks/gsd-auto-update.cjs:793,799`，
-  各有测试钉住）。用户点名的是 doctor.md 和 README 两处；hook 三处是否一并改，发版前问用户。
+  各有测试钉住）。2026-10-20 问过用户，决定本次一并改（5d3b02d），门禁扩到 `hooks/`。
+- `commands/resume.md` 的 reviewing_phase 写"收集该 phase 中所有 L1 task 的 checkpoint 信息"，绕开了服务端的形状校验；
+  2026-10-20 问过用户，决定本次一并改（a348ca4）。同类的还有 reviewing_task 的"加载对应 task 的 checkpoint 信息"
+  和 execution-flow.md 动作表的 dispatch_reviewer 行，属同一条指令，一起改。
+- 新门禁全部放在 `tests/prompt-layer.test.js`，每个修复提交带上自己的那部分断言；每个提交都先在去掉修复的树上确认变红。
+- reviewer 载荷门禁从真实 `resumeWorkflow` 响应取字段；写的时候发现响应顶层还有 `summary`（resume 给编排器的展示块），
+  归入编排器字段，不算 reviewer 输入。
+- 每次提交的 pre-commit 钩子间歇失败，抓到完整输出后确认是 `tests/e2e-install.test.js:658`
+  "Layer B: npx from tarball E2E"：用空的 npm 缓存从 registry 拉全部生产依赖，90 秒超时；单独跑 12 秒通过，
+  负载高（另一个会话同时在跑发版检查，load 9–12）时超时。与本次改动无关，测试未改。超时只杀掉 `/bin/sh`，
+  留下的 `npm exec` 孤儿进程和临时目录已清理。列为遗留。
+
+- 本次不改、留给后续的（审计未点名，或改动超出本次范围）：
+  - `workflows/tdd-cycle.md:10`、`workflows/debugging.md:10` 仍有全大写的 "NO … WITHOUT …"；executor/debugger 按规则 0 会读这两份工作流。
+  - researcher 的 `tools` 仍含 `Write`（见上）。
+  - `scripts/sync-versions.js:98,110` 写 `claude plugin update gsd`（没带 `@gsd`）；scripts/ 不随包发布。
+  - e2e-install Layer B 在高负载下超时（见上）。
 
 ## 验证记录
 
 - 基线 `npm test`（main 9a5ade6）→ 通过（1514/1514，exit 0）
 - 基线 `npm run lint` → 通过（110 files，0 findings）
 - 基线 `gh run list --branch main --limit 1` → success（run 35645263038）
+- `node scripts/gate-replay-changed.sh main HEAD`（a348ca4）→ 通过：prompt-layer.test.js DISCRIMINATIVE（29/30 在 9a5ade6 上失败，
+  唯一通过的是语料存在性检查），auto-update.test.js、session-init.test.js 均 DISCRIMINATIVE
+- `npm run lint`（a348ca4）→ 通过（111 files，0 findings）
+- `npm test`（a348ca4，load 12）→ 1540/1544 通过，exit 1：失败只有 e2e-install Layer B 超时（4 个子测试被取消），见上
+- `npm test`（1ff63dd 之前各提交的 pre-commit）→ 通过，多次；单独运行 `--test-name-pattern="npx from tarball"` → 通过（4/4，12 秒）
