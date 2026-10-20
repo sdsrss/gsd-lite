@@ -165,7 +165,9 @@ Uninstall: `node cli.js uninstall` or `npx gsd-lite uninstall`
 
 ```bash
 # Plugin (auto-update checks GitHub Releases every 24h)
-/plugin update gsd
+# In a Claude Code session: /plugin → Installed → gsd → Update now
+# From a shell:
+claude plugin update gsd@gsd
 
 # npx
 npx gsd-lite install

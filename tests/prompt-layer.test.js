@@ -122,3 +122,30 @@ describe('prompt layer — doctor checks what the code actually does', () => {
       `doctor.md STEP 4 uses ${durations.join('/')} ms; withFileLock breaks a lock older than LOCK_STALE_MS = ${LOCK_STALE_MS} ms`);
   });
 });
+
+describe('prompt layer — upgrade instructions use commands Claude Code has', () => {
+  // `/plugin update` is not an in-session subcommand. The documented paths
+  // (code.claude.com/docs/en/discover-plugins, "Update plugins now") are the
+  // /plugin Installed tab → Update now, or `claude plugin update <plugin>@<marketplace>`.
+  const marketplace = JSON.parse(read('.claude-plugin/marketplace.json'));
+  const pluginId = `${marketplace.plugins[0].name}@${marketplace.name}`;
+  const userText = [...promptFiles, 'README.md'];
+
+  it('no shipped text tells the user to run /plugin update', () => {
+    const offenders = [];
+    for (const file of userText) {
+      read(file).split('\n').forEach((line, i) => {
+        if (/(^|[^\w])\/plugin update\b/.test(line)) offenders.push(`${file}:${i + 1} → ${line.trim()}`);
+      });
+    }
+    assert.deepEqual(offenders, [], `not a Claude Code command:\n  ${offenders.join('\n  ')}`);
+  });
+
+  for (const file of ['README.md', 'commands/doctor.md']) {
+    it(`${file} gives both documented update paths for ${pluginId}`, () => {
+      const src = read(file);
+      assert.ok(src.includes(`claude plugin update ${pluginId}`), `${file} lacks \`claude plugin update ${pluginId}\``);
+      assert.match(src, /Installed[\s\S]{0,80}Update now/, `${file} lacks the /plugin → Installed → Update now path`);
+    });
+  }
+});
