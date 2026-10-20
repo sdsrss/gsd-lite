@@ -167,8 +167,8 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - 被标记的 task 所在的已验收 phase 重新打开，之后的 resume 会回滚到它
 - 返回 `research_stored` 后恢复执行；`research_warnings` 里的警告和 `invalidated_tasks` 先转达给用户
 - 返回校验错误时什么都没有写入 (例如某个 `expires_at` 早于现在)：把错误原文交给 researcher 重新派发一次；第二次仍然报错就停下，把错误展示给用户。不要自己改 state 或写研究文件
-- researcher 因来源不可用返回 `[BLOCKED]` 结果时，服务端拒收并保留已记录的研究：停下告诉用户，等来源恢复后再 `/gsd:resume`
-- 研究过期只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时走到这里；其他状态 (等用户、暂停、规划中、等 /clear、核对工作区或计划) 先按各自的处理回到执行，之后的 resume 再刷新
+- researcher 返回 `[BLOCKED]` 结果 (来源不可用，或范围过广无法收敛) 时，已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户。用户可以补充信息、缩小范围、等来源恢复后再 `/gsd:resume`，或者放弃这份过期研究：`state-update({updates: {research: null, workflow_mode: "executing_task"}})`，之后 task 的 `research_basis` 不再解析。已记录的只有受阻占位 (规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行
+- 研究过期只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时走到这里；其他状态 (等用户、暂停、规划中、等 /clear、核对工作区或计划) 先按各自的处理回到执行 —— 有时就在同一次 resume 里 —— 回到执行后再刷新
 
 ---
 

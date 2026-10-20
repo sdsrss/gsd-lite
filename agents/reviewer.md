@@ -71,7 +71,7 @@ tools: Read, Bash, Grep, Glob
 <review_strategy>
 ## 审查级别
 
-每个审查对象都带着 `level` (计划阶段定下，服务端可能已在 checkpoint 时调整过)，由它决定审查深度。你不重新判定级别，也不因为改动看起来简单就降级；在结果的 `review_level` 里如实回报（阶段批量审查填 `L1-batch`）。L0 task 不会派到你这里。
+每个审查对象都带着 `level` (计划阶段定下，服务端可能已在 checkpoint 时调整过)，由它决定审查深度。你不重新判定级别，也不因为改动看起来简单就降级；在结果的 `review_level` 里如实回报（阶段批量审查填 `L1-batch`）。L0 task 通常在 checkpoint 时直接 accepted，不会派到你这里；checkpoint 之后才被改成 L0 的 task 会出现在阶段批量里，按 L1 审查它。
 
 - L1（阶段批量）/ L2（单任务）：按下面的双阶段审查。
 - L3（通常是单任务审查；阶段批量里出现 L3 task 时也一样）：同 L2，另外质量审查要覆盖 OWASP Top 10 相关问题，在 `security_implications` 列出安全影响，`requires_human_confirmation` 填 true。通过审查的 L3 task 照常放进 `accepted_tasks`：服务端据此把它转入 awaiting_user 等用户确认。漏掉它的那一轮不算审查通过 (见结果契约的规则补充)，它到不了人工确认。

@@ -1,7 +1,7 @@
 // Automation/business logic functions
 
 import { dirname, join } from 'node:path';
-import { writeFile, rename, unlink, open } from 'node:fs/promises';
+import { writeFile, rename, unlink, open, stat } from 'node:fs/promises';
 import { ensureDir, writeJson, getStatePath, fsyncDir, shippedDocPath } from '../../utils.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 import {
@@ -586,7 +586,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     return {
       error: true,
       code: ERROR_CODES.VALIDATION_FAILED,
-      message: `Research that has already expired would be refreshed again on the next resume: ${staleErrors.join('; ')}`,
+      message: `Research that expires this soon would be refreshed again on the next resume: ${staleErrors.join('; ')}`,
     };
   }
 
@@ -607,18 +607,22 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     const state = loaded.state;
     const previousIndex = state.research?.decision_index || {};
 
-    // A blocked result says the research could not be done. On a refresh it
-    // replaced every decision on record, sent every task citing them back for
-    // revalidation, reopened accepted phases and overwrote the four documents
-    // with placeholders. What is on record stays; the refresh is retried once
-    // sources are back. With nothing on record (planning), it is stored: the
-    // blocked decision is how the user hears about it.
-    const blocked = Object.keys(decision_index).filter((id) => decision_index[id].summary.startsWith(BLOCKED_DECISION_PREFIX));
-    if (state.research && blocked.length > 0) {
+    // A blocked result says the research could not be done. Over real research
+    // it replaced every decision on record, sent every task citing them back
+    // for revalidation, reopened accepted phases and overwrote the four
+    // documents with placeholders, so it is refused and the record stays.
+    // Over nothing, or over a record that is itself only blocked decisions (a
+    // project planned with no sources), there is nothing to protect and it is
+    // stored: refusing it there left that project dispatching the researcher
+    // on every resume once its 24-hour placeholder expired.
+    const isBlocked = (entry) => typeof entry?.summary === 'string' && entry.summary.startsWith(BLOCKED_DECISION_PREFIX);
+    const blocked = Object.keys(decision_index).filter((id) => isBlocked(decision_index[id]));
+    const recordHasResearch = Object.values(previousIndex).some((entry) => !isBlocked(entry));
+    if (recordHasResearch && blocked.length > 0) {
       return {
         error: true,
         code: ERROR_CODES.VALIDATION_FAILED,
-        message: `A blocked research result (${blocked.join(', ')}) would replace the research on record; it is kept, and the refresh can be retried when the researcher has sources again`,
+        message: `A blocked research result (${blocked.join(', ')}) would replace the research on record, so it is kept. Retry the refresh once the researcher can complete it, or give up the expired research with state-update (research: null, workflow_mode: "executing_task"), after which tasks' research_basis no longer resolves.`,
       };
     }
     // The one writer of the decision index; with no research on record the old
@@ -670,6 +674,9 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // Crash-consistency sentinel: marks the window between artifact renames and
     // the state.json write. resumeWorkflow reports it if it is still there.
     const sentinelPath = join(gsdDir, '.research-commit-pending');
+    // A marker already here is an earlier write that stopped partway; this
+    // attempt failing must not be what clears it.
+    const earlierMarker = await stat(sentinelPath).then(() => true, () => false);
     await writeFile(sentinelPath, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
 
     // Atomic multi-file write: write all artifacts first, then rename in batch
@@ -706,7 +713,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       // The marker exists for exactly this: once a document has been renamed
       // in, the research directory no longer matches state.json. Removing it
       // here left that disagreement with nothing to report it.
-      if (renamed === 0) {
+      if (renamed === 0 && !earlierMarker) {
         try { await unlink(sentinelPath); } catch {}
       }
       throw err;
