@@ -15,12 +15,16 @@
 // Some gates below are token checks, and say so: when the defect IS a wrong
 // token (a tool name from another harness, a pressure tag), the token is the
 // property. They do not prove the surrounding prose is right.
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
 import { LOCK_STALE_MS } from '../src/utils.js';
+import { init, update } from '../src/tools/state/index.js';
+import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(repoRoot, rel), 'utf8');
@@ -289,6 +293,63 @@ describe('prompt layer — agents', () => {
     for (const field of ['accepted_tasks', 'requires_human_confirmation', 'security_implications', 'OWASP']) {
       assert.ok(l3.includes(field), `reviewer L3 guidance does not mention ${field}`);
     }
+  });
+
+  describe('the reviewer input protocol matches the payload orchestrator-resume sends', () => {
+    // The protocol described `review_targets` with levels L1/L2 and a
+    // `task_spec` path. The real payload has `review_scope`, `phase_id`,
+    // `current_review`, and `review_target` (singular) for a task review; no
+    // `task_spec` at all. Read the keys off a real dispatch, not a copy.
+    const tempDirs = [];
+    const payloads = {};
+    // One project per mode, each driven the way the orchestrator drives it:
+    // a task checkpointed, then the review mode the executor result would set.
+    async function dispatchReviewer(currentReview, workflowMode) {
+      const dir = await mkdtemp(join(tmpdir(), 'gsd-prompt-layer-'));
+      tempDirs.push(dir);
+      await init({ project: 'prompt-layer', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }] }], basePath: dir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: dir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'checkpointed', checkpoint_commit: 'abc1234' }] }] }, basePath: dir });
+      await update({ updates: { workflow_mode: workflowMode, current_review: currentReview }, basePath: dir });
+      return resumeWorkflow({ basePath: dir });
+    }
+    before(async () => {
+      payloads.task = await dispatchReviewer({ scope: 'task', scope_id: '1.1', stage: 'spec' }, 'reviewing_task');
+      payloads.phase = await dispatchReviewer({ scope: 'phase', scope_id: 1 }, 'reviewing_phase');
+    });
+    after(() => Promise.all(tempDirs.map((d) => rm(d, { recursive: true, force: true }))));
+
+    // success / action / workflow_mode are the loop's routing fields, and
+    // `summary` is the display block resume attaches to every successful
+    // response (commands/resume.md STEP 1) — all read by the orchestrator.
+    // Everything else is what the reviewer receives.
+    const ROUTING = new Set(['success', 'action', 'workflow_mode', 'summary']);
+
+    it('names every field the payload carries and none it does not', () => {
+      assert.equal(payloads.task.review_scope, 'task', `premise: task fixture returned ${JSON.stringify(payloads.task)}`);
+      assert.equal(payloads.phase.review_scope, 'phase', `premise: phase fixture returned ${JSON.stringify(payloads.phase)}`);
+      const sent = new Set();
+      for (const p of Object.values(payloads)) {
+        for (const k of Object.keys(p)) if (!ROUTING.has(k)) sent.add(k);
+        for (const k of Object.keys(p.current_review || {})) sent.add(k);
+        for (const t of [p.review_target, ...(p.review_targets || [])].filter(Boolean)) {
+          for (const k of Object.keys(t)) sent.add(k);
+        }
+      }
+      assert.ok(sent.has('review_target') && sent.has('review_targets'), `premise: payload keys were ${[...sent]}`);
+
+      const protocol = tagBlock(read('agents/reviewer.md'), 'context_protocol');
+      const named = new Set([...protocol.matchAll(/^\s*- `(\w+)`/gm)].map((m) => m[1]));
+      const missing = [...sent].filter((k) => !named.has(k));
+      const invented = [...named].filter((k) => !sent.has(k));
+      assert.deepEqual(missing, [], 'reviewer context_protocol omits fields the payload carries');
+      assert.deepEqual(invented, [], 'reviewer context_protocol describes fields the payload never carries');
+    });
+
+    it('says where the task spec is, since the payload does not carry it', () => {
+      const protocol = tagBlock(read('agents/reviewer.md'), 'context_protocol');
+      assert.match(protocol, /\.gsd\/phases\/phase-<phase_id>\.md/, 'reviewer has no way to find the task spec');
+    });
   });
 });
 
