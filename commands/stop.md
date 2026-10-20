@@ -43,7 +43,7 @@ description: Save current state and pause project execution
 </process>
 
 <rules>
-- 原子写入: 先写 .tmp 再 rename，避免写入中断导致状态损坏
+- 状态只经 `state-update` MCP 工具写入，不直接编辑 `.gsd/state.json`：原子写入、schema 校验和加锁都由服务端完成
 - 只更新 canonical fields: 不写入 derived fields
 - 不执行任何代码/测试/构建操作
 - 不清理任何临时文件 (让 /gsd:resume 恢复时处理)
