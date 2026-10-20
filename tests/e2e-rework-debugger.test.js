@@ -510,3 +510,59 @@ describe('TC10: Debugger architecture_concern → phase failed', () => {
     assert.equal(task.lifecycle, 'failed');
   });
 });
+
+// ── TC11: the server counts fix directions; the third failed one fails the phase ──
+
+describe('TC11: a debugger that keeps reporting fix_attempts: 0 still runs out of directions', () => {
+  // agents/debugger.md: a fix direction is tried at most three times; if the
+  // third fails too the debugger must return failed with
+  // architecture_concern: true and the phase fails. fix_attempts was stored
+  // exactly as the debugger reported it, and each debugger is a fresh context:
+  // one that reported 0 every round kept the rule from ever firing, and the
+  // executor → debugger → executor loop had no end.
+  let dir;
+  before(async () => { dir = await createTempDir(); });
+  after(async () => { await removeTempDir(dir); });
+
+  it('fails the phase on the debugger result after the third direction failed', async () => {
+    await initProject(dir, {
+      phases: [{ name: 'Phase 1', tasks: [{ index: 1, name: 'Stubborn task', level: 'L1', requires: [] }] }],
+    });
+    await walkToRunning(dir, 1, '1.1');
+
+    const rounds = [];
+    let res = await failExecutorNTimes(dir, '1.1', 3);
+    for (let round = 1; round <= 6 && res.action === 'dispatch_debugger'; round++) {
+      const task = (await read({ basePath: dir })).phases[0].todo[0];
+      rounds.push({ round, directions_before: task.debug_context?.fix_attempts ?? 0 });
+      res = await handleDebuggerResult({
+        result: {
+          task_id: '1.1',
+          outcome: 'fix_suggested',
+          root_cause: `Hypothesis ${round}`,
+          fix_direction: `Direction ${round}`,
+          evidence: [],
+          hypothesis_tested: [{ hypothesis: `H${round}`, result: 'confirmed', evidence: `ev:${round}` }],
+          fix_attempts: 0,
+          blockers: [],
+          architecture_concern: false,
+        },
+        basePath: dir,
+      });
+      rounds.at(-1).action = res.action;
+      if (res.action !== 'dispatch_executor') break;
+      res = await failExecutorNTimes(dir, '1.1', 3);
+    }
+
+    const trace = JSON.stringify(rounds);
+    assert.deepEqual(rounds.map((r) => r.action), ['dispatch_executor', 'dispatch_executor', 'dispatch_executor', 'phase_failed'], trace);
+    // What each debugger was told about the directions already tried.
+    assert.deepEqual(rounds.map((r) => r.directions_before), [0, 1, 2, 3], trace);
+
+    const state = await read({ basePath: dir });
+    assert.equal(state.workflow_mode, 'failed');
+    assert.equal(state.phases[0].lifecycle, 'failed');
+    assert.equal(state.phases[0].todo[0].lifecycle, 'failed');
+    assert.equal(state.phases[0].todo[0].debug_context.fix_attempts, 3);
+  });
+});

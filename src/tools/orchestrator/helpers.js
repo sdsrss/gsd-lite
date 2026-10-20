@@ -11,6 +11,9 @@ import { getGitHead, getGsdDir } from '../../utils.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 
 const MAX_DEBUG_RETRY = 3;
+// Fix directions a debugger may hand out for one task before the next failure
+// fails the phase (agents/debugger.md, "修复方向最多试 3 次").
+const MAX_FIX_DIRECTIONS = 3;
 const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
 const MAX_PHASE_REVIEW_RETRY = 5;
@@ -450,6 +453,7 @@ async function tryAutoUnblock(state, phase, basePath) {
 
 export {
   MAX_DEBUG_RETRY,
+  MAX_FIX_DIRECTIONS,
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
   MAX_PHASE_REVIEW_RETRY,

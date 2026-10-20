@@ -307,8 +307,8 @@ describe('prompt layer — agents', () => {
     // architecture_concern: true, and the server then fails the whole phase.
     // The new principles paragraph first said "task 随之失败", and the result
     // rules said the orchestrator only "应考虑" failing the phase.
-    assert.match(read('src/tools/orchestrator/debugger.js'), /const phaseFailed = result\.architecture_concern === true;/,
-      'premise: architecture_concern no longer decides phase failure');
+    assert.match(read('src/tools/orchestrator/debugger.js'), /const phaseFailed = result\.architecture_concern === true \|\| directionsExhausted;/,
+      'premise: architecture_concern and the server-counted directions no longer decide phase failure');
     const src = read('agents/debugger.md');
     const principles = tagBlock(src, 'principles');
     assert.ok(principles.includes('第 3 次仍无效就必须返回 `failed` 并标记 `architecture_concern: true`，整个 phase 随之失败'),
@@ -602,6 +602,7 @@ describe('prompt layer — the instruction sentences', () => {
     // handleReviewerResult counts a phase review that leaves a target out as an
     // incomplete round; it used to loop forever.
     ['agents/reviewer.md', '漏掉任何一个，这一轮就不算审查通过：列出的 task 照常处理，服务端记一次重试，下一轮再审漏掉的；重试次数用完就停下来交给用户'],
+    ['agents/debugger.md', '这个数由服务端自己记：已给出 3 个方向后又派发到你这里，无论你返回什么，phase 都会被标为 failed'],
     // The refresh path: with the researcher no longer writing, a step that only
     // said "更新 state.json" wrote no documents (second pre-tag review).
     ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
