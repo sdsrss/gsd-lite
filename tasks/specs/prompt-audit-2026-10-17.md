@@ -1,5 +1,5 @@
 # 提示词审计 2026-10-17 的修复
-状态：进行中（用户选择拆开发版：A12 推迟到研究刷新重设计；回退已完成，等只看回退的复审，通过后发版）
+状态：完成（v0.16.0 已于 2026-10-20 发布，A12 推迟到研究刷新重设计）
 
 ## 背景与目标
 
@@ -37,7 +37,7 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 - [x] AC12：示例里的 `expires_at` 不再是会过期的字面日期
 - [x] AC13：executor 的 TDD 例外写明不降低审查级别；计划阶段级别规则把迁移/CI/CD/部署配置定为至少 L2、涉及生产定为 L3
 - [x] AC14：`npm test`、`npm run lint` 全绿；新增与改动的测试经 `scripts/gate-replay.js` 判定为 DISCRIMINATIVE
-- [ ] AC15：发版 — CI 绿、tag、npm 与 GitHub Release 按 ship runbook 核对产物
+- [x] AC15：发版 — CI 绿、tag、npm 与 GitHub Release 按 ship runbook 核对产物
 
 ## 方案
 
@@ -85,7 +85,7 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 - [x] S2：逐条修改，每个逻辑改动一个提交 — 执行：主会话
 - [x] S3：全套测试 + lint + gate-replay — 覆盖 AC14
 - [x] S4：独立 reviewer（新子代理，克隆仓库，不在本工作树里切换版本）— 两轮，见决策与进展
-- [ ] S5：CHANGELOG + `npm version minor`（临时 `CLAUDE_CONFIG_DIR`）→ PR → CI → rebase 合并 → tag → 核对产物 — 覆盖 AC15
+- [x] S5：CHANGELOG + `npm version minor`（临时 `CLAUDE_CONFIG_DIR`）→ PR → CI → rebase 合并 → tag → 核对产物 — 覆盖 AC15
 
 ## 决策与进展
 
@@ -155,6 +155,10 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   - a7454e4：门禁注释改为写明仍会漏过的写法（第四次复审的 22 个变异中 12 个保持绿）。
   - 第四次复审的 MEDIUM 处理：research.md:30 的矛盾随 STEP 5 回退消失；过去的单个决策 `expires_at` 与 HIGH 一起归入重设计；
     CHANGELOG 与提交说明的过度表述：CHANGELOG 已删掉相关条目，已推送的提交说明不改写，测试注释已更正。
+- 第五次复审（8bb501e..6464623，只看回退）：tag。无 BLOCKER / HIGH / MEDIUM，LOW 4 个（列在遗留）。
+  复审代理运行 `scripts/sync-versions.js --check` 时把 `~/.claude/gsd/package.json` 的 version 改成 0.16.0（该脚本不认 `--check`），
+  随后自行改回 0.13.0；核实：已安装的 `src/server.js` 与 v0.13.0 逐字节相同，`package-lock.json` 根版本 0.13.0，
+  按 v0.13.0 安装器重建的 package.json 与现文件逐字节相同，安装时间落在 v0.13.0 与 v0.14.0 两个 tag 之间。
 - 本次不改、留给后续的（审计未点名、属于代码改动，或超出本次范围）：
   - 研究刷新重设计（含 A12）。起点：e3d5424（规则 1/3 与 TC8）、1e1700c（重新开始时的分析）、本 spec 第三、四次复审记录。要解决：
     - 已验收 phase 里的 task 被刷新判为 `needs_revalidation` 时 phase 不重开，`validateState` 拒收（第四次复审 BLOCKER）；
@@ -176,7 +180,12 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   - `scripts/sync-versions.js:98,110` 写 `claude plugin update gsd`（没带 `@gsd`）；scripts/ 不随包发布。
   - e2e-install Layer B 用空 npm 缓存从 registry 装依赖、90 秒超时，机器负载高时超时，超时后会留下孤儿 `npm exec` 进程；
     本次跑过的孤儿与临时目录都已清理，测试未改。
-  - 本地分支 `fix/ci-pr-main-ref`、`fix/deps-audit-2026-10` 已经 rebase 合并，`git branch -d` 拒绝删除（SHA 不同），保留。
+  - 本地分支 `fix/ci-pr-main-ref`、`fix/deps-audit-2026-10`、`fix/prompt-audit-2026-10-17` 已经 rebase 合并，
+    `git branch -d` 拒绝删除（SHA 不同），保留。
+  - 第五次复审的 LOW：新门禁只认 execution-flow STEP 5–10 里的工具全名（`state-update` 带 `research`、写进 start.md 或
+    researcher.md、去掉前缀都漏过）；删掉的 premise 测试是 `storeResearch` 无项目检查（logic.js:549）唯一的覆盖；
+    CHANGELOG"服务端把过去的日期视为过期"在本版只对刷新路径成立；`workflows/research.md:52` 仍写 TTL 存在 state.json（早于本次）。
+  - `scripts/sync-versions.js` 不认 `--check`，不设 `CLAUDE_CONFIG_DIR` 运行会改写 `~/.claude/gsd/package.json`。
 
 ## 验证记录
 
@@ -196,3 +205,13 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   `npm audit --omit=dev --audit-level=high` → 通过（exit 0）；`bash scripts/gate-replay-changed.sh origin/main HEAD` → 通过
   （auto-update、prompt-layer、session-init 均 DISCRIMINATIVE）。以 8bb501e 为基准时 e2e-research-integration 判 VACUOUS
   （回退把文件恢复成旧内容，旧内容在 8bb501e 上本就全绿）；CI 只对 PR 和 main 推送运行，基准都是 main，不会走到这个范围。
+- 发版（v0.16.0）：
+  - `gh pr merge 31 --rebase` → 合并（main b52dadb，`git diff 6464623 origin/main` 为空）；三个版本号均为 0.16.0
+  - main CI run 39476282618 → 通过（gate-replay、test 20/22/24）
+  - release run 39476677928 → 通过（validate、publish）；日志含 `All versions consistent: 0.16.0`、`Packed … sha256=c6957c40…`、
+    `Signed checksum (Ed25519)`、`Embedded public key pairs with the signing secret ✓`、provenance logIndex=3341906251、`+ gsd-lite@0.16.0`
+  - `npm view gsd-lite version --prefer-online` → 第 3 次轮询为 0.16.0（前两次 0.15.0）；`dist.attestations` predicateType slsa provenance v1
+  - Release 资产 `sha256sum` == 正文 `sha256:` == 发布日志 sha256；`verifyReleaseSignature` 8/8 符合预期（真对 true，7 个反例 false）
+  - 解包：13 处改动 grep 命中（9 处应有、4 处应无），`scripts/` `tests/` `tasks/` `docs/` 不在包内，`.claude-plugin/` 在
+  - 冒烟：一次性 `CLAUDE_CONFIG_DIR` 里 marketplace add + `claude plugin install gsd@gsd` → `gsd 0.16.0`，Skills 6、Agents 4、
+    Hooks 3、MCP servers 1；真实 `~/.claude.json` 无冒烟痕迹，`~/.claude/settings.json` 未改；冒烟目录已删除
