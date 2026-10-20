@@ -399,6 +399,10 @@ describe('prompt layer — agents', () => {
     for (const [mode, field] of [['reviewing_task', 'review_target'], ['reviewing_phase', 'review_targets']]) {
       const body = section(resume, `### \`${mode}\``);
       assert.ok(body.includes(`\`${field}\` 原样转发`), `resume.md ${mode} does not forward ${field} from the response`);
+      // The rest of what reviewer.md's context_protocol says it receives.
+      for (const key of ['review_scope', 'phase_id', 'current_review']) {
+        assert.ok(body.includes(`\`${key}\``), `resume.md ${mode} does not forward ${key}, which the reviewer protocol expects`);
+      }
     }
     const gathering = [];
     for (const file of [...mdFiles('commands'), ...mdFiles('workflows')]) {
