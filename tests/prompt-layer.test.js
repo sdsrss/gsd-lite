@@ -33,6 +33,11 @@ function mdFiles(dir) {
 const PROMPT_DIRS = ['commands', 'agents', 'workflows', 'references'];
 const promptFiles = PROMPT_DIRS.flatMap(mdFiles);
 
+function frontmatterDescription(src) {
+  const fm = src.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+  return fm.match(/^description:\s*(.*)$/m)?.[1] ?? '';
+}
+
 // The text between a heading and the next heading of the same depth, or the
 // closing tag of the block the heading sits in, whichever comes first.
 function section(src, heading) {
@@ -171,6 +176,16 @@ describe('prompt layer — commands', () => {
     // instruction names nothing callable, and the step is skipped or guessed.
     const offenders = promptFiles.filter((f) => read(f).includes('codebase-retrieval'));
     assert.deepEqual(offenders, []);
+  });
+
+  it('command descriptions state intent instead of enumerating trigger phrases', () => {
+    // A description listing "Use when: (1)…(5) '帮我做…'" routes ordinary
+    // implementation requests to a /gsd command.
+    for (const file of mdFiles('commands')) {
+      const description = frontmatterDescription(read(file));
+      assert.ok(description.length > 0, `premise: ${file} has no description`);
+      assert.doesNotMatch(description, /Use when|\(\d\)/i, `${file} description enumerates triggers: ${description}`);
+    }
   });
 
   it('no command wraps its rules in a pressure tag (token check)', () => {
