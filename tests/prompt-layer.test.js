@@ -231,6 +231,28 @@ describe('prompt layer — agents', () => {
     }
   });
 
+  it('a workflow that says it matches an agent quotes the agent, and none carries an all-caps law', () => {
+    // tdd-cycle.md and debugging.md headed their rule "铁律 (与 executor/debugger
+    // 一致)" over an all-caps line the agents no longer carry — every executor
+    // dispatch loads tdd-cycle.md, so the claim of agreement was read as fact.
+    for (const file of promptFiles) {
+      assert.doesNotMatch(read(file), /\bNO [A-Z]+(?: [A-Z]+)* WITHOUT\b/, `${file} carries an all-caps iron law`);
+    }
+    for (const [workflow, agent, block] of [
+      ['workflows/tdd-cycle.md', 'agents/executor.md', 'testing_rules'],
+      ['workflows/debugging.md', 'agents/debugger.md', 'principles'],
+    ]) {
+      const src = read(workflow);
+      const header = `## 规则 (与 ${basename(agent, '.md')} 的 \`${block}\` 一致)`;
+      assert.ok(src.includes(header), `${workflow} no longer names the agent block it claims to match`);
+      const firstSentence = section(src, header).trim().split('。')[0];
+      assert.ok(firstSentence.length > 10 && tagBlock(read(agent), block).includes(`${firstSentence}。`),
+        `${workflow} claims to match ${agent} <${block}> but its rule is not in it:\n  ${firstSentence}`);
+    }
+    assert.doesNotMatch(read('references/anti-rationalization-full.md'), /Agent 内联版本为精简摘要/,
+      'the reference still says the agents carry a red-flag summary');
+  });
+
   it('the executor gives the reason for test-first and for fresh evidence', () => {
     const rules = tagBlock(read('agents/executor.md'), 'testing_rules');
     assert.match(rules, /后写的测试/, 'test-first has lost its reason');
