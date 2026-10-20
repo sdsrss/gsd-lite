@@ -11,6 +11,31 @@ const PROJECT_ROOT = resolve(import.meta.dirname, '..');
 
 // --- Shared helpers ---
 
+// npm and npx run as a process tree under the shell, and execSync's timeout
+// kills only the shell: on a timeout the npm processes kept running, holding
+// the temp dirs `after` was removing. Run the command as its own process group
+// and kill the whole group.
+function runGroup(command, { timeout, ...options }) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, { ...options, shell: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    }, timeout);
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) return resolvePromise(stdout);
+      const how = timedOut ? `timed out after ${timeout} ms` : (signal ?? `exit ${code}`);
+      reject(new Error(`${command}: ${how}\n${stderr}`));
+    });
+  });
+}
+
 async function makeClaudeHome(prefix) {
   const home = await mkdtemp(join(tmpdir(), prefix));
   const claudeDir = join(home, '.claude');
@@ -526,9 +551,9 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
     tarball = join(PROJECT_ROOT, tarballName);
 
     // npm install -g from tarball into isolated prefix
-    execSync(
+    await runGroup(
       `npm install -g ${JSON.stringify(tarball)} --prefix ${JSON.stringify(npmPrefix)}`,
-      { encoding: 'utf-8', timeout: 60000 }
+      { timeout: 60000 }
     );
   });
 
@@ -655,7 +680,7 @@ describe('Layer B: npx from tarball E2E', { timeout: 120000 }, () => {
     tarball = join(PROJECT_ROOT, packInfo[0].filename);
 
     // Run via npx from tarball (file:// prefix required for local tarballs)
-    execSync(
+    await runGroup(
       `npx --yes ${JSON.stringify(`file://${tarball}`)} install`,
       {
         env: {
@@ -664,7 +689,6 @@ describe('Layer B: npx from tarball E2E', { timeout: 120000 }, () => {
           CLAUDE_CONFIG_DIR: join(home, '.claude'),
           npm_config_cache: npxCache,
         },
-        encoding: 'utf-8',
         timeout: 90000,
       }
     );
