@@ -199,6 +199,43 @@ describe('a store lands whole or changes nothing', () => {
     assert.equal(res.action, 'research_stored', JSON.stringify(res));
   });
 
+  for (const [label, record, result] of [
+    // A record mixing a real decision with a placeholder still holds research.
+    ['a record that mixes real and blocked decisions',
+      { 'decision:a': { summary: 'A', source: 'docs' }, 'decision:blocked-no-sources': { summary: '[BLOCKED] 部分来源不可用', source: 'none' } },
+      { 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none', expires_at: future(1) } }],
+    // A result that carries real decisions next to a blocked one is still a
+    // research that could not be completed.
+    ['a result that mixes real and blocked decisions',
+      { 'decision:a': { summary: 'A', source: 'docs' } },
+      { 'decision:c': { summary: 'C', source: 'docs' }, 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none', expires_at: future(1) } }],
+  ]) {
+    it(`refuses a blocked refresh over ${label}, writing nothing`, async () => {
+      // Third pre-tag review: both mutations — treating a mixed record as
+      // having no research, and refusing only all-blocked results — were green.
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a', research_basis: ['decision:a'] }] }], basePath: dir });
+      assert.equal((await handleResearcherResult({ ...payload(record), basePath: dir })).action, 'research_stored', 'premise: the record is stored');
+      const before = await snapshot();
+      const res = await handleResearcherResult({ ...payload(result, { expires_at: future(1) }), basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      // The refusal names the way out that resume.md and the CHANGELOG give.
+      assert.ok(res.message.includes('research: null') && res.message.includes('workflow_mode: "executing_task"'), res.message);
+      assert.deepEqual(await snapshot(), before, 'a refused store changed the project');
+    });
+  }
+
+  it('a write that fails before renaming anything, with no earlier marker, leaves none', async () => {
+    // The marker means "the documents may not match state.json"; a failure
+    // that replaced nothing must not raise it.
+    await seeded();
+    const stack = join(dir, '.gsd', 'research', 'STACK.md');
+    await unlink(stack);
+    await mkdir(stack);
+    await assert.rejects(storeResearch({ ...payload({ 'decision:a': { summary: 'A2', source: 'docs' } }), basePath: dir }));
+    const marker = await stat(join(dir, '.gsd', '.research-commit-pending')).then(() => true, () => false);
+    assert.equal(marker, false, 'a failure that renamed nothing left a marker');
+  });
+
   it('stores a blocked refresh over research that was itself blocked, so an offline project keeps going', async () => {
     // Refusing every blocked result while research was on record left a
     // project planned offline dispatching the researcher on every resume once
