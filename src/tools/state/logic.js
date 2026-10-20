@@ -223,6 +223,21 @@ export function propagateInvalidation(phase, reworkTaskId, contractChanged) {
 }
 
 /**
+ * A phase that has finished, or is under review, and regains unfinished work is
+ * active again: its review and handoff described work that has changed.
+ * validateState refuses an accepted phase holding a task that is not accepted,
+ * and PHASE_LIFECYCLE gives `accepted` no exit, so this is the one way back.
+ * Shared by contract-change and research invalidation so neither can reopen a
+ * phase differently from the other.
+ */
+function reopenPhase(phase) {
+  if (phase.lifecycle !== 'accepted' && phase.lifecycle !== 'reviewing') return;
+  phase.lifecycle = 'active';
+  phase.phase_review = { status: 'pending', retry_count: 0 };
+  if (phase.phase_handoff) phase.phase_handoff.required_reviews_passed = false;
+}
+
+/**
  * R-12 (audit M2): propagate a contract-change invalidation ACROSS phases.
  * When a phase's contract changes, later phases that depend on it via a
  * phase-kind dependency have their already-completed (accepted/checkpointed)
@@ -266,11 +281,7 @@ export function propagateCrossPhaseInvalidation(state, sourcePhaseId) {
         }
       }
       if (invalidatedAny) {
-        if (phase.lifecycle === 'accepted' || phase.lifecycle === 'reviewing') {
-          phase.lifecycle = 'active';
-          phase.phase_review = { status: 'pending', retry_count: 0 };
-          if (phase.phase_handoff) phase.phase_handoff.required_reviews_passed = false;
-        }
+        reopenPhase(phase);
         queue.push(phase.id); // this phase is now incomplete → cascade to its dependents
       }
     }
@@ -458,56 +469,45 @@ export function matchDecisionForBlocker(decisions, blockedReason) {
 }
 
 /**
- * Apply research refresh: compare new research decisions against existing state.
- * 4 rules:
- *   1. Same ID + same summary -> update metadata (e.g. expires_at), keep task lifecycle
- *   2. Same ID + changed summary -> invalidate dependent tasks (needs_revalidation)
- *   3. Old ID missing from new -> invalidate dependent tasks + warning
- *   4. Brand new ID -> add to index, no impact on existing tasks
- * Returns { warnings: string[] }.
+ * Apply research refresh: the new decision index replaces the old one whole,
+ * and the rules decide which tasks it invalidates.
+ *   1. Same ID + same summary -> kept, task lifecycle unchanged
+ *   2. Same ID + changed summary -> dependent tasks invalidated (needs_revalidation)
+ *   3. Old ID missing from new -> dependent tasks invalidated + warning
+ *   4. Brand new ID -> added, no impact on existing tasks
+ *
+ * Replacement, not a merge: a refresh re-runs the research and storeResearch
+ * rewrites all four documents, so nothing of an old entry outlives it. The
+ * merge kept a dropped decision with its past expires_at (rule 3) and the old
+ * expires_at of a kept one that came back without its own (rule 1); either one
+ * expired the research again on the next resume, and the kept entry fired
+ * rule 3 on every later refresh.
+ *
+ * A phase that held an invalidated task is reopened (reopenPhase). Later
+ * phases are not: whether a contract changed is for the review of the
+ * re-executed task to say (invalidates_downstream), as on every other path.
+ * Returns { warnings: string[], invalidated: string[] } (task ids).
  */
 export function applyResearchRefresh(state, newResearch) {
   const warnings = [];
   const oldIndex = state.research?.decision_index || {};
   const newIndex = newResearch?.decision_index || {};
 
-  // Copy-on-write: build merged index without mutating oldIndex
-  const mergedIndex = { ...oldIndex };
-
-  // Collect IDs of decisions that changed or were removed
   const invalidatedIds = new Set();
-
-  // Check existing decisions against new
   for (const [id, oldDecision] of Object.entries(oldIndex)) {
-    if (id in newIndex) {
-      const newDecision = newIndex[id];
-      if (oldDecision.summary === newDecision.summary) {
-        // Rule 1: same conclusion — update metadata
-        mergedIndex[id] = { ...oldDecision, ...newDecision };
-      } else {
-        // Rule 2: changed conclusion — replace and invalidate
-        mergedIndex[id] = newDecision;
-        invalidatedIds.add(id);
-      }
-    } else {
-      // Rule 3: old ID missing from new research
+    if (!(id in newIndex)) {
       invalidatedIds.add(id);
       warnings.push(`Decision "${id}" removed in new research — dependent tasks invalidated`);
+    } else if (oldDecision.summary !== newIndex[id].summary) {
+      invalidatedIds.add(id);
     }
   }
 
-  // Rule 4: brand new IDs — just add them
-  for (const [id, newDecision] of Object.entries(newIndex)) {
-    if (!(id in oldIndex)) {
-      mergedIndex[id] = newDecision;
-    }
-  }
-
-  // Assign merged index to state (atomic replacement)
   if (!state.research) state.research = {};
-  state.research.decision_index = mergedIndex;
+  state.research.decision_index = { ...newIndex };
 
   // C-3: Only invalidate tasks whose lifecycle allows needs_revalidation
+  const invalidated = [];
   if (invalidatedIds.size > 0) {
     const canInvalidate = new Set(
       Object.entries(TASK_LIFECYCLE)
@@ -515,18 +515,44 @@ export function applyResearchRefresh(state, newResearch) {
         .map(([s]) => s),
     );
     for (const phase of (state.phases || [])) {
+      let phaseTouched = false;
       for (const task of (phase.todo || [])) {
         const basis = task.research_basis || [];
         const affected = basis.some(id => invalidatedIds.has(id));
         if (affected && canInvalidate.has(task.lifecycle)) {
           task.lifecycle = 'needs_revalidation';
           if (task.evidence_refs) task.evidence_refs = [];
+          invalidated.push(task.id);
+          phaseTouched = true;
         }
       }
+      if (phaseTouched) reopenPhase(phase);
     }
   }
 
-  return { warnings };
+  return { warnings, invalidated };
+}
+
+/**
+ * The expiry dates a researcher result carries, refused when any is not a
+ * date later than now. Stored as-is, an expired date made the research expire
+ * on the next resume, and the refresh that triggered could store it again.
+ * Checked here, at the store, and not in validateState: research on record is
+ * supposed to expire with time.
+ */
+function staleExpiryErrors(result, decisionIndex) {
+  const now = Date.now();
+  const errors = [];
+  const check = (label, value) => {
+    const at = Date.parse(value);
+    if (!Number.isFinite(at)) errors.push(`${label} must be an ISO 8601 date (got ${JSON.stringify(value)})`);
+    else if (at <= now) errors.push(`${label} ${value} has already passed`);
+  };
+  check('expires_at', result.expires_at);
+  for (const [id, entry] of Object.entries(decisionIndex)) {
+    if ('expires_at' in entry) check(`decision_index.${id}.expires_at`, entry.expires_at);
+  }
+  return errors;
 }
 
 export async function storeResearch({ result, artifacts, decision_index, basePath = process.cwd() } = {}) {
@@ -545,6 +571,15 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Invalid research decision_index: ${decisionIndexValidation.errors.join('; ')}` };
   }
 
+  const staleErrors = staleExpiryErrors(result, decision_index);
+  if (staleErrors.length > 0) {
+    return {
+      error: true,
+      code: ERROR_CODES.VALIDATION_FAILED,
+      message: `Research that has already expired would be refreshed again on the next resume: ${staleErrors.join('; ')}`,
+    };
+  }
+
   const statePath = await getStatePath(basePath);
   if (!statePath) {
     return { error: true, code: ERROR_CODES.NO_PROJECT_DIR, message: 'No GSD project found (.gsd directory missing). Run /gsd:start or /gsd:prd to begin.' };
@@ -555,14 +590,60 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     const loaded = await loadState(statePath);
     if (loaded.error) return loaded.error;
 
+    // The next state is worked out and validated before any file is written.
+    // The documents used to be renamed into place first, so a refused state
+    // left them describing research that state.json did not record, and the
+    // commit marker that would have said so was removed with the refusal.
     const state = loaded.state;
+    const previousIndex = state.research?.decision_index || {};
+    // The one writer of the decision index; with no research on record the old
+    // index is empty and nothing is invalidated.
+    const { warnings, invalidated } = applyResearchRefresh(state, { decision_index });
+    state.research = {
+      ...state.research,
+      volatility: result.volatility,
+      expires_at: result.expires_at,
+      sources: result.sources,
+      files: RESEARCH_FILES,
+      updated_at: new Date().toISOString(),
+    };
+
+    // A research_basis id the research does not have resolves to "not found"
+    // in every executor dispatch. Say so while the plan can still be fixed;
+    // ids this refresh removed already have their own warning.
+    for (const phase of (state.phases || [])) {
+      for (const task of (phase.todo || [])) {
+        const unknown = (task.research_basis || []).filter((id) => !(id in decision_index) && !(id in previousIndex));
+        if (unknown.length > 0) {
+          warnings.push(`Task ${task.id} cites ${unknown.join(', ')}, which the stored research does not have`);
+        }
+      }
+    }
+
+    if (state.workflow_mode === 'research_refresh_needed') {
+      const resumed = inferWorkflowModeAfterResearch(state, { invalidated: invalidated.length > 0 });
+      state.workflow_mode = resumed.workflow_mode;
+      state.current_review = resumed.current_review;
+    }
+
+    // Recompute done after applyResearchRefresh may have invalidated tasks
+    for (const phase of (state.phases || [])) {
+      if (Array.isArray(phase.todo)) {
+        phase.done = phase.todo.filter(t => t.lifecycle === 'accepted').length;
+      }
+    }
+
+    const validation = validateState(state);
+    if (!validation.valid) {
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
+    }
+
     const gsdDir = dirname(statePath);
     const researchDir = join(gsdDir, 'research');
     await ensureDir(researchDir);
 
     // Crash-consistency sentinel: marks the window between artifact renames and
-    // state.json write. On recovery (future iteration), presence of this file
-    // indicates a potentially inconsistent research state.
+    // the state.json write. resumeWorkflow reports it if it is still there.
     const sentinelPath = join(gsdDir, '.research-commit-pending');
     await writeFile(sentinelPath, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
 
@@ -599,43 +680,6 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       throw err;
     }
 
-    const nextResearchBase = {
-      volatility: result.volatility,
-      expires_at: result.expires_at,
-      sources: result.sources,
-      files: RESEARCH_FILES,
-      updated_at: new Date().toISOString(),
-    };
-
-    const refreshResult = state.research
-      ? applyResearchRefresh(state, { ...nextResearchBase, decision_index })
-      : { warnings: [] };
-
-    // After applyResearchRefresh, state.research.decision_index is the merged result
-    const mergedDecisionIndex = state.research?.decision_index || decision_index;
-    state.research = {
-      ...(state.research || {}),
-      ...nextResearchBase,
-      decision_index: mergedDecisionIndex,
-    };
-
-    if (state.workflow_mode === 'research_refresh_needed') {
-      state.workflow_mode = inferWorkflowModeAfterResearch(state);
-    }
-
-    // Recompute done after applyResearchRefresh may have invalidated tasks
-    for (const phase of (state.phases || [])) {
-      if (Array.isArray(phase.todo)) {
-        phase.done = phase.todo.filter(t => t.lifecycle === 'accepted').length;
-      }
-    }
-
-    const validation = validateState(state);
-    if (!validation.valid) {
-      try { await unlink(sentinelPath); } catch {}
-      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
-    }
-
     state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
 
@@ -647,7 +691,8 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       workflow_mode: state.workflow_mode,
       stored_files: RESEARCH_FILES,
       decision_ids: result.decision_ids,
-      warnings: refreshResult.warnings,
+      warnings,
+      invalidated_tasks: invalidated,
       research: state.research,
     };
   }, statePath);

@@ -17,6 +17,8 @@ const MAX_FIX_DIRECTIONS = 3;
 const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
 const MAX_PHASE_REVIEW_RETRY = 5;
+// Modes that wait on the user. A research refresh does not take them over.
+const USER_HOLD_MODES = ['awaiting_user', 'paused_by_user'];
 
 // R-17: the former RESULT_CONTRACTS reference block was embedded in dispatch
 // responses as `result_contract` and then unconditionally stripped by the server
@@ -251,13 +253,19 @@ async function evaluatePreflight(state, basePath) {
     });
   }
 
-  const expired_research = collectExpiredResearch(state);
+  // Not over a decision the user owes: a refresh restores the workflow from
+  // current_review afterwards, so every awaiting_user hold (retry exhausted,
+  // direction drift, blocked tasks) came back as a review or as execution
+  // without the user's answer, and a paused project came back running.
+  // Expired research waits for the resume after the user has answered.
+  const expired_research = USER_HOLD_MODES.includes(state.workflow_mode) ? [] : collectExpiredResearch(state);
   if (expired_research.length > 0) {
     hints.push({
       workflow_mode: 'research_refresh_needed',
       action: 'dispatch_researcher',
       updates: { workflow_mode: 'research_refresh_needed' },
       expired_research,
+      current_decision_index: state.research?.decision_index || {},
       message: 'Research cache expired and must be refreshed before execution resumes',
     });
   }

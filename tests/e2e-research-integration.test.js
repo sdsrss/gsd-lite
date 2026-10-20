@@ -89,8 +89,10 @@ describe('TC1: all 4 research refresh rules fire simultaneously', () => {
     assert.equal(task12.lifecycle, 'needs_revalidation', 'Rule 2: task with changed decision gets invalidated');
     assert.deepEqual(task12.evidence_refs, [], 'Rule 2: evidence_refs cleared');
 
-    // Rule 3: d_removed — still in index (not deleted), task 1.3 invalidated, warning emitted
-    assert.ok(state.research.decision_index.d_removed, 'Rule 3: removed decision still in index');
+    // Rule 3: d_removed — gone from the index, task 1.3 invalidated, warning emitted.
+    // The new index replaces the old one: a kept entry still carried its past
+    // expires_at and fired rule 3 again on every later refresh.
+    assert.equal(state.research.decision_index.d_removed, undefined, 'Rule 3: removed decision dropped from the index');
     const task13 = state.phases[0].todo.find(t => t.id === '1.3');
     assert.equal(task13.lifecycle, 'needs_revalidation', 'Rule 3: task with removed decision gets invalidated');
     assert.equal(warnings.length, 1, 'Rule 3: exactly one warning for removed decision');
@@ -330,17 +332,17 @@ describe('TC6: storeResearch transitions workflow_mode from research_refresh_nee
       result: {
         decision_ids: ['d_test'],
         volatility: 'medium',
-        expires_at: '2026-06-01T00:00:00Z',
+        expires_at: '2099-06-01T00:00:00Z',
         sources: [{ id: 's1', type: 'docs', ref: 'React docs' }],
       },
       decision_index: {
-        d_test: { summary: 'Use React 18', expires_at: '2026-06-01T00:00:00Z' },
+        d_test: { summary: 'Use React 18', expires_at: '2099-06-01T00:00:00Z' },
       },
       artifacts: {
         'STACK.md': 'Stack info d_test\n',
         'ARCHITECTURE.md': 'Architecture info\n',
         'PITFALLS.md': 'Pitfalls info\n',
-        'SUMMARY.md': 'Summary d_test medium 2026-06-01T00:00:00Z\n',
+        'SUMMARY.md': 'Summary d_test medium 2099-06-01T00:00:00Z\n',
       },
     });
 

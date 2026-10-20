@@ -103,21 +103,22 @@ describe('research output persistence', () => {
         result: {
           decision_ids: ['decision:jwt'],
           volatility: 'high',
-          expires_at: '2026-04-01T10:30:00Z',
+          expires_at: '2099-04-01T10:30:00Z',
           sources: [{ id: 'src2', type: 'Context7', ref: 'Updated auth docs' }],
         },
         decision_index: {
-          'decision:jwt': { summary: 'Use session cookies instead', source: 'Context7', expires_at: '2026-04-01T10:30:00Z' },
+          'decision:jwt': { summary: 'Use session cookies instead', source: 'Context7', expires_at: '2099-04-01T10:30:00Z' },
         },
         artifacts: {
           'STACK.md': '# Stack\n',
           'ARCHITECTURE.md': '# Architecture\n',
           'PITFALLS.md': '# Pitfalls\n',
-          'SUMMARY.md': '# Summary\nvolatility: high\nexpires_at: 2026-04-01T10:30:00Z\ndecisions:\n- decision:jwt\n',
+          'SUMMARY.md': '# Summary\nvolatility: high\nexpires_at: 2099-04-01T10:30:00Z\ndecisions:\n- decision:jwt\n',
         },
       });
 
       assert.equal(refreshed.success, true);
+      assert.deepEqual(refreshed.invalidated_tasks, ['1.1'], 'the store does not say which tasks it sent back');
       const state = await read({ basePath: tempDir });
       assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation');
       assert.deepEqual(state.phases[0].todo[0].evidence_refs, []);

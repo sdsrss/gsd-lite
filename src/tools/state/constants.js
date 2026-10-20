@@ -123,10 +123,23 @@ export async function loadState(statePath) {
   return { state: migrateState(result.data) };
 }
 
-export function inferWorkflowModeAfterResearch(state) {
-  if (state.current_review?.scope === 'phase') return 'reviewing_phase';
-  if (state.current_review?.scope === 'task') return 'reviewing_task';
-  return 'executing_task';
+/**
+ * Where a refreshed project goes back to. The refresh hold keeps the
+ * current_review it interrupted, and the stage says what that was: a task
+ * being debugged is `executing_task` with a task-scoped current_review, and
+ * reading only the scope sent it to a task review instead. A refresh that
+ * invalidated tasks drops an interrupted review — what it was reviewing may
+ * have to be redone first, and the scheduler raises the review again when it
+ * is due. A debugging hold survives: a running task is never invalidated.
+ * awaiting_user and paused_by_user never reach here: preflight does not
+ * refresh over a state that waits on the user.
+ */
+export function inferWorkflowModeAfterResearch(state, { invalidated = false } = {}) {
+  const review = state.current_review;
+  if (review?.stage === 'debugging') return { workflow_mode: 'executing_task', current_review: review };
+  if (!invalidated && review?.scope === 'phase') return { workflow_mode: 'reviewing_phase', current_review: review };
+  if (!invalidated && review?.scope === 'task') return { workflow_mode: 'reviewing_task', current_review: review };
+  return { workflow_mode: 'executing_task', current_review: null };
 }
 
 export function normalizeResearchArtifacts(artifacts) {
