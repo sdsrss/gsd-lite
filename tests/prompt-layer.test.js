@@ -209,10 +209,8 @@ describe('prompt layer — agents', () => {
     }
   });
 
-  // Grows as each agent is rewritten; the end state is every file in agents/.
-  const RESTATED = ['agents/debugger.md', 'agents/executor.md'];
   it('no agent wraps a rule in a pressure block or states it as an all-caps iron law', () => {
-    for (const file of RESTATED) {
+    for (const file of agents) {
       const src = read(file);
       assert.doesNotMatch(src, /EXTREMELY-IMPORTANT/, `${file} raises the volume instead of giving the reason`);
       assert.doesNotMatch(src, /\bNO [A-Z]+(?: [A-Z]+)* WITHOUT\b/, `${file} carries an all-caps iron law`);
@@ -233,6 +231,13 @@ describe('prompt layer — agents', () => {
     const exemptions = section(read('agents/executor.md'), '## TDD 例外');
     assert.match(exemptions, /迁移/, 'premise: migrations are no longer exempt');
     assert.match(exemptions, /免 TDD 不降低审查级别/, 'executor TDD exemptions do not say the review level stands');
+  });
+
+  it('the reviewer role keeps the rule the pressure block repeated', () => {
+    const role = tagBlock(read('agents/reviewer.md'), 'role');
+    assert.match(role, /自己运行测试/, 'reviewer <role> no longer tells it to run the tests itself');
+    assert.match(role, /executor 的报告/, "reviewer <role> no longer says the executor's report is not evidence");
+    assert.match(role, /命令输出或代码位置/, 'reviewer <role> no longer asks for evidence with each conclusion');
   });
 
   it('the debugger states its root-cause rule once, with its reason', () => {
