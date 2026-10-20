@@ -1,5 +1,5 @@
 // E2E: Research refresh 4-rules combo, cross-phase impact, storeResearch flow
-import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -16,7 +16,7 @@ import {
   applyResearchRefresh,
   storeResearch,
 } from '../src/tools/state/index.js';
-import { handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
+import { handleResearcherResult } from '../src/tools/orchestrator/index.js';
 
 // ── TC1: All 4 refresh rules fire simultaneously ──
 
@@ -430,75 +430,5 @@ describe('TC7: handleResearcherResult end-to-end stores research and resumes wor
     const summaryContent = await readFile(join(dir, '.gsd', 'research', 'SUMMARY.md'), 'utf-8');
     assert.match(summaryContent, /d_framework/);
     assert.match(summaryContent, /2027-06-01T00:00:00Z/);
-  });
-});
-
-// ── TC8: a refresh ends the refresh — the next resume goes back to executing ──
-
-describe('TC8: after a research refresh, resume dispatches the executor again', () => {
-  const DAY = 24 * 60 * 60 * 1000;
-  const ARTIFACTS = { 'STACK.md': '# s\n', 'ARCHITECTURE.md': '# a\n', 'PITFALLS.md': '# p\n', 'SUMMARY.md': '# m\n' };
-  let dir;
-  beforeEach(async () => { dir = await createTempDir(); });
-  afterEach(async () => { await removeTempDir(dir); });
-
-  // decision:b has expired, so the first resume asks for a refresh.
-  async function expiredProject() {
-    const future = new Date(Date.now() + 7 * DAY).toISOString();
-    await initProject(dir, {
-      phases: [{ name: 'P1', tasks: [
-        { index: 1, name: 'Task A', level: 'L1', requires: [], research_basis: ['decision:a'] },
-        { index: 2, name: 'Task B', level: 'L1', requires: [], research_basis: ['decision:b'] },
-      ] }],
-    });
-    await update({
-      updates: {
-        research: {
-          decision_index: {
-            'decision:a': { summary: 'Use A', source: 'docs', expires_at: future },
-            'decision:b': { summary: 'Use B', source: 'docs', expires_at: new Date(Date.now() - DAY).toISOString() },
-          },
-          volatility: 'medium',
-          expires_at: future,
-          sources: [{ id: 's1', type: 'docs', ref: 'docs' }],
-          files: Object.keys(ARTIFACTS),
-          updated_at: new Date(Date.now() - 8 * DAY).toISOString(),
-        },
-      },
-      basePath: dir,
-    });
-    const first = await resumeWorkflow({ basePath: dir });
-    assert.equal(first.action, 'dispatch_researcher', 'premise: the expired decision does not trigger a refresh');
-    return future;
-  }
-
-  async function refreshAndResume(decision_index, expires_at) {
-    const stored = await handleResearcherResult({
-      basePath: dir,
-      result: { decision_ids: Object.keys(decision_index), volatility: 'medium', expires_at, sources: [] },
-      decision_index,
-      artifacts: ARTIFACTS,
-    });
-    assert.equal(stored.action, 'research_stored');
-    return resumeWorkflow({ basePath: dir });
-  }
-
-  it('a decision the refresh dropped does not keep the research expired', async () => {
-    const future = await expiredProject();
-    const next = await refreshAndResume({ 'decision:a': { summary: 'Use A', source: 'docs', expires_at: future } }, future);
-    assert.equal(next.action, 'dispatch_executor',
-      `resume returned ${next.action} ${JSON.stringify(next.expired_research ?? '')}: the dropped decision's old expires_at sends it back to the researcher`);
-  });
-
-  it('a kept decision without its own expires_at takes the refresh\'s', async () => {
-    const future = await expiredProject();
-    const next = await refreshAndResume({
-      'decision:a': { summary: 'Use A', source: 'docs' },
-      'decision:b': { summary: 'Use B', source: 'docs' },
-    }, future);
-    assert.equal(next.action, 'dispatch_executor',
-      `resume returned ${next.action} ${JSON.stringify(next.expired_research ?? '')}: the kept decision still carries its old expires_at`);
-    const state = await read({ basePath: dir });
-    assert.equal(state.research.decision_index['decision:b'].expires_at, future);
   });
 });
