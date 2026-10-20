@@ -5,11 +5,9 @@
 
 ---
 
-## 铁律 (与 debugger 一致)
+## 规则 (与 debugger 的 `principles` 一致)
 
-**NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST**
-
-如果你还没完成 Phase 1，你不能提出修复方案。
+`fix_direction` 要建立在 Phase 1 拿到的证据上（命令输出、日志、代码位置）。理由、第 3 次失败的处理和 2 次以上失败时的架构判断见 debugger 的 `principles`。
 
 ---
 

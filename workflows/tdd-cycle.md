@@ -1,15 +1,15 @@
 # TDD 循环: RED-GREEN-REFACTOR
 
-> 本文档是 executor 内联 TDD 铁律的扩展指南，按需加载。
+> 本文档是 executor 内联 TDD 规则的扩展指南，按需加载。
 > 冲突时以 `executor.md` 内联规则为准。
 
 ---
 
-## 铁律 (与 executor 一致)
+## 规则 (与 executor 的 `testing_rules` 一致)
 
-**NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST**
+需要 TDD 的任务先写失败测试，再写实现。后写的测试一写就通过，证明不了实现是对的；手动验证不可重复，下一次改动时没人能再跑一遍。
 
-唯一例外见下方 §例外列表。
+唯一例外见下方 §例外列表。免 TDD 不降低审查级别。
 
 ---
 
