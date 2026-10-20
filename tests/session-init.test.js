@@ -42,7 +42,8 @@ describe('session init update notifications', () => {
         timeout: 5000,
       });
 
-      assert.match(output, /Run \/plugin update gsd/);
+      assert.match(output, /claude plugin update gsd@gsd/);
+      assert.match(output, /\/plugin → Installed → gsd → Update now/);
       assert.equal(existsSync(notifPath), false);
 
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf8'));
