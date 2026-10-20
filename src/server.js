@@ -236,7 +236,7 @@ const TOOLS = [
   },
   {
     name: 'orchestrator-handle-researcher-result',
-    description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration. The decision_index replaces the one on record: a task citing a decision whose summary changed or that is missing is sent back for revalidation. Every expires_at must be a date in the future; nothing is written if the result is refused.',
+    description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration. The decision_index replaces the one on record: a task citing a decision whose summary changed or that is missing is sent back for revalidation. Every expires_at must be at least an hour in the future, and a [BLOCKED] result is refused while real research is on record; nothing is written if the result is refused.',
     inputSchema: {
       type: 'object',
       properties: {

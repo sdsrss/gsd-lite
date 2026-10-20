@@ -542,6 +542,12 @@ describe('prompt layer — research found at planning time reaches the server', 
   it('the state diagram draws a refresh only out of the modes the server refreshes in', () => {
     assert.ok(REFRESH_MODES.length > 0, 'premise: orchestrator/helpers.js exports REFRESH_MODES');
     const diagram = read('references/state-diagram.md');
+    // The preflight list names the modes; the edges alone could not see a
+    // change to REFRESH_MODES, since the only edge in comes from a pseudo-state.
+    const item = diagram.split('\n').find((l) => /研究缓存过期 -> `research_refresh_needed`/.test(l)) ?? '';
+    const named = [...(item.match(/只在 (.*?) 时检测/)?.[1] ?? '').matchAll(/`(\w+)`/g)].map((m) => m[1]).sort();
+    assert.deepEqual(named, REFRESH_MODES.filter((m) => m !== 'research_refresh_needed').sort(),
+      `state-diagram.md's preflight list names other modes than REFRESH_MODES: ${item}`);
     const edges = [...diagram.matchAll(/^\s*(\w+) --> research_refresh_needed/gm)].map((m) => m[1]);
     assert.ok(edges.length >= 1, 'premise: the diagram draws no edge into research_refresh_needed');
     const stray = edges.filter((mode) => WORKFLOW_MODES.includes(mode) && !REFRESH_MODES.includes(mode));
@@ -721,7 +727,7 @@ describe('prompt layer — the instruction sentences', () => {
     // REFRESH_MODES; a refresh over planning or a reconcile hold resumed execution.
     ['commands/resume.md', '研究过期只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时走到这里'],
     // storeResearch refuses a [BLOCKED] result while research is on record.
-    ['commands/resume.md', 'researcher 因来源不可用返回 `[BLOCKED]` 结果时，服务端拒收并保留已记录的研究：停下告诉用户'],
+    ['commands/resume.md', '已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户'],
     ['agents/researcher.md', '服务端不会用它替换已记录的研究，编排器会停下来告诉用户。'],
     // A12: planning research reaches the server after state-init.
     ['agents/researcher.md', '你不直接写这些文件'],

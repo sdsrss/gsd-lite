@@ -185,13 +185,32 @@ describe('a store lands whole or changes nothing', () => {
     assert.deepEqual(await snapshot(), before, 'a refused store changed the project');
   });
 
+  // The researcher's fallback asks for an expiry 24 hours out (agents/researcher.md).
+  const blockedPayload = () => payload(
+    { 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用，请提供替代信息或缩小范围', source: 'none', expires_at: future(1) } },
+    { expires_at: future(1) },
+  );
+
   it('stores a blocked result when there is no research on record yet', async () => {
     // Planning with no sources: there is nothing to keep, and the blocked
     // decision is what tells the user.
     await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
-    const blocked = payload({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用，请提供替代信息或缩小范围', source: 'none' } });
-    const res = await handleResearcherResult({ ...blocked, basePath: dir });
+    const res = await handleResearcherResult({ ...blockedPayload(), basePath: dir });
     assert.equal(res.action, 'research_stored', JSON.stringify(res));
+  });
+
+  it('stores a blocked refresh over research that was itself blocked, so an offline project keeps going', async () => {
+    // Refusing every blocked result while research was on record left a
+    // project planned offline dispatching the researcher on every resume once
+    // its 24-hour placeholder expired (second pre-tag review). There is no
+    // research to protect in a record holding only blocked decisions.
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    assert.equal((await handleResearcherResult({ ...blockedPayload(), basePath: dir })).action, 'research_stored');
+    await update({ updates: { research: expiredResearch({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } }) }, basePath: dir });
+    assert.equal((await resumeWorkflow({ basePath: dir })).action, 'dispatch_researcher', 'premise: the placeholder expired');
+    const res = await handleResearcherResult({ ...blockedPayload(), basePath: dir });
+    assert.equal(res.action, 'research_stored', JSON.stringify(res));
+    assert.equal((await resumeWorkflow({ basePath: dir })).action, 'dispatch_executor');
   });
 
   it('keeps the commit marker when a write fails after some documents were renamed in', async () => {
@@ -206,6 +225,22 @@ describe('a store lands whole or changes nothing', () => {
     assert.ok(marker, 'the marker was removed although documents had already been replaced');
     const r = await resumeWorkflow({ basePath: dir });
     assert.ok((r.research_warnings ?? []).length > 0 || r.warnings?.length > 0, `resume does not report the half-written research: ${JSON.stringify(r).slice(0, 400)}`);
+  });
+
+  it('a retry that fails before renaming anything leaves the earlier marker in place', async () => {
+    // The first failure kept the marker; a retry that failed at its first
+    // rename then removed it, while the documents were still the first
+    // attempt's (second pre-tag review).
+    await seeded();
+    const research = join(dir, '.gsd', 'research');
+    await unlink(join(research, 'SUMMARY.md'));
+    await mkdir(join(research, 'SUMMARY.md'));
+    await assert.rejects(storeResearch({ ...payload({ 'decision:a': { summary: 'A2', source: 'docs' } }), basePath: dir }));
+    await unlink(join(research, 'STACK.md'));
+    await mkdir(join(research, 'STACK.md'));
+    await assert.rejects(storeResearch({ ...payload({ 'decision:a': { summary: 'A3', source: 'docs' } }), basePath: dir }));
+    const marker = await stat(join(dir, '.gsd', '.research-commit-pending')).then(() => true, () => false);
+    assert.ok(marker, 'the retry removed the marker the first failure left');
   });
 
   it('refuses when the resulting state is invalid, before touching the research documents', async () => {

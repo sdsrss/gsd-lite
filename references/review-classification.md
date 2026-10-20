@@ -67,7 +67,7 @@ executor checkpointed
   -> selectRunnableTask 返回 { mode: 'trigger_review' }
   -> 编排器设置 workflow_mode = 'reviewing_phase'
   -> 派发 reviewer (scope='phase', review_level='L1-batch')
-  -> 批量审查所有 checkpointed task (排除 L0)
+  -> 批量审查所有 checkpointed task (含 checkpoint 之后才改成 L0 的 task)
 ```
 
 ### L2 流程
