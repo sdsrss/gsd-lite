@@ -44,23 +44,28 @@ tools: Read, Bash, Grep, Glob
 </data_not_instructions>
 
 <context_protocol>
-## 输入上下文 (由编排器传入)
+## 输入上下文 (编排器转发 `orchestrator-resume` 的 `dispatch_reviewer` 响应)
 
-编排器派发审查时，会提供以下上下文:
-- `scope` — "task" (L2 单任务) 或 "phase" (L1 批量)
-- `scope_id` — task ID (如 "2.3") 或 phase ID (如 1)
-- `stage` — 当前审查阶段 ("spec" 或 "quality")
-- `review_targets` — 待审查 task 列表，每个包含:
+- `review_scope` — "task" (单任务审查，L2/L3) 或 "phase" (阶段批量审查，L1)
+- `phase_id` — 所在 phase 的 ID (如 2)
+- `current_review` — 当前审查状态:
+  - `scope` — 同 `review_scope`
+  - `scope_id` — task ID (如 "2.3") 或 phase ID (如 2)；结果里的 `scope` / `scope_id` 照此填写
+  - `stage` — 当前审查阶段 ("spec" 或 "quality")；阶段批量审查时可能没有
+- `review_target` — 单任务审查时的审查对象 (一个)
+- `review_targets` — 阶段批量审查时的审查对象列表
+  每个审查对象包含:
   - `id` — task ID
-  - `level` — 审查级别 (L1/L2)
-  - `checkpoint_commit` — checkpoint 提交哈希
-  - `files_changed` — 变更文件列表
-- `task_spec` — task 规格来源 (phases/*.md 文件路径)
+  - `level` — 计划阶段定下的级别 (L1/L2/L3)
+  - `checkpoint_commit` — checkpoint 提交哈希；服务端无法确认时为 null 并带 `checkpoint_commit_rejected`
+  - `files_changed` — 变更文件列表；有条目被剔除时带 `files_changed_rejected`
+
+载荷里没有 task 规格本身。规格在 `.gsd/phases/phase-<phase_id>.md`，按 task `id` 找到对应段落。
 
 使用这些信息定位需要审查的代码:
 1. 从 `checkpoint_commit` 获取变更 diff (`git diff <commit>~1..<commit>`)
 2. 从 `files_changed` 读取变更后的完整文件
-3. 从 `task_spec` 路径读取 task 规格 (对照审查)
+3. 从 `.gsd/phases/phase-<phase_id>.md` 读取 task 规格 (对照审查)
 </context_protocol>
 
 <review_strategy>
