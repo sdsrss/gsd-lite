@@ -587,6 +587,11 @@ describe('prompt layer — the instruction sentences', () => {
     ['workflows/review-cycle.md', 'reviewer 不重新判定，按每个审查对象带的 `level` 审查'],
     ['references/review-classification.md', '`review_required: false` 的 L1/L2 task 同样走此路径；L3 不受它影响'],
     ['agents/reviewer.md', '一直漏掉就一直绕圈，到不了人工确认'],
+    // The refresh path: with the researcher no longer writing, a step that only
+    // said "更新 state.json" wrote no documents (second pre-tag review).
+    ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
+    // storeResearch overwrites all four files (logic.js RESEARCH_FILES loop).
+    ['agents/researcher.md', '把仍然成立的内容并进新文档一起返回'],
   ];
   for (const [file, sentence] of INSTRUCTIONS) {
     it(`${file} says: ${sentence.slice(0, 40)}…`, () => {
