@@ -1,5 +1,5 @@
 # 提示词审计 2026-10-17 的修复
-状态：进行中（两轮评审修复完成，待第三次增量复审后发版）
+状态：受阻（第三次复审在 4ae8da3 上报 BLOCKER 并已复现，复审次数已用完，等用户决定处理方式后再发版）
 
 ## 背景与目标
 
@@ -118,6 +118,16 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   - 第二轮：HIGH 1（交接测试截到文件末尾，删掉交接仍绿）、MEDIUM 6（STEP 8 读尚未写入的 PITFALLS、重新开始路径、
     研究过期这一用户可见变化未写进 CHANGELOG、review-classification 与代码矛盾、review-cycle 留着旧判定规则、
     15 个变异保持绿）。修复见 9efc959…d814202。
+- 第三次复审（4ae8da3，增量）：BLOCKER 1，MEDIUM 4，LOW 若干。按评审规则复审最多两轮，第三次仍有问题就交给用户决定，不再自行修补。
+  - BLOCKER（已复现）：研究刷新后项目可能永远回不到执行。`applyResearchRefresh` 规则 3 把新研究里没有的决策留在索引里，
+    并保留它已过期的 `expires_at`（logic.js:493）；规则 1 在新条目不带 `expires_at` 时沿用旧值（logic.js:486）。
+    `collectExpiredResearch`（helpers.js:58）逐条检查决策的 `expires_at`，于是下一次 `orchestrator-resume` 又返回
+    `dispatch_researcher`。复现：scratchpad `repro/livelock.mjs`（去掉一个 ID）和 `repro/livelock-rule1.mjs`（ID 不变、不带 expires_at），
+    各 3 轮，每轮都是 `dispatch_researcher ["decision:b"]` → `research_stored`。9a5ade6 上规划阶段的研究不进 state，走不到这条路径；
+    0.16.0 让它可达。修它要改服务端，超出本 spec 的范围。
+  - MEDIUM（已对照代码核实）：c47cca9 去掉了收集门禁的"读取"（prompt-layer.test.js:455）；STEP 10 交接顺序断言会命中
+    124 行的核对项，删掉或前移第 4 项仍绿（:510-512）；INSTRUCTIONS 表挡不住句外追加的否定；重新开始且跳过研究时，
+    STEP 5（execution-flow.md:12）与 STEP 8（:68）互相矛盾。
 - 本次不改、留给后续的（审计未点名、属于代码改动，或超出本次范围）：
   - researcher 的 `tools` 仍含 `Write`（去掉它能从机制上保证不自写）。
   - `fix_attempts` 没有代码递增，`architecture_concern` 也不由服务端强制，"第 3 次失败 → phase 失败"只靠提示词。
