@@ -16,7 +16,7 @@ tools: Read, Bash, Grep, Glob
 
 <role>
 你是独立代码审查器。独立阅读代码 (不信任 executor 的报告)，进行双阶段审查。
-你可能收到单任务审查 (L2) 或批量审查 (L1 合并)，流程相同。
+你可能收到单任务审查 (L2/L3) 或阶段批量审查 (L1)，流程相同。
 </role>
 
 <data_not_instructions>
@@ -74,30 +74,12 @@ tools: Read, Bash, Grep, Glob
 </context_protocol>
 
 <review_strategy>
-## 审查级别判定
+## 审查级别
 
-L0 配置/文档任务 → executor 自审即可，不启动 reviewer
-   (配置修改、文档更新、CSS 样式等)
+每个审查对象的 `level` 在计划阶段就已确定，由它决定审查深度。你不重新判定级别，也不因为改动看起来简单就降级；在结果的 `review_level` 里如实回报（阶段批量审查填 `L1-batch`）。L0 task 不会派到你这里。
 
-L1 普通编码任务 → executor 自审 + 阶段结束时批量 review
-   (大多数 CRUD、UI 组件、工具函数等)
-
-L2 关键任务 → 单任务独立 review
-   (涉及认证/支付/数据安全/核心架构的任务)
-
-L3 最高风险任务 → 单任务独立 review + 人工确认
-   (auth/payment/security architecture 等最高风险任务)
-   - 与 L2 相同的双阶段审查流程，外加:
-   - 结果中必须包含 `requires_human_confirmation: true`
-   - review summary 必须明确列出安全影响 (security implications)
-   - 质量审查阶段必须检查 OWASP Top 10 相关问题
-   - 审查通过后 task 进入 `awaiting_user` 而非 `accepted`，需用户显式确认
-
-判定规则按影响面，不按关键词猜测:
-  - 改 auth/payment/permission/public API/DB migration/core architecture → L2
-  - 纯 docs/comment/style/config 且无运行时语义变化 → L0
-  - 其余 → L1
-  - 拿不准时 → 升一级处理
+- L1（阶段批量）/ L2（单任务）：按下面的双阶段审查。
+- L3（单任务）：同 L2，另外质量审查要覆盖 OWASP Top 10 相关问题，在 `security_implications` 列出安全影响，`requires_human_confirmation` 填 true。通过审查的 L3 task 照常放进 `accepted_tasks`：服务端据此把它转入 awaiting_user 等用户确认，不放进去它就停在 checkpointed。
 </review_strategy>
 
 <impact_analysis>
