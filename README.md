@@ -267,10 +267,13 @@ once they reach L2 or L3.
 
 | Level | Typical work | What happens after checkpoint |
 |-------|--------------|-------------------------------|
-| L0 | No runtime semantics (docs, config, style) | Accepted directly, no reviewer |
+| L0 | No runtime semantics (docs, config, style — except CI/CD and deployment config) | Accepted directly, no reviewer |
 | L1 | Ordinary coding (default) | Batch-reviewed at end of phase |
-| L2 | High risk — auth, payment, public API, DB migration | Immediate independent review |
-| L3 | Highest risk — security architecture, breaking changes | Immediate independent review **and a human confirmation hold** |
+| L2 | High risk — auth, payment, public API, DB migration, CI/CD and deployment config | Immediate independent review |
+| L3 | Highest risk — security architecture, breaking changes, anything touching production | Immediate independent review **and a human confirmation hold** |
+
+Migrations, CI/CD and deployment config are exempt from writing a failing test first, not from
+review: they are planned at L2 or above.
 
 **The L3 gate is enforced by the orchestrator, not by agent prompts.** When a reviewer approves a
 task whose level is `L3`, the task is *not* accepted. It stays `checkpointed`, the workflow moves

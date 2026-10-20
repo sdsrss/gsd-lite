@@ -227,6 +227,14 @@ describe('prompt layer — agents', () => {
     assert.match(section(rules, '## TDD 例外'), /checkpoint commit/, 'the TDD exemption list is gone');
   });
 
+  it('a TDD exemption does not lower the review level', () => {
+    // The exemption list puts migrations and CI/CD config next to CSS and docs.
+    // Skipping the failing test is fine; skipping the review is not.
+    const exemptions = section(read('agents/executor.md'), '## TDD 例外');
+    assert.match(exemptions, /迁移/, 'premise: migrations are no longer exempt');
+    assert.match(exemptions, /免 TDD 不降低审查级别/, 'executor TDD exemptions do not say the review level stands');
+  });
+
   it('the debugger states its root-cause rule once, with its reason', () => {
     // It was written four times — iron law, red flags, a HARD-GATE, the phase
     // heading — and never said why.
@@ -277,4 +285,30 @@ describe('prompt layer — agents', () => {
       assert.ok(l3.includes(field), `reviewer L3 guidance does not mention ${field}`);
     }
   });
+});
+
+describe('prompt layer — planning-time level rules', () => {
+  // Migrations, CI/CD and deployment config were L0-shaped ("config") or
+  // absent. They are at least L2; anything touching production is L3, the
+  // level the server holds for human confirmation. L2 and L3 are never
+  // reclassified downward (reclassifyReviewLevel), so the planned level is the
+  // one that holds. Token checks: they confirm the categories are named at the
+  // right level, not that the prose is good.
+  const cases = [
+    ['workflows/execution-flow.md', (src) => section(src, '## STEP 7').split('\n').filter((l) => /\*\*L[0-3]\*\*/.test(l))],
+    ['references/review-classification.md', (src) => section(src, '## 静态分类').split('\n').filter((l) => /^\| L[0-3] /.test(l))],
+    ['README.md', (src) => section(src, '### Review Levels').split('\n').filter((l) => /^\| L[0-3] /.test(l))],
+  ];
+  for (const [file, levelLines] of cases) {
+    it(`${file} puts migrations, CI/CD and deployment at L2 or above, production at L3`, () => {
+      const lines = levelLines(read(file));
+      assert.equal(lines.length, 4, `premise: expected four level lines in ${file}, found ${lines.length}`);
+      // By the line's own level marker: an L0 line may well say "see L2".
+      const at = (level) => lines.find((l) => l.includes(`**${level}**`) || l.startsWith(`| ${level} `)) ?? '';
+      for (const word of [/迁移|migration/i, /CI\/CD/, /部署|deploy/i]) {
+        assert.match(at('L2'), word, `${file} L2 does not name ${word}`);
+      }
+      assert.match(at('L3'), /生产|production/i, `${file} L3 does not name production`);
+    });
+  }
 });

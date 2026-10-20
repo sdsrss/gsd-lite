@@ -4,10 +4,12 @@
 
 | 级别 | 适用场景 | 审查方式 |
 |------|---------|---------|
-| L0 | 无运行时语义变化 (docs/config/style) | checkpoint 后直接 accepted |
+| L0 | 无运行时语义变化 (docs/config/style；CI/CD 与部署配置除外) | checkpoint 后直接 accepted |
 | L1 | 普通编码任务 (默认) | phase 结束后批量审查 |
-| L2 | 高风险 (auth/payment/public API/DB migration) | checkpoint 后立即独立审查 |
-| L3 | 最高风险 (auth/payment/security architecture) | checkpoint 后立即独立审查 + 人工确认 |
+| L2 | 高风险 (auth/payment/public API/DB migration/CI/CD 配置/部署配置) | checkpoint 后立即独立审查 |
+| L3 | 最高风险 (auth/payment/security architecture/涉及生产环境的变更) | checkpoint 后立即独立审查 + 人工确认 |
+
+迁移、CI/CD、部署配置在 executor 那里免写失败测试，但免 TDD 不降低审查级别：它们至少是 L2。
 
 ## 运行时重分类
 
