@@ -533,7 +533,11 @@ describe('Layer A: install idempotency', () => {
 // Layer B: Real package install (full verification)
 // ============================================================
 
-describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
+// Both Layer B installs fetch every production dependency from the registry
+// into an empty cache, so their time is the network's. Measured on one machine
+// at load ~1.3 (2026-10-20), the npx install took 13 s to over 90 s across eight
+// runs and timed out twice at 90 s; the budgets below are twice that tail.
+describe('Layer B: npm pack + npm install -g E2E', { timeout: 180000 }, () => {
   let home, claudeDir, npmPrefix, tarball;
 
   before(async () => {
@@ -553,7 +557,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
     // npm install -g from tarball into isolated prefix
     await runGroup(
       `npm install -g ${JSON.stringify(tarball)} --prefix ${JSON.stringify(npmPrefix)}`,
-      { timeout: 60000 }
+      { timeout: 120000 }
     );
   });
 
@@ -663,7 +667,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 120000 }, () => {
   });
 });
 
-describe('Layer B: npx from tarball E2E', { timeout: 120000 }, () => {
+describe('Layer B: npx from tarball E2E', { timeout: 240000 }, () => {
   let home, claudeDir, tarball, npxCache;
 
   before(async () => {
@@ -689,7 +693,7 @@ describe('Layer B: npx from tarball E2E', { timeout: 120000 }, () => {
           CLAUDE_CONFIG_DIR: join(home, '.claude'),
           npm_config_cache: npxCache,
         },
-        timeout: 90000,
+        timeout: 180000,
       }
     );
   });
