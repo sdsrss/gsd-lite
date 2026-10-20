@@ -5,9 +5,10 @@ All notable changes to this project are documented here.
 ## [0.16.0] - 2026-10-20
 
 Minor, not patch: this release changes when Claude Code offers gsd's commands and
-agents, and which tasks stop for your confirmation. No state field or tool contract
-changes; the only code changes are the wording of two update messages. **Most projects
-need to do nothing.** The three points below say when that is not true.
+agents, which tasks stop for your confirmation, and the MCP SDK it runs on. No state
+field or tool contract changes; the only code changes are the wording of the update
+messages. **Most projects need to do nothing.** The points below say when that is not
+true.
 
 **Do I have to do anything?**
 
@@ -17,22 +18,31 @@ need to do nothing.** The three points below say when that is not true.
   command does. If you relied on Claude picking `/gsd:start` for you, type it.
 - **The four agents are no longer offered for general work.** Their descriptions
   now say they are dispatched by the GSD orchestrator and are not for general
-  debugging, review, research or implementation, so asking Claude to "review this
-  diff" outside a GSD project no longer lands on `gsd:reviewer`.
+  debugging, review, research or implementation. Claude Code chooses agents from
+  these descriptions, so "review this diff" outside a GSD project no longer reads as
+  a match for `gsd:reviewer`.
 - **More tasks are reviewed, and production work waits for you.** Planning now puts
-  database migrations, CI/CD config and deployment config at L2 or above — they
-  could previously be planned as L0, "config", and accepted with no reviewer — and
-  anything touching production at L3, which holds for your confirmation after
-  review. Expect an `awaiting_user` stop on production tasks you did not see
-  before. These tasks are still exempt from writing a failing test first; they are
-  no longer exempt from review.
+  CI/CD and deployment config at L2 or above — they could previously be planned as
+  L0, "config", and accepted with no reviewer; database migrations were already L2 —
+  keeps `review_required` on for all three, and puts anything touching production at
+  L3, which holds for your confirmation after review. Expect an `awaiting_user` stop
+  on production tasks you did not see before. These tasks are still exempt from
+  writing a failing test first; they are no longer exempt from review.
+- **A failing task can fail its phase one attempt sooner.** After two failed fix
+  directions the debugger is now told to treat the problem as architectural and to
+  set `architecture_concern` when the evidence points there — which fails the phase.
+  The old prompt said to "question the architecture" at that point but set the flag
+  only on the third failure.
 
-To go back, pin `gsd-lite@0.15.0`.
+To go back: npx installs pin `gsd-lite@0.15.0`. A plugin install follows its
+marketplace, which can be re-added pinned to the tag — remove the `gsd` marketplace
+(that uninstalls the plugin), `claude plugin marketplace add sdsrss/gsd-lite#v0.15.0`,
+then install `gsd@gsd` again.
 
-**Upgrading a plugin install:** `/plugin update gsd`, which the README, `/gsd:doctor`
-and the update banner all printed, is not a Claude Code command. Use `/plugin` →
-**Installed** → gsd → **Update now** in a session, or `claude plugin update gsd@gsd`
-in a shell. npx and manual installs upgrade as before.
+**Upgrading a plugin install:** `/plugin update gsd`, which the README, `/gsd:doctor`,
+the SessionStart update banner and `gsd update` all printed, is not a Claude Code
+command. Use `/plugin` → **Installed** → gsd → **Update now** in a session, or
+`claude plugin update gsd@gsd` in a shell. npx and manual installs upgrade as before.
 
 Everything below came from an audit of the shipped prompts on 2026-10-17; each item
 was re-measured against this tree before it was changed, and each is held by a gate
@@ -53,8 +63,9 @@ code is the authority.
   level-classification rule with no L3 branch, contradicting its own L3 section. It
   now takes `level` from each review target, reports it in `review_level`, and lists
   a passing L3 task in `accepted_tasks` — which is what the server holds for human
-  confirmation. The old text read as "leave L3 tasks out of accepted_tasks", and a
-  task left out stays checkpointed and never reaches the hold.
+  confirmation. The old text read as "leave L3 tasks out of accepted_tasks"; a task
+  left out does not escape the hold, which is enforced by level, but stays
+  checkpointed until the next phase review raises it — a wasted review round.
 
 - **The reviewer's input protocol describes the real payload.** It documented
   top-level `scope`/`stage`, a `review_targets` list with levels "L1/L2", and a
@@ -72,7 +83,9 @@ code is the authority.
 - **The researcher returns its documents; the server writes them.** It was told to
   write `.gsd/research/` itself, around the commit marker the server keeps for that
   write. It now puts the four documents in `artifacts`, as its result contract
-  already asked.
+  already asked. Research done while planning, before any state exists, is held and
+  handed to the server right after `state-init` — which also records it in state for
+  the first time, so a task's `research_basis` now resolves.
 
 - **Example expiry dates had already passed.** The researcher's and the research
   workflow's examples showed March 2026 `expires_at` values; the server treats a
@@ -85,6 +98,13 @@ code is the authority.
   passes on arrival; no fix direction without evidence because each failed one costs
   one of three attempts. The orchestration rules in `/gsd:start`, `/gsd:prd` and
   `/gsd:resume` keep their text under a neutral `<orchestrator_rules>` tag.
+
+- **Security: dependencies.** `@modelcontextprotocol/sdk` ^1.27.1 → ^1.32.1
+  (GHSA-6qxp-vccf-f47h, in the SDK's OAuth client) and an override pinning
+  `proxy-addr` to ^2.0.8 (GHSA-jqcg-44mw-7w3h, reached through express). The server
+  imports only the SDK's server, stdio transport and types modules, and neither
+  advisory's code — the OAuth client, express — is imported by them; the bump clears
+  the audit gate that every CI run and release enforces.
 
 - **Smaller corrections.** `/gsd:stop` no longer tells the orchestrator to write
   state with a `.tmp` + rename of its own — only `state-update` writes it.
