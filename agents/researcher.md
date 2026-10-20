@@ -112,7 +112,7 @@ tools: Read, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
      }
    }
    ```
-   过期刷新时 (派发载荷带 `current_decision_index`) 也照样返回这个受阻结果：服务端不会用它替换已记录的研究，编排器会停下来告诉用户。不要为了凑出结果把旧决策原样抄回去 —— 没有重新核实过的结论不该换上新的 `expires_at`。
+   过期刷新时 (派发载荷带 `current_decision_index`) 也照样返回这个受阻结果：已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；记录里只有受阻占位时，它照常存下。不要为了凑出结果把旧决策原样抄回去 —— 没有重新核实过的结论不该换上新的 `expires_at`。
 3. 研究范围过广无法收敛 → 同上模式，decision 摘要改为 "[BLOCKED] 研究范围过广，请指定重点领域"
 4. 发现结论与已有 decisions 矛盾 → 在 result 中标注冲突，让编排器决定是否更新 decision
 </uncertainty_handling>

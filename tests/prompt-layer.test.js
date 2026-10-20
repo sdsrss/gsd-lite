@@ -722,13 +722,20 @@ describe('prompt layer — the instruction sentences', () => {
     ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
     // A refused store writes nothing and the hold stays; re-dispatching
     // without a bound looped on a researcher that kept returning past dates.
-    ['commands/resume.md', '把错误原文交给 researcher 重新派发一次；第二次仍然报错就停下，把错误展示给用户'],
+    ['commands/resume.md', '其他校验错误把错误原文交给 researcher 重新派发一次；第二次仍然报错就停下，把错误展示给用户'],
     ['commands/resume.md', '把响应里的 `expired_research` 和 `current_decision_index` (已记录的决策) 一并交给它'],
     // REFRESH_MODES; a refresh over planning or a reconcile hold resumed execution.
     ['commands/resume.md', '研究过期只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时走到这里'],
     // storeResearch refuses a [BLOCKED] result while research is on record.
     ['commands/resume.md', '已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户'],
-    ['agents/researcher.md', '服务端不会用它替换已记录的研究，编排器会停下来告诉用户。'],
+    ['agents/researcher.md', '已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；记录里只有受阻占位时，它照常存下。'],
+    // The way out of a refused refresh, and the offline project that is not stopped.
+    ['commands/resume.md', '`state-update({updates: {research: null, workflow_mode: "executing_task"}})`'],
+    ['commands/resume.md', '已记录的只有受阻占位 (规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行'],
+    ['commands/resume.md', '受阻结果被拒收的情况见下一条，直接停下'],
+    // getReviewTargets includes every checkpointed task (a level lowered to L0 after checkpoint).
+    ['agents/reviewer.md', 'checkpoint 之后才被改成 L0 的 task 会出现在阶段批量里，按 L1 审查它。'],
+    ['references/review-classification.md', '批量审查所有 checkpointed task (含 checkpoint 之后才改成 L0 的 task)'],
     // A12: planning research reaches the server after state-init.
     ['agents/researcher.md', '你不直接写这些文件'],
     ['workflows/execution-flow.md', '这一步不写任何文件、也不调用 `orchestrator-handle-researcher-result`'],
