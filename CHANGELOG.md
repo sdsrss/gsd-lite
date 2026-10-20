@@ -2,6 +2,96 @@
 
 All notable changes to this project are documented here.
 
+## [0.16.0] - 2026-10-20
+
+Minor, not patch: this release changes when Claude Code offers gsd's commands and
+agents, and which tasks stop for your confirmation. No state field or tool contract
+changes; the only code changes are the wording of two update messages. **Most projects
+need to do nothing.** The three points below say when that is not true.
+
+**Do I have to do anything?**
+
+- **`/gsd:start` and `/gsd:prd` are offered less eagerly.** Their descriptions used
+  to list trigger phrases ("帮我做/实现/开发…", "let's build…"), which pulled ordinary
+  "build me X" requests onto a multi-phase GSD project. They now describe what the
+  command does. If you relied on Claude picking `/gsd:start` for you, type it.
+- **The four agents are no longer offered for general work.** Their descriptions
+  now say they are dispatched by the GSD orchestrator and are not for general
+  debugging, review, research or implementation, so asking Claude to "review this
+  diff" outside a GSD project no longer lands on `gsd:reviewer`.
+- **More tasks are reviewed, and production work waits for you.** Planning now puts
+  database migrations, CI/CD config and deployment config at L2 or above — they
+  could previously be planned as L0, "config", and accepted with no reviewer — and
+  anything touching production at L3, which holds for your confirmation after
+  review. Expect an `awaiting_user` stop on production tasks you did not see
+  before. These tasks are still exempt from writing a failing test first; they are
+  no longer exempt from review.
+
+To go back, pin `gsd-lite@0.15.0`.
+
+**Upgrading a plugin install:** `/plugin update gsd`, which the README, `/gsd:doctor`
+and the update banner all printed, is not a Claude Code command. Use `/plugin` →
+**Installed** → gsd → **Update now** in a session, or `claude plugin update gsd@gsd`
+in a shell. npx and manual installs upgrade as before.
+
+Everything below came from an audit of the shipped prompts on 2026-10-17; each item
+was re-measured against this tree before it was changed, and each is held by a gate
+in `tests/prompt-layer.test.js` that reads its expected value from the code where the
+code is the authority.
+
+- **`/gsd:doctor` checked three things the code does not do.** It looked for
+  `~/.claude/gsd/.update-pending`, which nothing has ever written; it now reads
+  `runtime/update-notification.json`, the file the background check writes, and
+  reports by its `kind`. It compared the MCP server against the current project's
+  `package.json` as "the gsd source version", so in any other project it reported
+  a false version drift with a `/mcp` fix attached; it now compares only inside the
+  gsd-lite repository, and records the server's own drift `warning`. And it called
+  `.gsd/state.lock` stale after 5 minutes, while the server breaks a lock after 10
+  seconds (`LOCK_STALE_MS`) — doctor now uses the same age.
+
+- **The reviewer reviews at the planned level and reports it.** It carried a second
+  level-classification rule with no L3 branch, contradicting its own L3 section. It
+  now takes `level` from each review target, reports it in `review_level`, and lists
+  a passing L3 task in `accepted_tasks` — which is what the server holds for human
+  confirmation. The old text read as "leave L3 tasks out of accepted_tasks", and a
+  task left out stays checkpointed and never reaches the hold.
+
+- **The reviewer's input protocol describes the real payload.** It documented
+  top-level `scope`/`stage`, a `review_targets` list with levels "L1/L2", and a
+  `task_spec` path. A task review actually receives `review_target` (one object),
+  `review_scope`, `phase_id` and `current_review`; levels include L3; there is no
+  `task_spec`, so the protocol now says where the spec file is.
+
+- **Every reviewer dispatch forwards what the server checked.** `/gsd:resume`'s
+  phase-review path told the orchestrator to collect the tasks' checkpoint info
+  itself, and its task path to load it, rather than forwarding the response's
+  `review_target(s)` — whose commit and file list the server has already
+  constrained, because the reviewer pastes them into a `git diff` and file reads.
+  Both paths, and the action table, now forward the response.
+
+- **The researcher returns its documents; the server writes them.** It was told to
+  write `.gsd/research/` itself, around the commit marker the server keeps for that
+  write. It now puts the four documents in `artifacts`, as its result contract
+  already asked.
+
+- **Example expiry dates had already passed.** The researcher's and the research
+  workflow's examples showed March 2026 `expires_at` values; the server treats a
+  past date as expired, so research copied from the example was stale on arrival.
+  They are placeholders now, with the TTL defaults stated.
+
+- **Rules say why instead of saying it louder.** `<EXTREMELY-IMPORTANT>` blocks,
+  all-caps iron laws and red-flag lists in the executor, reviewer and debugger are
+  now plain rules with their reasons — test-first because a test written afterwards
+  passes on arrival; no fix direction without evidence because each failed one costs
+  one of three attempts. The orchestration rules in `/gsd:start`, `/gsd:prd` and
+  `/gsd:resume` keep their text under a neutral `<orchestrator_rules>` tag.
+
+- **Smaller corrections.** `/gsd:stop` no longer tells the orchestrator to write
+  state with a `.tmp` + rename of its own — only `state-update` writes it.
+  `/gsd:start` named `codebase-retrieval`, another harness's tool; it now names
+  Glob/Grep/Read. The debugger was told to "add logging" with no Edit tool and a
+  no-code-changes role; it now reruns with debug switches and reads existing logs.
+
 ## [0.15.0] - 2026-09-21
 
 Minor, not patch: the executor result contract narrows, and the status line reads
