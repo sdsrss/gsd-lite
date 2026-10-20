@@ -1875,8 +1875,10 @@ describe('orchestrator skeleton', () => {
     }
     await update({ updates: { current_phase: 3, phases: [{ id: 3, lifecycle: 'active' }] }, basePath: tempDir });
 
-    // Now dirty phase 1 — simulate research invalidation (only task lifecycle changes,
-    // phase stays accepted — matches applyResearchRefresh behavior)
+    // Now dirty phase 1. The setup above never got its phases to accepted
+    // (active → accepted is refused; the return value is not checked), so phase
+    // 1 is active here: an accepted phase cannot hold a needs_revalidation task
+    // (validateState), and the rollback only needs an earlier phase that has one.
     await update({
       updates: {
         phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'needs_revalidation', evidence_refs: [] }] }],
@@ -1944,7 +1946,7 @@ describe('orchestrator skeleton', () => {
     }
     await update({ updates: { current_phase: 3, phases: [{ id: 3, lifecycle: 'active' }] }, basePath: tempDir });
 
-    // Dirty only phase 2 (task invalidated, phase stays accepted)
+    // Dirty only phase 2 (task invalidated; phase active, as above)
     await update({
       updates: {
         phases: [{ id: 2, todo: [{ id: '2.1', lifecycle: 'needs_revalidation', evidence_refs: [] }] }],
