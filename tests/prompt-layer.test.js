@@ -26,7 +26,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
-import { LOCK_STALE_MS, getGsdDir } from '../src/utils.js';
+import { LOCK_STALE_MS } from '../src/utils.js';
 import { init, update } from '../src/tools/state/index.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
@@ -325,16 +325,6 @@ describe('prompt layer — agents', () => {
     assert.doesNotMatch(src, /添加日志/, 'debugger.md asks for an edit its tools and its role both rule out');
   });
 
-  it('the researcher hands its documents to the server instead of writing them', () => {
-    // storeResearch writes .gsd/.research-commit-pending around the artifact
-    // renames; a researcher writing the files itself bypasses that marker.
-    const src = read('agents/researcher.md');
-    const selfWrites = src.split('\n').filter((l) =>
-      (/写入\s*`?\.gsd\/research/.test(l) && !/服务端/.test(l)) || /(?<!不)(自己|直接)写入\s*`?\.gsd\/research/.test(l));
-    assert.deepEqual(selfWrites, [], 'researcher.md tells the researcher to write .gsd/research/ itself');
-    assert.match(tagBlock(src, 'research_output'), /`artifacts`/, 'research_output does not route the documents through artifacts');
-  });
-
   it('the reviewer takes the level from the task and reports it in the vocabulary the server accepts', () => {
     const schema = read('src/schema.js');
     const accepted = schema.match(/if \(!\[([^\]]+)\]\.includes\(r\.review_level\)\)/)?.[1];
@@ -466,73 +456,20 @@ describe('prompt layer — agents', () => {
   });
 });
 
-describe('prompt layer — research found at planning time reaches the server', () => {
-  // The researcher no longer writes .gsd/research/ itself, so on the planning
-  // path someone else has to. STEP 5 researches before STEP 10's state-init,
-  // and storeResearch refuses without a state file — so the result has to be
-  // held across the steps and handed over after state-init. The pre-tag review
-  // found the gap: nothing wrote the documents for a new project.
-  it('the server cannot store research before state-init and can right after (premise)', async (t) => {
-    const { storeResearch } = await import('../src/tools/state/index.js');
-    const dir = await mkdtemp(join(tmpdir(), 'gsd-prompt-layer-research-'));
-    // getGsdDir walks up to /. Under a directory that already has a .gsd/, the
-    // "before" call would succeed — and write research into that project.
-    if (await getGsdDir(dir)) {
-      await rm(dir, { recursive: true, force: true });
-      return void t.skip(`an ancestor of ${dir} has a .gsd/ — this premise cannot be checked here`);
-    }
-    try {
-      const expires = new Date(Date.now() + 7 * 86_400_000).toISOString();
-      const payload = {
-        result: { decision_ids: ['decision:x'], volatility: 'medium', expires_at: expires, sources: [{ id: 's1', type: 'Context7', ref: 'r' }] },
-        decision_index: { 'decision:x': { summary: 'x', source: 'Context7', expires_at: expires } },
-        artifacts: { 'STACK.md': '# s\n', 'ARCHITECTURE.md': '# a\n', 'PITFALLS.md': '# p\n', 'SUMMARY.md': '# m\n' },
-        basePath: dir,
-      };
-      const before = await storeResearch(payload);
-      assert.equal(before.code, 'NO_PROJECT_DIR', `before state-init: ${JSON.stringify(before)}`);
-      await init({ project: 'p', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], basePath: dir });
-      const after = await storeResearch(payload);
-      assert.equal(after.success, true, `after state-init: ${JSON.stringify(after)}`);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('execution-flow hands the researcher result to the server after state-init', () => {
+describe('prompt layer — planning research stays out of state', () => {
+  // Recording planning research in state makes the expiry refresh reachable,
+  // and that refresh cannot end yet: applyResearchRefresh leaves an accepted
+  // phase holding a needs_revalidation task, validateState rejects the state,
+  // and every resume re-dispatches the researcher (fourth pre-tag review).
+  // Until the refresh is redesigned, planning hands nothing to the handler and
+  // the researcher writes .gsd/research/ itself, as in 0.15. Remove this
+  // together with that redesign.
+  it('STEP 5–10 do not hand planning research to orchestrator-handle-researcher-result', () => {
     const flow = read('workflows/execution-flow.md');
-    const step5 = section(flow, '## STEP 5');
-    assert.doesNotMatch(step5, /研究输出写入/, 'STEP 5 still says the output is written there, before any state exists');
-    // STEP 10 only. An unbounded slice ran on into STEP 11's action table,
-    // whose dispatch_researcher row names the same tool, so deleting STEP 10's
-    // hand-off left this green (found by the second pre-tag review).
-    const step10 = section(flow, '## STEP 10');
-    assert.ok(!step10.includes('## STEP 11'), 'premise: the STEP 10 slice runs past STEP 10');
-    // The hand-off instruction itself, not the tool name: STEP 10's checklist
-    // names the tool after state-init too, so with the instruction deleted or
-    // moved into STEP 9 the name still came after it (third pre-tag review).
-    const initAt = step10.indexOf('state-init(');
-    const handAt = step10.indexOf('原样传给 `orchestrator-handle-researcher-result');
-    assert.ok(initAt !== -1, 'premise: STEP 10 no longer calls state-init');
-    assert.ok(handAt > initAt, 'STEP 10 does not hand the held research to orchestrator-handle-researcher-result after state-init');
-    // Before STEP 10 the handler is named once, by STEP 5, to say it is not
-    // called yet. Counting mentions catches any phrasing of a call ("交给",
-    // "调用 MCP 工具"), which a regex for one verb did not.
-    const beforeStep10 = flow.slice(0, flow.indexOf('## STEP 10'));
-    assert.equal(beforeStep10.split('`orchestrator-handle-researcher-result').length - 1, 1,
-      'the handler is named before STEP 10 other than to say it is not called yet');
-    assert.ok(step5.includes('也不调用 `orchestrator-handle-researcher-result`'), 'STEP 5 no longer says the handler waits for state-init');
-    // STEP 8 reviews the plan against the pitfalls before anything is written,
-    // so it has to read the held artifact, not .gsd/research/.
-    assert.doesNotMatch(section(flow, '## STEP 8'), /research\/PITFALLS\.md/, 'STEP 8 reads a PITFALLS.md that is not written until STEP 10');
-  });
-
-  it('planning does not skip research because .gsd/research/ already exists', () => {
-    // Only a restarted project has those files while planning, and state-init
-    // (force) drops their record: reusing them left research_basis unresolved
-    // and STEP 8 with nothing it is allowed to read (third pre-tag review).
-    const step5 = section(read('workflows/execution-flow.md'), '## STEP 5');
-    assert.doesNotMatch(step5, /已有 \.gsd\/research\/[^\n]*→ *跳过研究/, 'STEP 5 still skips research when .gsd/research/ exists');
+    const planning = flow.slice(flow.indexOf('## STEP 5'), flow.indexOf('## STEP 11'));
+    assert.ok(planning.includes('## STEP 10') && !planning.includes('## STEP 11'), 'premise: the slice is not STEP 5–10');
+    assert.doesNotMatch(planning, /orchestrator-handle-researcher-result/,
+      'planning hands research to the handler, which records it in state and makes the refresh reachable');
   });
 });
 
@@ -619,25 +556,13 @@ describe('prompt layer — the instruction sentences', () => {
     ['agents/reviewer.md', '不信任 executor 的报告：自己阅读代码、自己运行测试，executor 的结论和它声称的测试结果都不算证据'],
     ['agents/reviewer.md', '你不重新判定级别，也不因为改动看起来简单就降级'],
     ['agents/debugger.md', '读取运行时输出和已有日志来验证假设；不修改源码'],
-    ['agents/researcher.md', '你不直接写这些文件'],
     ['commands/resume.md', '**`orchestrator-resume` 响应里的 `review_targets` 原样转发** —— 不要自己从 state 里收集各 task 的'],
-    ['workflows/execution-flow.md', '这一步不写任何文件、也不调用 `orchestrator-handle-researcher-result`'],
-    ['workflows/execution-flow.md', '`state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`'],
-    ['workflows/execution-flow.md', '不要自己写这些文件。返回错误时把错误展示给用户并停下，修正后重新调用，也不要改为自己写文件'],
-    ['workflows/execution-flow.md', 'STEP 5 保留的 `artifacts["PITFALLS.md"]` 中的每个陷阱是否都有对应的防御 task 或验证条件？'],
     ['workflows/review-cycle.md', 'reviewer 不重新判定，按每个审查对象带的 `level` 审查'],
     ['references/review-classification.md', '`review_required: false` 的 L1/L2 task 同样走此路径；L3 不受它影响'],
     ['agents/reviewer.md', '一直漏掉就一直绕圈，到不了人工确认'],
     // The refresh path: with the researcher no longer writing, a step that only
     // said "更新 state.json" wrote no documents (second pre-tag review).
     ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
-    // storeResearch overwrites all four files (logic.js RESEARCH_FILES loop).
-    ['agents/researcher.md', '把仍然成立的内容并进新文档一起返回'],
-    // applyResearchRefresh rule 3: an id the new result lacks invalidates the
-    // tasks that cite it.
-    ['agents/researcher.md', '仍然成立的结论沿用原来的 decision id，放进 `decision_ids` 和 `decision_index`：新结果里没有的 id 会被当作已删除，引用它的 task 要重新验证。'],
-    ['workflows/execution-flow.md', '`.gsd/research/` 里已有的文件不是本次的研究'],
-    ['workflows/execution-flow.md', '(没做研究就跳过这一项。'],
     ['agents/debugger.md', '`architecture_concern` 为 true 时，编排器会把 phase 标为 failed'],
     ['README.md', 'sends an L1 or L2 task straight to accepted; only L3 ignores it.'],
     ['references/review-classification.md', '且 `review_required` 保持 `true` —— 设为 `false` 的 L1/L2 task 会跳过审查直接 accepted'],
