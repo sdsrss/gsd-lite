@@ -309,7 +309,11 @@ function getReviewTargets(phase, reviewScope, scopeId) {
     const task = getTaskById(phase, scopeId);
     return task ? [task] : [];
   }
-  return (phase.todo || []).filter((task) => task.level !== 'L0' && task.lifecycle === 'checkpointed');
+  // Every checkpointed task, the same set selectRunnableTask triggers the
+  // review on. Leaving L0 out (an L0 task normally auto-accepts and is never
+  // checkpointed; a level lowered after checkpoint is) gave the reviewer
+  // nothing to accept it by, and the review came back every resume.
+  return (phase.todo || []).filter((task) => task.lifecycle === 'checkpointed');
 }
 
 function getPhaseAndTask(state, taskId) {
