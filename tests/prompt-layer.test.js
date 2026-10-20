@@ -262,6 +262,15 @@ describe('prompt layer — agents', () => {
     assert.doesNotMatch(src, /添加日志/, 'debugger.md asks for an edit its tools and its role both rule out');
   });
 
+  it('the researcher hands its documents to the server instead of writing them', () => {
+    // storeResearch writes .gsd/.research-commit-pending around the artifact
+    // renames; a researcher writing the files itself bypasses that marker.
+    const src = read('agents/researcher.md');
+    const selfWrites = src.split('\n').filter((l) => /写入\s*`?\.gsd\/research/.test(l) && !/服务端/.test(l));
+    assert.deepEqual(selfWrites, [], 'researcher.md tells the researcher to write .gsd/research/ itself');
+    assert.match(tagBlock(src, 'research_output'), /`artifacts`/, 'research_output does not route the documents through artifacts');
+  });
+
   it('the reviewer takes the level from the task and reports it in the vocabulary the server accepts', () => {
     const schema = read('src/schema.js');
     const accepted = schema.match(/if \(!\[([^\]]+)\]\.includes\(r\.review_level\)\)/)?.[1];
