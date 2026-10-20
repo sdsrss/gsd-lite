@@ -468,6 +468,18 @@ describe('prompt layer — planning-time level rules', () => {
       assert.match(at('L3'), /生产|production/i, `${file} L3 does not name production`);
     });
   }
+
+  it('planning keeps review_required on for the tasks that skip TDD, since false skips review below L3', () => {
+    // Pre-tag review: an L2 "DB migration" task planned with
+    // review_required: false came back auto_accepted with no reviewer. The level
+    // rule alone did not hold; the flag is the other half.
+    assert.match(read('src/tools/orchestrator/executor.js'),
+      /const autoAccept = isL0 \|\| \(task\.review_required === false && !isL3\);/,
+      'premise: review_required no longer short-circuits review below L3');
+    const bullet = section(read('workflows/execution-flow.md'), '## STEP 7').split('\n').find((l) => l.includes('`review_required`'));
+    assert.ok(bullet?.includes('迁移、CI/CD、部署配置') && bullet.includes('必须保持 `true`'),
+      `STEP 7 does not say those tasks keep review_required: true:\n  ${bullet}`);
+  });
 });
 
 describe('prompt layer — examples do not expire', () => {

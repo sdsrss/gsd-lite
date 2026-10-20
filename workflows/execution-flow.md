@@ -37,7 +37,7 @@
 - 每个 task = 原子化 todo (含文件、操作、验证条件)
 - 每个 task 补充元数据:
   - `requires` — 依赖列表 (含 gate 类型)
-  - `review_required` — 是否需要审查
+  - `review_required` — 是否需要审查。设为 `false` 的 L1/L2 task 在 checkpoint 后直接 accepted、不经任何审查 (只有 L3 不受影响)，所以迁移、CI/CD、部署配置这类免 TDD 的 task 必须保持 `true`
   - `research_basis` — 引用的 research decision id
 - 审查级别按影响面判定:
   - **L0** — 无运行时语义变化 (docs/config/style；CI/CD 与部署配置不算，见 L2)
