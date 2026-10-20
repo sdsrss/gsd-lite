@@ -33,13 +33,6 @@ true.
   set `architecture_concern` when the evidence points there — which fails the phase.
   The old prompt said to "question the architecture" at that point but set the flag
   only on the third failure.
-- **Research done while planning can now expire mid-project.** It used to be written
-  to `.gsd/research/` and never recorded in state, so its expiry was never checked.
-  It is now recorded, with its TTL — 3 days for frontend, cloud and security work by
-  default. After that, the next `orchestrator-resume` — every loop iteration makes
-  one — re-dispatches the researcher before continuing, and a decision whose conclusion changed or disappeared sends the tasks
-  that cite it back for revalidation. On longer projects, expect a research refresh
-  you did not see before.
 
 To go back: npx installs pin `gsd-lite@0.15.0`. A plugin install follows its
 marketplace, which can be re-added pinned to the tag — remove the `gsd` marketplace
@@ -87,19 +80,6 @@ code is the authority.
   constrained, because the reviewer pastes them into a `git diff` and file reads.
   Both paths, and the action table, now forward the response.
 
-- **The researcher returns its documents; the server writes them.** It was told to
-  write `.gsd/research/` itself, around the commit marker the server keeps for that
-  write. It now puts the four documents in `artifacts`, as its result contract
-  already asked. Research done while planning is held until `state-init` has created
-  the project's state and is then handed to the server, which also records it in
-  state for the first time, so a task's `research_basis` now resolves. Planning no
-  longer skips research because `.gsd/research/` already exists: only a restarted
-  project has those files, and `state-init` clears their record, so reusing them left
-  `research_basis` unresolved and the research never refreshed. A refresh goes
-  through the same handler, and an incremental research or a refresh carries the
-  earlier findings forward under their old decision ids, since the server rewrites
-  all four files and treats a missing id as removed.
-
 - **Example expiry dates had already passed.** The researcher's and the research
   workflow's examples showed March 2026 `expires_at` values; the server treats a
   past date as expired, so research copied from the example was stale on arrival.
@@ -124,6 +104,9 @@ code is the authority.
   `/gsd:start` named `codebase-retrieval`, another harness's tool; it now names
   Glob/Grep/Read. The debugger was told to "add logging" with no Edit tool and a
   no-code-changes role; it now reruns with debug switches and reads existing logs.
+  `/gsd:resume`'s research-refresh step said to update `state.json` itself; it now
+  hands the researcher's result to `orchestrator-handle-researcher-result`, which
+  writes the documents and applies the decision-id rules.
 
 ## [0.15.0] - 2026-09-21
 
