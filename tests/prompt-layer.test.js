@@ -145,7 +145,11 @@ describe('prompt layer — upgrade instructions use commands Claude Code has', (
   // /plugin Installed tab → Update now, or `claude plugin update <plugin>@<marketplace>`.
   const marketplace = JSON.parse(read('.claude-plugin/marketplace.json'));
   const pluginId = `${marketplace.plugins[0].name}@${marketplace.name}`;
-  const userText = [...promptFiles, 'README.md'];
+  // The hooks print upgrade instructions too: the SessionStart banner and
+  // `gsd update`'s plugin-mode line are the ones users see most.
+  const hookCode = ['hooks', 'hooks/lib'].flatMap((dir) =>
+    readdirSync(join(repoRoot, dir)).filter((f) => f.endsWith('.cjs')).map((f) => `${dir}/${f}`));
+  const userText = [...promptFiles, 'README.md', ...hookCode];
 
   it('no shipped text tells the user to run /plugin update', () => {
     const offenders = [];

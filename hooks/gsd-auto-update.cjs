@@ -790,13 +790,13 @@ function describeUpdateOutcome(result) {
   if (result.updated) return `\n✓ Updated: v${result.from} → v${result.to}`;
   if (!result.updateAvailable) return null;
   if (result.action === 'plugin_update') {
-    return `\n! Update available: v${result.to}. Run /plugin update gsd`;
+    return `\n! Update available: v${result.to}. Run: claude plugin update gsd@gsd`;
   }
   if (result.action === 'cached') {
     // A plugin install cannot self-update anyway, so sending it through another
     // check first would cost a round trip to reach the same sentence.
     if (result.installMode === 'plugin') {
-      return `\n! Update available: v${result.to} (from an earlier check). Run /plugin update gsd`;
+      return `\n! Update available: v${result.to} (from an earlier check). Run: claude plugin update gsd@gsd`;
     }
     return `\n! Update available: v${result.to} (from an earlier check — this run was throttled).`
       + '\n  Run `gsd update --force` to check again now.';

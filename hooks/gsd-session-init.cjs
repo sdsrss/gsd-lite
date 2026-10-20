@@ -306,7 +306,7 @@ setTimeout(() => process.exit(0), 4000).unref();
       if (notif.kind === 'updated') {
         console.log(`✅ GSD-Lite auto-updated: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}`);
       } else if (notif.kind === 'available' && notif.action === 'plugin_update') {
-        console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run /plugin update gsd`);
+        console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Update it from /plugin → Installed → gsd → Update now, or run \`claude plugin update gsd@gsd\` in a shell`);
       } else if (notif.kind === 'available') {
         console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run gsd update`);
       } else if (notif.kind === 'failed') {

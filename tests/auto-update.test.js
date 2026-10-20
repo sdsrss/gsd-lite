@@ -932,12 +932,12 @@ describe('describeUpdateOutcome', () => {
     });
   });
 
-  it('points plugin installs at /plugin update rather than claiming failure', async () => {
+  it('points plugin installs at claude plugin update rather than claiming failure', async () => {
     await withRealModule(async (mod) => {
       const line = mod.describeUpdateOutcome({
         updateAvailable: true, action: 'plugin_update', from: '0.1.0', to: '0.2.0',
       });
-      assert.match(line, /\/plugin update gsd/);
+      assert.match(line, /claude plugin update gsd@gsd/);
       assert.doesNotMatch(line, /failed/i, 'nothing failed — this install mode updates via the plugin system');
     });
   });
@@ -953,14 +953,14 @@ describe('describeUpdateOutcome', () => {
     });
   });
 
-  it('sends a throttled plugin install straight to /plugin update', async () => {
+  it('sends a throttled plugin install straight to claude plugin update', async () => {
     // A plugin install cannot self-update, so `gsd update --force` would only
     // re-derive the same answer one round trip later.
     await withRealModule(async (mod) => {
       const line = mod.describeUpdateOutcome({
         updateAvailable: true, action: 'cached', installMode: 'plugin', from: '0.1.0', to: '0.2.0',
       });
-      assert.match(line, /\/plugin update gsd/);
+      assert.match(line, /claude plugin update gsd@gsd/);
       assert.doesNotMatch(line, /--force/, 'a re-check cannot change the answer for a plugin install');
     });
   });
