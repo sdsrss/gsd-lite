@@ -67,10 +67,9 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 ---
 
-### `reviewing_task` — 恢复 L2 单任务审查
+### `reviewing_task` — 恢复单任务审查 (L2/L3)
 
 - 读取 `current_review` (scope=task, scope_id, stage)
-- 加载对应 task 的 checkpoint 信息
 - 派发 reviewer 子代理，传递:
   - **`orchestrator-resume` 响应里的 `review_target` 原样转发** —— 不要自己从 state 里读
     `checkpoint_commit` / `files_changed`。服务端已对这两个值做形状校验（提交哈希形状、
@@ -85,8 +84,11 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 ### `reviewing_phase` — 恢复 L1 阶段批量审查
 
 - 读取 `current_review` (scope=phase, scope_id)
-- 收集该 phase 中所有 L1 task 的 checkpoint 信息
-- 派发 reviewer 子代理进行批量审查
+- 派发 reviewer 子代理进行批量审查，传递:
+  - **`orchestrator-resume` 响应里的 `review_targets` 原样转发** —— 不要自己从 state 里收集各 task 的
+    `checkpoint_commit` / `files_changed`。理由同 `reviewing_task`：服务端已对每个审查对象做了同样的形状校验，
+    自己取原始值等于绕开这道校验。
+  - 审查对象里若带 `checkpoint_commit_rejected` / `files_changed_rejected`，一并转发
 - 审查完成后:
   - 全部通过 → phase handoff gate 校验
   - 有 Critical → 标记返工 task + 失效传播 → 重新派发 executor

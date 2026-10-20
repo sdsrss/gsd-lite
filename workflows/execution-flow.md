@@ -148,7 +148,7 @@
 | action | 操作 |
 |--------|------|
 | `dispatch_executor` | 派发 `executor` 子代理执行 task → 结果调用 `orchestrator-handle-executor-result` |
-| `dispatch_reviewer` | 派发 `reviewer` 子代理审查 → 结果调用 `orchestrator-handle-reviewer-result` |
+| `dispatch_reviewer` | 派发 `reviewer` 子代理审查：把响应里的 `review_scope` / `phase_id` / `current_review` 和 `review_target` (单任务) 或 `review_targets` (阶段批量) 原样转发，不要自己从 state 读审查对象的提交与文件列表 → 结果调用 `orchestrator-handle-reviewer-result` |
 | `dispatch_debugger` | 派发 `debugger` 子代理调试 → 结果调用 `orchestrator-handle-debugger-result` |
 | `dispatch_researcher` | 派发 `researcher` 子代理研究 → 结果调用 `orchestrator-handle-researcher-result` |
 | `retry_executor` | 重新派发 executor (带 retry 上下文)，同 dispatch_executor |
