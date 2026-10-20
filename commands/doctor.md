@@ -49,7 +49,8 @@ Check if GSD hooks are registered in Claude settings:
   it declares `SessionStart`, `PostToolUse` and `Stop`:
   - All three declared: record PASS "hooks served by the plugin"
   - Partial or the file missing/unparseable: record FAIL naming what is absent,
-    fix `/plugin update gsd`
+    fix: update the plugin — in a session `/plugin` → **Installed** → gsd → **Update now**,
+    or from a shell `claude plugin update gsd@gsd` — then restart Claude Code
 - npx/manual mode — check the three hook arrays in `settings.hooks`:
   - `PostToolUse` entry referencing `gsd-context-monitor`
   - `SessionStart` entry referencing `gsd-session-init`
@@ -96,7 +97,7 @@ Check for update-related information:
   - Any mismatch: record WARN with details
 - If `~/.claude/gsd/runtime/update-notification.json` exists, it is the result of the
   last background update check. Parse it and record by its `kind`:
-  - `available` (with `from`, `to`, `action: "plugin_update"`): INFO "Update available: v{from} → v{to}" — a plugin install is updated by the plugin system, not by gsd
+  - `available` (with `from`, `to`, `action: "plugin_update"`): INFO "Update available: v{from} → v{to}" — a plugin install is updated by the plugin system, not by gsd: `/plugin` → **Installed** → gsd → **Update now**, or `claude plugin update gsd@gsd` from a shell
   - `updated` (with `from`, `to`): INFO "Auto-updated v{from} → v{to}; restart Claude Code to load it"
   - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `gsd update` (or `npx gsd-lite update`) to see why
   - The SessionStart hook prints this file and then deletes it, so it is usually absent. Absence is normal: record nothing for it.
