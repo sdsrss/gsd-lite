@@ -90,7 +90,12 @@ Check for update-related information:
   - Server version < source version: record WARN "MCP server running v{x} but source is v{y}. Run /mcp to restart"
   - Runtime < server: record WARN "Runtime dir outdated: v{x} vs server v{y}"
   - Any mismatch: record WARN with details
-- If `~/.claude/gsd/.update-pending` exists: record INFO "Update pending, will apply on next session"
+- If `~/.claude/gsd/runtime/update-notification.json` exists, it is the result of the
+  last background update check. Parse it and record by its `kind`:
+  - `available` (with `from`, `to`, `action: "plugin_update"`): INFO "Update available: v{from} → v{to}" — a plugin install is updated by the plugin system, not by gsd
+  - `updated` (with `from`, `to`): INFO "Auto-updated v{from} → v{to}; restart Claude Code to load it"
+  - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `gsd update` (or `npx gsd-lite update`) to see why
+  - The SessionStart hook prints this file and then deletes it, so it is usually absent. Absence is normal: record nothing for it.
 - If cannot determine: record INFO "Update status unavailable"
 
 ## STEP 6: Output Summary
