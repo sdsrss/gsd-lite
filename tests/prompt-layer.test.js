@@ -526,6 +526,14 @@ describe('prompt layer — research found at planning time reaches the server', 
     // so it has to read the held artifact, not .gsd/research/.
     assert.doesNotMatch(section(flow, '## STEP 8'), /research\/PITFALLS\.md/, 'STEP 8 reads a PITFALLS.md that is not written until STEP 10');
   });
+
+  it('planning does not skip research because .gsd/research/ already exists', () => {
+    // Only a restarted project has those files while planning, and state-init
+    // (force) drops their record: reusing them left research_basis unresolved
+    // and STEP 8 with nothing it is allowed to read (third pre-tag review).
+    const step5 = section(read('workflows/execution-flow.md'), '## STEP 5');
+    assert.doesNotMatch(step5, /已有 \.gsd\/research\/[^\n]*→ *跳过研究/, 'STEP 5 still skips research when .gsd/research/ exists');
+  });
 });
 
 describe('prompt layer — planning-time level rules', () => {
@@ -625,6 +633,11 @@ describe('prompt layer — the instruction sentences', () => {
     ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
     // storeResearch overwrites all four files (logic.js RESEARCH_FILES loop).
     ['agents/researcher.md', '把仍然成立的内容并进新文档一起返回'],
+    // applyResearchRefresh rule 3: an id the new result lacks invalidates the
+    // tasks that cite it.
+    ['agents/researcher.md', '仍然成立的结论沿用原来的 decision id，放进 `decision_ids` 和 `decision_index`：新结果里没有的 id 会被当作已删除，引用它的 task 要重新验证。'],
+    ['workflows/execution-flow.md', '`.gsd/research/` 里已有的文件不是本次的研究'],
+    ['workflows/execution-flow.md', '(没做研究就跳过这一项。'],
     ['agents/debugger.md', '`architecture_concern` 为 true 时，编排器会把 phase 标为 failed'],
     ['README.md', 'sends an L1 or L2 task straight to accepted; only L3 ignores it.'],
     ['references/review-classification.md', '且 `review_required` 保持 `true` —— 设为 `false` 的 L1/L2 task 会跳过审查直接 accepted'],
