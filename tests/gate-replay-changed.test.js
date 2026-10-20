@@ -104,9 +104,20 @@ describe('the vacuity gate fires on source changes and not on test-only ones', (
     assert.deepEqual(shas.slice().sort(), PINNED.slice().sort(),
       'the SHAs used in code and the PINNED list have drifted apart; one of them is wrong');
 
-    const unreachable = shas.filter((sha) => spawnSync(
-      'git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, 'main'],
-    ).status !== 0);
+    // A pull_request checkout has no local `main` — only `origin/main` — and
+    // `merge-base` then exits 128 for every SHA, which the first version read
+    // as "unreachable" and failed the first PR after it landed. Resolve the ref
+    // first, and keep "not an ancestor" (exit 1) apart from "could not ask".
+    const mainRef = ['main', 'origin/main'].find((ref) => spawnSync(
+      'git', ['-C', repoRoot, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
+    ).status === 0);
+    assert.ok(mainRef, 'neither main nor origin/main resolves here, so reachability cannot be checked');
+    const asked = shas.map((sha) => [sha, spawnSync(
+      'git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, mainRef],
+    ).status]);
+    const failed = asked.filter(([, status]) => status !== 0 && status !== 1);
+    assert.deepEqual(failed, [], `git merge-base could not answer for these against ${mainRef}`);
+    const unreachable = asked.filter(([, status]) => status === 1).map(([sha]) => sha);
     assert.deepEqual(unreachable, [],
       'these are reachable only from a feature branch, so deleting that branch makes them '
       + `disappear from a fresh clone and this whole file fails on missing history: ${unreachable.join(', ')}`);
