@@ -420,4 +420,29 @@ describe('round3 — full orchestration cycles', () => {
         `error should name fix_attempts: ${r.message}`);
     } finally { await teardown(ctx); }
   });
+
+  it('a self-reported fix_attempts above three is not a payload error', async () => {
+    // The server counts fix directions itself; refusing this shape sent a
+    // debugger that copied its dispatch's count back for another round.
+    const ctx = await newProject('gsd-r3h-');
+    try {
+      const { mcp } = ctx;
+      await mcp.call('state-init', {
+        project: 'debug-count',
+        phases: [{ name: 'P', tasks: [{ name: 't', level: 'L1' }] }],
+      });
+      await mcp.call('state-update', { updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] } });
+      const r = await mcp.call('orchestrator-handle-debugger-result', {
+        result: {
+          task_id: '1.1', outcome: 'fix_suggested',
+          root_cause: 'x', fix_direction: 'y',
+          evidence: [], hypothesis_tested: [],
+          fix_attempts: 5, blockers: [],
+          architecture_concern: false,
+        },
+      });
+      assert.ok(!r.error, `the result was refused: ${r.message}`);
+      assert.equal(r.action, 'dispatch_executor');
+    } finally { await teardown(ctx); }
+  });
 });

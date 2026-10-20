@@ -28,12 +28,17 @@ import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
 import { LOCK_STALE_MS } from '../src/utils.js';
 import { TASK_LEVELS, WORKFLOW_MODES } from '../src/schema.js';
-import { REFRESH_MODES } from '../src/tools/orchestrator/helpers.js';
+// Namespace imports for exports newer than this file's oldest assertions, so
+// the file loads on a tree without them and its other cases still run there
+// (gate-replay reads a load error as nothing evaluated).
+import * as orchestratorHelpers from '../src/tools/orchestrator/helpers.js';
+import * as stateLogic from '../src/tools/state/logic.js';
 import { init, update } from '../src/tools/state/index.js';
-import { BLOCKED_DECISION_PREFIX } from '../src/tools/state/logic.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const { REFRESH_MODES = [] } = orchestratorHelpers;
+const { BLOCKED_DECISION_PREFIX } = stateLogic;
 const read = (rel) => readFileSync(join(repoRoot, rel), 'utf8');
 
 // Walk the directories rather than asking git: an untracked prompt file is
@@ -525,6 +530,7 @@ describe('prompt layer — research found at planning time reaches the server', 
   it("the researcher's blocked fallback carries the prefix the server refuses on a refresh", () => {
     // storeResearch keeps the research on record when a refresh comes back
     // [BLOCKED]; it recognises the result only by this prefix.
+    assert.equal(typeof BLOCKED_DECISION_PREFIX, 'string', 'premise: logic.js exports BLOCKED_DECISION_PREFIX');
     const fallback = tagBlock(read('agents/researcher.md'), 'uncertainty_handling');
     const summaries = [...fallback.matchAll(/"summary": "([^"]*)"/g)].map((m) => m[1]);
     const items = [...fallback.matchAll(/decision 摘要改为 "([^"]*)"/g)].map((m) => m[1]);
@@ -534,6 +540,7 @@ describe('prompt layer — research found at planning time reaches the server', 
   });
 
   it('the state diagram draws a refresh only out of the modes the server refreshes in', () => {
+    assert.ok(REFRESH_MODES.length > 0, 'premise: orchestrator/helpers.js exports REFRESH_MODES');
     const diagram = read('references/state-diagram.md');
     const edges = [...diagram.matchAll(/^\s*(\w+) --> research_refresh_needed/gm)].map((m) => m[1]);
     assert.ok(edges.length >= 1, 'premise: the diagram draws no edge into research_refresh_needed');
