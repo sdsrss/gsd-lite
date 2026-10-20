@@ -12,9 +12,13 @@
 // src/utils.js, the reviewer payload from a real orchestrator-resume call — so
 // the next change to the code fails here instead of drifting silently.
 //
-// Some gates below are token checks, and say so: when the defect IS a wrong
-// token (a tool name from another harness, a pressure tag), the token is the
-// property. They do not prove the surrounding prose is right.
+// Where the fix is an instruction, the gate asserts the instruction SENTENCE
+// (INSTRUCTIONS below), not a word from it: a word survives its own negation —
+// "不要放进 accepted_tasks" carries every token of the rule it reverses — and a
+// sentence does not. What a sentence check still cannot see is a contradicting
+// sentence added somewhere else in the file. Some gates are plain token checks
+// and say so: when the defect IS a wrong token (a tool name from another
+// harness, a pressure tag), the token is the property.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -161,6 +165,14 @@ describe('prompt layer — upgrade instructions use commands Claude Code has', (
     assert.deepEqual(offenders, [], `not a Claude Code command:\n  ${offenders.join('\n  ')}`);
   });
 
+  it('the hooks print the plugin id the marketplace defines', () => {
+    // The hooks hardcode it; derive it here so a renamed marketplace fails.
+    assert.ok(read('hooks/gsd-session-init.cjs').includes(`claude plugin update ${pluginId}`), 'session-init banner names another plugin id');
+    assert.match(read('hooks/gsd-session-init.cjs'), /Installed → gsd → Update now/, 'session-init banner lacks the in-session path');
+    assert.equal(read('hooks/gsd-auto-update.cjs').split(`claude plugin update ${pluginId}`).length - 1, 2,
+      'gsd update should give the shell command on both plugin-mode lines');
+  });
+
   for (const file of ['README.md', 'commands/doctor.md']) {
     it(`${file} gives both documented update paths for ${pluginId}`, () => {
       const src = read(file);
@@ -174,9 +186,10 @@ describe('prompt layer — commands', () => {
   it('stop writes state only through state-update', () => {
     // "先写 .tmp 再 rename" told the orchestrator to do the server's job by
     // hand, outside its lock and its schema check.
-    const rules = tagBlock(read('commands/stop.md'), 'rules');
-    assert.match(rules, /`state-update`/, 'stop.md rules do not route the write through state-update');
-    assert.doesNotMatch(rules, /\.tmp|rename/, 'stop.md tells the orchestrator to do the atomic write itself');
+    const stop = read('commands/stop.md');
+    assert.match(tagBlock(stop, 'rules'), /`state-update`/, 'stop.md rules do not route the write through state-update');
+    // The whole file: a .tmp + rename instruction in STEP 2 is the same defect.
+    assert.doesNotMatch(stop, /\.tmp|rename/, 'stop.md tells the orchestrator to do the atomic write itself');
   });
 
   it('names no tool another harness has and Claude Code does not (token check)', () => {
@@ -192,7 +205,7 @@ describe('prompt layer — commands', () => {
     for (const file of mdFiles('commands')) {
       const description = frontmatterDescription(read(file));
       assert.ok(description.length > 0, `premise: ${file} has no description`);
-      assert.doesNotMatch(description, /Use when|\(\d\)/i, `${file} description enumerates triggers: ${description}`);
+      assert.doesNotMatch(description, /Use when|Trigger|\(\d\)|用户说|帮我|let'?s build/i, `${file} description enumerates triggers: ${description}`);
     }
   });
 
@@ -266,6 +279,7 @@ describe('prompt layer — agents', () => {
     const exemptions = section(read('agents/executor.md'), '## TDD 例外');
     assert.match(exemptions, /迁移/, 'premise: migrations are no longer exempt');
     assert.match(exemptions, /免 TDD 不降低审查级别/, 'executor TDD exemptions do not say the review level stands');
+    assert.doesNotMatch(exemptions, /review_required[^。\n]*false/, 'the exemption offers review_required: false, which skips review below L3');
   });
 
   it('the reviewer role keeps the rule the pressure block repeated', () => {
@@ -434,7 +448,7 @@ describe('prompt layer — agents', () => {
     const gathering = [];
     for (const file of [...mdFiles('commands'), ...mdFiles('workflows')]) {
       read(file).split('\n').forEach((line, i) => {
-        if (/(收集|加载)[^\n]*checkpoint/.test(line) && !/不要/.test(line)) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
+        if (/(收集|加载|读取)[^\n]*checkpoint/.test(line) && !/不要/.test(line)) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
       });
     }
     assert.deepEqual(gathering, [], `these tell the orchestrator to gather checkpoint info itself:\n  ${gathering.join('\n  ')}`);
@@ -505,6 +519,9 @@ describe('prompt layer — planning-time level rules', () => {
         assert.match(at('L2'), word, `${file} L2 does not name ${word}`);
       }
       assert.match(at('L3'), /生产|production/i, `${file} L3 does not name production`);
+      if (/CI\/CD/.test(at('L0'))) {
+        assert.match(at('L0'), /except|不算|除外/, `${file} L0 lists CI/CD as L0 work again: ${at('L0')}`);
+      }
     });
   }
 
@@ -518,6 +535,33 @@ describe('prompt layer — planning-time level rules', () => {
     const bullet = section(read('workflows/execution-flow.md'), '## STEP 7').split('\n').find((l) => l.includes('`review_required`'));
     assert.ok(bullet?.includes('迁移、CI/CD、部署配置') && bullet.includes('必须保持 `true`'),
       `STEP 7 does not say those tasks keep review_required: true:\n  ${bullet}`);
+  });
+});
+
+describe('prompt layer — the instruction sentences', () => {
+  // One home for every instruction a fix in this file introduced. Each was
+  // checked against the pre-tag reviewer's mutation that kept a word-level
+  // version of its gate green: replacing or negating the instruction removes
+  // the sentence and turns this red.
+  const collapse = (t) => t.replace(/\s+/g, ' ');
+  const INSTRUCTIONS = [
+    ['commands/doctor.md', 'Read `package.json` in the current project root for a source version only when its `name` is `gsd-lite`'],
+    ['commands/doctor.md', "If the `health` response carries `warning` (the server's own version-drift check): record it as WARN"],
+    ['commands/doctor.md', 'Older than 10 seconds: record WARN'],
+    ['agents/reviewer.md', '不信任 executor 的报告：自己阅读代码、自己运行测试，executor 的结论和它声称的测试结果都不算证据'],
+    ['agents/reviewer.md', '你不重新判定级别，也不因为改动看起来简单就降级'],
+    ['agents/debugger.md', '读取运行时输出和已有日志来验证假设；不修改源码'],
+    ['agents/researcher.md', '你不直接写这些文件'],
+    ['commands/resume.md', '**`orchestrator-resume` 响应里的 `review_targets` 原样转发** —— 不要自己从 state 里收集各 task 的'],
+  ];
+  for (const [file, sentence] of INSTRUCTIONS) {
+    it(`${file} says: ${sentence.slice(0, 40)}…`, () => {
+      assert.ok(collapse(read(file)).includes(collapse(sentence)), `${file} no longer carries the instruction:\n  ${sentence}`);
+    });
+  }
+
+  it('the debugger is not told to add log lines anywhere', () => {
+    assert.doesNotMatch(read('agents/debugger.md'), /加日志/, 'debugger.md asks for an edit its role rules out');
   });
 });
 
