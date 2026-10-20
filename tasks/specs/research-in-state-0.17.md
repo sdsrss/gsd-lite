@@ -102,7 +102,7 @@
 - [x] PR2 `fix/deps-hono`：override `hono` `^4.13.11`。
 - [x] PR3 `fix/0.17-loops-and-docs`：两个死循环；文档与代码对不上的几处；`sync-versions.js`。
 - [x] PR4 `test/layer-b-budget`（纯测试）：Layer B 时间预算按实测放宽。
-- [ ] PR5 `feat/research-in-state`：研究存储重设计 + A12。
+- [x] PR5 `feat/research-in-state`：研究存储重设计 + A12，以及两轮复审的修复。
 - [ ] 独立复审（全范围 v0.16.0..HEAD）→ 修复 → 发版分支（CHANGELOG + `npm version minor`，临时 `CLAUDE_CONFIG_DIR`）→ tag → 核对产物。
 
 ## 决策与进展
@@ -123,6 +123,23 @@
 - 写新测试文件时用 Write 覆盖了已有的 `tests/research-refresh.test.js`（6 个 applyResearchRefresh 单元测试），提交前发现，已从 origin/main 恢复原文件，新测试改名为 `tests/research-in-state.test.js`。
 - e2e Layer B 的 90 秒超时在负载 ~1.3 时也会触发：8 次运行 13 秒到 90 秒以上、两次超时，属于网络耗时分布的尾部，不只是负载。PR4 按实测放宽预算。
 - 研究文档里"package.json 主依赖大版本变更 → 立即过期"、"用户说重新研究 → 强制过期"（workflows/research.md）没有对应代码，早于本次，未改，列为遗留。
+- 发版前独立复审第一轮（v0.16.0..release/0.17.0，全范围）：BLOCKER 1（复审自评）、HIGH 2、MEDIUM 2、LOW 若干，均先复现再修：
+  - BLOCKER：来源全部不可用时 researcher 的 `[BLOCKED]` 兜底结果在刷新时整体替换了记录 → 有研究记录时拒收（bfc52e7 的对应提交）。
+  - HIGH：preflight 只排除 awaiting_user / paused_by_user，planning / reconcile_workspace / replan_required / awaiting_clear 被刷新接管后直接执行 →
+    改为 `REFRESH_MODES`（可被打断的模式），测试按 `WORKFLOW_MODES` 全覆盖。又一次"列不可信集合"（见记忆 review-caught-what-i-missed 第 8 条）。
+  - HIGH：`retry_failed` 不清 `debug_context`，服务端计数让重试后的 task 立即再失败 → 重试时清空。
+  - MEDIUM：校验器拒收"自报 fix_attempts ≥ 3 但结论非 failed"，照抄派发计数的 debugger 被反复派发 → 不再校验自报值，由服务端计数决定。
+  - MEDIUM：checkpointed 的 L0 task 不在审查对象里，阶段审查死循环 → 审查对象 = 所有 checkpointed task（触发条件同一集合）。
+  - LOW：写到一半失败删掉提交标记、2 秒 TTL 被接受、CHANGELOG"5 次后"实为第 6 轮、两处注释。
+  - 存活变异 3 个（全部后续阶段已验收时直接完成、reopenPhase 的重置、resume.md 的说明）补了测试。
+- 发版前复审第二轮（增量，0d42cc4..release/0.17.0）：无 BLOCKER；HIGH 1、MEDIUM 1、LOW 若干：
+  - HIGH：第一轮的 `[BLOCKED]` 拒收让"规划时就没有来源"的项目在占位过期后永远停在刷新 → 只在记录里有真实结论时拒收；resume.md 与报错写明出路（`research: null`）。
+  - MEDIUM（未改，记为遗留）：`resumeAwaitingClear` 把 /clear 前被打断的审查留在 `current_review` 却持久化 `executing_task`，不刷新时这个审查被丢掉，
+    刷新后 `inferWorkflowModeAfterResearch` 恢复了它。两条路径不一致，AC6 在这种遗留审查的边角不成立；刷新那条恢复被打断的审查，更接近意图。
+    根因在 `resumeAwaitingClear`（早于本次），修它要动本次只是"碰到"的代码，按记忆第 10 条不在本次扩展。
+  - LOW：失败的重试会删掉之前留下的标记 → 只删本次自己建的；两处"L0 不会派给你"；resume.md 两处措辞；state-diagram 门禁看不见 REFRESH_MODES 变化 → 改为比对预检列表；
+    TTL 下限只被无关测试顺带挡住 → 受阻用例改用 24 小时；工具描述补上下限与拒收；CHANGELOG 措辞。
+  - 早于本次（未改，记为遗留）：调试中被暂停的项目，resume 报告 `resume_to: reviewing_task`（resume.js 的 paused 分支同样只看 scope 不看 stage）。
 
 ## 验证记录
 
@@ -136,3 +153,6 @@
   0.16.0 的三个复现脚本（accepted-phase、livelock、livelock-rule1）第 2 轮即回到 `rollback_to_dirty_phase` / `dispatch_executor`（修复前各 3 轮 `dispatch_researcher`）；
   `npm test` → 通过（1612/1612，exit 0，load 3.3）；`npm run lint` → 通过（112 files）；
   `bash scripts/gate-replay-changed.sh origin/main HEAD` → 5 个测试文件均 DISCRIMINATIVE
+- 两轮复审修复后（feat/research-in-state）：`npm test` → 通过（1633/1633，exit 0）；`npm run lint` → 通过（112 files）；
+  `bash scripts/gate-replay-changed.sh origin/main HEAD` → 9 个测试文件均 DISCRIMINATIVE；变异 26 个，各至少让 1 个用例变红；
+  新增红测试在修复前均失败（第一轮 7 + TC12/TC13 + L0，第二轮 2）
