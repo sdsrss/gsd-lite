@@ -259,6 +259,22 @@ describe('prompt layer — agents', () => {
     assert.match(principles, /`architecture_concern: true`/, 'the 2+ failed directions case is gone');
   });
 
+  it('the debugger says one thing about three failed directions, and it is what the code does', () => {
+    // Phase 4 and uncertainty_handling say: third failure → failed AND
+    // architecture_concern: true, and the server then fails the whole phase.
+    // The new principles paragraph first said "task 随之失败", and the result
+    // rules said the orchestrator only "应考虑" failing the phase.
+    assert.match(read('src/tools/orchestrator/debugger.js'), /const phaseFailed = result\.architecture_concern === true;/,
+      'premise: architecture_concern no longer decides phase failure');
+    const src = read('agents/debugger.md');
+    const principles = tagBlock(src, 'principles');
+    assert.ok(principles.includes('第 3 次仍无效就必须返回 `failed` 并标记 `architecture_concern: true`，整个 phase 随之失败'),
+      'the principles paragraph disagrees with Phase 4 about the third failed direction');
+    assert.match(tagBlock(src, 'four_phases'), /3 次修复方向均被 executor 验证无效 → 停止。标记 architecture_concern: true/,
+      'premise: Phase 4 no longer states the third-failure rule');
+    assert.doesNotMatch(src, /task 随之失败|应考虑标记 phase failed/, 'a sentence contradicting the third-failure rule is back');
+  });
+
   it('the debugger, which has no Edit tool, is not told to add logging', () => {
     const src = read('agents/debugger.md');
     const tools = src.match(/^tools:\s*(.*)$/m)?.[1] ?? '';

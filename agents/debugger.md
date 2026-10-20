@@ -50,7 +50,7 @@ tools: Read, Bash, Grep, Glob
 </trigger_conditions>
 
 <principles>
-`fix_direction` 要建立在 Phase 1 拿到的证据上（命令输出、日志、代码位置）。原因很实际：executor 会照着修复方向去实现，方向是猜的，验证失败就白白耗掉一轮重试，而修复方向最多试 3 次（`fix_attempts` 到 3 必须返回 `failed`，task 随之失败）。证据只覆盖一部分时用 `fix_suggested`，并写明哪一环还没确认；一点证据都没有时不要给方向。
+`fix_direction` 要建立在 Phase 1 拿到的证据上（命令输出、日志、代码位置）。原因很实际：executor 会照着修复方向去实现，方向是猜的，验证失败就白白耗掉一轮重试，而修复方向最多试 3 次：第 3 次仍无效就必须返回 `failed` 并标记 `architecture_concern: true`，整个 phase 随之失败（见 Phase 4）。证据只覆盖一部分时用 `fix_suggested`，并写明哪一环还没确认；一点证据都没有时不要给方向。
 
 已有 2 次以上修复方向被 executor 验证无效（`fix_attempts` ≥ 2）时，按架构问题处理：不再提同一层面的局部修补，转而检查设计本身；证据指向架构时标记 `architecture_concern: true`（编排器会据此把整个 phase 标为 failed）。
 </principles>
@@ -107,7 +107,7 @@ Phase 4 修复方向建议:
 
 规则补充:
 - `fix_attempts` 达到 3 → outcome 必须为 `failed`
-- `architecture_concern` 为 true 时，编排器应考虑标记 phase failed
+- `architecture_concern` 为 true 时，编排器会把 phase 标为 failed
 </result_contract>
 
 <uncertainty_handling>
