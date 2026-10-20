@@ -676,6 +676,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
       ...(preflight.override.current_git_head ? { current_git_head: preflight.override.current_git_head } : {}),
       ...(preflight.override.changed_files ? { changed_files: preflight.override.changed_files } : {}),
       ...(preflight.override.expired_research ? { expired_research: preflight.override.expired_research } : {}),
+      ...(preflight.override.current_decision_index ? { current_decision_index: preflight.override.current_decision_index } : {}),
       ...(preflight.override.dirty_phase ? { dirty_phase: preflight.override.dirty_phase } : {}),
       ...(preflight.hints && preflight.hints.length > 1 ? { pending_issues: preflight.hints.slice(1) } : {}),
     };
@@ -944,6 +945,10 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           action: 'dispatch_researcher',
           workflow_mode: state.workflow_mode,
           expired_research: expiredResearch,
+          // The researcher returns the complete decision set and the store
+          // replaces the index with it, so it needs the decisions on record to
+          // keep an id whose conclusion still holds.
+          current_decision_index: state.research?.decision_index || {},
           guidance: 'Research cache expired. Dispatch researcher sub-agent to refresh, then call orchestrator-handle-researcher-result',
           message: 'Research has expired and must be refreshed before execution can resume',
         };

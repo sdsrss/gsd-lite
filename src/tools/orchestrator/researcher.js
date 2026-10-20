@@ -21,5 +21,6 @@ export async function handleResearcherResult({ result, artifacts, decision_index
     stored_files: persisted.stored_files,
     decision_ids: persisted.decision_ids,
     research_warnings: persisted.warnings,
+    ...(persisted.invalidated_tasks?.length > 0 ? { invalidated_tasks: persisted.invalidated_tasks } : {}),
   };
 }

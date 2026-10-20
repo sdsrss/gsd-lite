@@ -678,17 +678,28 @@ export async function phaseComplete({
       phase.phase_handoff.direction_ok = direction_ok;
     }
 
-    // Increment current_phase if this was the active phase
-    if (state.current_phase === phase_id && phase_id < state.total_phases) {
-      state.current_phase = phase_id + 1;
+    // Advance current_phase if this was the active phase — to the next phase
+    // not yet accepted. Phase ids run 1..total_phases. Normally that is
+    // phase_id + 1; after a rollback to an earlier dirty phase (a research
+    // refresh that invalidated accepted work), the phases in between may
+    // already be accepted, and landing on one stalled the loop: complete_phase
+    // for a phase whose lifecycle has no exit.
+    let nextPhaseId = phase_id + 1;
+    while (nextPhaseId <= state.total_phases
+      && state.phases.find((p) => p.id === nextPhaseId)?.lifecycle === 'accepted') {
+      nextPhaseId += 1;
+    }
+    if (state.current_phase === phase_id && nextPhaseId <= state.total_phases) {
+      state.current_phase = nextPhaseId;
       // Activate the next phase (M-3: use validateTransition for consistency)
       const nextPhase = state.phases.find((p) => p.id === state.current_phase);
       if (nextPhase) {
         const nextTr = validateTransition('phase', nextPhase.lifecycle, 'active');
         if (nextTr.valid) nextPhase.lifecycle = 'active';
       }
-    } else if (state.current_phase === phase_id && phase_id >= state.total_phases) {
-      // Final phase completed — mark workflow as completed
+    } else if (state.current_phase === phase_id) {
+      // No phase left to do (this was the last, or every later one is
+      // accepted) — mark workflow as completed
       state.workflow_mode = 'completed';
       state.current_task = null;
       state.current_review = null;
