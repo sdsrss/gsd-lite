@@ -205,7 +205,9 @@ describe('prompt layer — commands', () => {
     for (const file of mdFiles('commands')) {
       const description = frontmatterDescription(read(file));
       assert.ok(description.length > 0, `premise: ${file} has no description`);
-      assert.doesNotMatch(description, /Use when|Triggers?:|\(\d\)|用户说|帮我|let'?s build/i, `${file} description enumerates triggers: ${description}`);
+      // `trigger` in any form: `Triggers?:` let "Triggered whenever the user
+      // asks…" through, which enumerates the same way (third pre-tag review).
+      assert.doesNotMatch(description, /Use when|\btrigger|\(\d\)|用户说|帮我|let'?s build/i, `${file} description enumerates triggers: ${description}`);
     }
   });
 
@@ -446,10 +448,11 @@ describe('prompt layer — agents', () => {
         // "读取该 task 的 `checkpoint_commit`…一并传给 reviewer" passed (third
         // pre-tag review). A word list on one line: other verbs (获取, 取出), a
         // verb after `checkpoint` or across a line break, and Checkpoint
-        // capitalised all pass, and a negation other than 不要 still reads as
-        // gathering (fourth pre-tag review).
+        // capitalised all pass (fourth pre-tag review). The negation takes 不,
+        // 不必, 无需 and 禁止 as well as 不要: "编排器不读取 `checkpoint_commit`"
+        // says the right thing and was red.
         const gathers = /(收集|加载|读)[^\n]*checkpoint/.test(line);
-        const negated = /不要(自己)?(从 ?state ?里?)?(读|收集|加载)/.test(line);
+        const negated = /(不要|不必|无需|禁止|不)(自己)?(从 ?state ?里?)?(读|收集|加载)/.test(line);
         if (gathers && !negated) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
       });
     }
@@ -510,7 +513,8 @@ describe('prompt layer — planning-time level rules', () => {
     // branch — the rule removed from reviewer.md — and calls itself the
     // reviewer's extension guide.
     const block = section(read('workflows/review-cycle.md'), '### 计划阶段的判定规则');
-    const rules = block.match(/```\n([\s\S]*?)```/)?.[1].split('\n').filter(Boolean) ?? [];
+    // A fence may carry a language tag (```text); the rules are the same.
+    const rules = block.match(/```[\w-]*\n([\s\S]*?)```/)?.[1].split('\n').filter(Boolean) ?? [];
     const to = (level) => rules.find((l) => l.trim().endsWith(`→ ${level}`)) ?? '';
     for (const word of [/迁移|migration/i, /CI\/CD/, /部署|deploy/i]) assert.match(to('L2'), word, `review-cycle L2 does not name ${word}`);
     assert.match(to('L3'), /生产|production/i, 'review-cycle L3 does not name production');
@@ -549,13 +553,15 @@ describe('prompt layer — the instruction sentences', () => {
   // ("禁止：…", "不要（…）"), a revocation in other words ("现在不用了",
   // "已经取消", "never mind") or on the next line, an exception tacked on
   // ("——除非…"), and any contradicting sentence elsewhere.
+  // 忽略 / ignore count only when not themselves negated: "不要忽略…" next to an
+  // instruction reinforces it and was red.
   const collapse = (t) => t.replace(/\s+/g, ' ');
   // Same length as collapse(t), so indexes carry over, but a whitespace run
   // with a line break in it stays a break: a paragraph end is a clause end.
   const lineBreaks = (t) => t.replace(/\s+/g, (w) => (w.includes('\n') ? '\n' : ' '));
   const WORD = /[\p{Script=Han}A-Za-z]/u;
   const CLAUSE_END = /[。！？；：，、.!?;:,]$/;
-  const REVOKED = /废止|作废|不要照做|不必照做|忽略|不再适用|ignore|obsolete|no longer appl/i;
+  const REVOKED = /废止|作废|不要照做|不必照做|(?<!不要|不能|不可|不得|别)忽略|不再适用|(?<!not |n't |never )ignore|obsolete|no longer appl/i;
   const INSTRUCTIONS = [
     ['commands/doctor.md', 'Read `package.json` in the current project root for a source version only when its `name` is `gsd-lite`'],
     ['commands/doctor.md', "If the `health` response carries `warning` (the server's own version-drift check): record it as WARN"],
