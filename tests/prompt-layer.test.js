@@ -313,8 +313,9 @@ describe('prompt layer — agents', () => {
   it('the reviewer lists a passing L3 task in accepted_tasks, which is what the server holds', () => {
     // handleReviewerResult holds an L3 task for human confirmation only when it
     // arrives in accepted_tasks (src/tools/orchestrator/reviewer.js). A reviewer
-    // told the task "enters awaiting_user instead of accepted" may leave it out,
-    // and then it stays checkpointed and never reaches the hold.
+    // told the task "enters awaiting_user instead of accepted" may leave it out.
+    // That does not get it past the hold — the level-driven gate re-raises it at
+    // the next phase review — but it costs a whole extra review round.
     assert.match(read('src/tools/orchestrator/reviewer.js'),
       /result\.accepted_tasks \|\| \[\]\)\.filter\(\(taskId\) => \{[\s\S]{0,200}task\.level === 'L3'/,
       'premise: the L3 hold no longer filters accepted_tasks');
@@ -322,6 +323,13 @@ describe('prompt layer — agents', () => {
     for (const field of ['accepted_tasks', 'requires_human_confirmation', 'security_implications', 'OWASP']) {
       assert.ok(l3.includes(field), `reviewer L3 guidance does not mention ${field}`);
     }
+    // The sentence, not the words: "不要放进 accepted_tasks" carries the same
+    // four tokens and was green under the token-only version of this test.
+    assert.ok(l3.includes('通过审查的 L3 task 照常放进 `accepted_tasks`：服务端据此把它转入 awaiting_user 等用户确认'),
+      'reviewer L3 guidance no longer tells it to list a passing L3 task in accepted_tasks');
+    // A phase batch can carry an L3 task too (the omitted-task path above).
+    assert.ok(l3.includes('阶段批量里出现 L3 task 时也一样'), 'reviewer L3 guidance reads as task-scope only');
+    assert.doesNotMatch(l3, /不放进去它就停在 checkpointed。/, 'the false "never reaches the hold" claim is back');
   });
 
   describe('the reviewer input protocol matches the payload orchestrator-resume sends', () => {
