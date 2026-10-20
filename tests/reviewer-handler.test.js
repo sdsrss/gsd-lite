@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { init, read, update } from '../src/tools/state/index.js';
+import { init, patchPlan, read, update } from '../src/tools/state/index.js';
 import { handleReviewerResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
 import { MAX_PHASE_REVIEW_RETRY } from '../src/tools/orchestrator/helpers.js';
 
@@ -609,5 +609,39 @@ describe('a phase review that leaves a target unreviewed', () => {
     assert.equal(phase.phase_review.status, 'accepted');
     assert.equal(phase.phase_review.retry_count, 0);
     assert.equal(phase.phase_handoff.required_reviews_passed, true);
+  });
+});
+
+describe('a checkpointed L0 task is a phase-review target', () => {
+  // selectRunnableTask triggers a phase review for any checkpointed task, but
+  // getReviewTargets left L0 out: an L0 task sitting at checkpointed (a level
+  // lowered by state-patch after checkpoint) was never handed to a reviewer,
+  // never accepted, and the review came back every resume (pre-tag review).
+  let tempDir;
+  beforeEach(async () => { tempDir = await mkdtemp(join(tmpdir(), 'gsd-reviewer-l0-')); });
+  afterEach(async () => { await rm(tempDir, { recursive: true, force: true }); });
+
+  it('is sent to the reviewer, and accepting every target completes the review', async () => {
+    await init({ project: 'reviewer-l0', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'Task A' }, { index: 2, name: 'Task B' }] }], basePath: tempDir });
+    for (const id of ['1.1', '1.2']) {
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'checkpointed', checkpoint_commit: `c${id}` }] }] }, basePath: tempDir });
+    }
+    const patched = await patchPlan({ operations: [{ op: 'update_task', task_id: '1.1', level: 'L0' }], basePath: tempDir });
+    assert.ok(patched.success, `premise: ${JSON.stringify(patched)}`);
+
+    let dispatch = await resumeWorkflow({ basePath: tempDir });
+    if (dispatch.action === 'trigger_review') dispatch = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(dispatch.action, 'dispatch_reviewer', JSON.stringify(dispatch));
+    const targets = dispatch.review_targets.map((t) => t.id);
+    assert.deepEqual(targets.sort(), ['1.1', '1.2'], 'the L0 task is not a review target');
+    const res = await handleReviewerResult({
+      result: makeValidReviewerResult({ scope: 'phase', scope_id: 1, review_level: 'L1-batch', accepted_tasks: targets }),
+      basePath: tempDir,
+    });
+    assert.equal(res.action, 'review_accepted', JSON.stringify(res));
+    const lifecycles = (await read({ basePath: tempDir })).phases[0].todo.map((t) => t.lifecycle);
+    assert.deepEqual(lifecycles, ['accepted', 'accepted']);
+    assert.equal((await resumeWorkflow({ basePath: tempDir })).action, 'complete_phase');
   });
 });

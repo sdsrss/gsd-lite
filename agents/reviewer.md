@@ -56,7 +56,7 @@ tools: Read, Bash, Grep, Glob
 - `review_targets` — 阶段批量审查时的审查对象列表
   每个审查对象包含:
   - `id` — task ID
-  - `level` — task 当前的级别 (L1/L2/L3)：计划阶段定下，服务端在 checkpoint 时可能已按 executor 的结果把 L0/L1 升到 L2 (L2/L3 不会被调整)
+  - `level` — task 当前的级别 (L1/L2/L3；checkpoint 之后被改成 L0 的 task 也会出现)：计划阶段定下，服务端在 checkpoint 时可能已按 executor 的结果把 L0/L1 升到 L2 (L2/L3 不会被调整)
   - `checkpoint_commit` — checkpoint 提交哈希；服务端无法确认时为 null 并带 `checkpoint_commit_rejected`
   - `files_changed` — 变更文件列表；有条目被剔除时带 `files_changed_rejected`
 
