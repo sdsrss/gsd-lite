@@ -99,14 +99,14 @@ Phase 4 修复方向建议:
     { "hypothesis": "X causes Y", "result": "confirmed | rejected", "evidence": "non-empty string (required)" }
   ],
   "fix_direction": "Suggested fix approach for executor (include suggested test case description)",
-  "fix_attempts": 0, // 由编排器 dispatch context 中的 debug_context 传入，记录已尝试的修复方向次数
+  "fix_attempts": 0, // 照抄 debug_target.debug_context.fix_attempts (服务端记录的已给出修复方向数；没有 debug_context 时为 0)
   "blockers": [],
   "architecture_concern": false
 }
 ```
 
 规则补充:
-- `fix_attempts` 达到 3 → outcome 必须为 `failed`
+- `fix_attempts` 达到 3 → outcome 必须为 `failed`。这个数由服务端自己记：已给出 3 个方向后又派发到你这里，无论你返回什么，phase 都会被标为 failed
 - `architecture_concern` 为 true 时，编排器会把 phase 标为 failed
 </result_contract>
 

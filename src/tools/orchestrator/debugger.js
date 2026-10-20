@@ -2,6 +2,7 @@ import { getProjectRoot } from '../../utils.js';
 import { ERROR_CODES, read } from '../state/index.js';
 import { ACTIONABLE_LIFECYCLES, validateDebuggerResult } from '../../schema.js';
 import {
+  MAX_FIX_DIRECTIONS,
   getPhaseAndTask,
   persist,
   persistAndRead,
@@ -51,18 +52,28 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
   // R-21 (audit L4): optimistic-lock the read→persist window (one persist per call).
   const expectedVersion = state._version;
 
+  // The server counts the fix directions it has handed out for this task. It
+  // stored the debugger's own fix_attempts instead, and every debugger is a
+  // fresh context: one that reported 0 each round kept the three-direction
+  // rule from ever firing, and executor → debugger → executor never ended.
+  // Being back here with MAX_FIX_DIRECTIONS issued means the last one failed
+  // too, which fails the phase whatever this result says.
+  const issued = Number.isInteger(task.debug_context?.fix_attempts) ? task.debug_context.fix_attempts : 0;
+  const directionsExhausted = issued >= MAX_FIX_DIRECTIONS;
+  const issuesDirection = !directionsExhausted && result.outcome !== 'failed' && result.architecture_concern !== true;
+
   const debug_context = {
     root_cause: result.root_cause,
     fix_direction: result.fix_direction,
     evidence: result.evidence,
     hypothesis_tested: result.hypothesis_tested,
-    fix_attempts: result.fix_attempts,
+    fix_attempts: issuesDirection ? issued + 1 : issued,
     blockers: result.blockers,
     architecture_concern: result.architecture_concern,
   };
 
-  if (result.outcome === 'failed' || result.architecture_concern === true) {
-    const phaseFailed = result.architecture_concern === true;
+  if (!issuesDirection) {
+    const phaseFailed = result.architecture_concern === true || directionsExhausted;
 
     // Determine effective workflow mode: if no tasks can make progress, escalate
     let effectiveWorkflowMode;
@@ -95,6 +106,9 @@ export async function handleDebuggerResult({ result, basePath = process.cwd() } 
       workflow_mode: effectiveWorkflowMode,
       phase_id: phase.id,
       task_id: task.id,
+      ...(directionsExhausted ? {
+        message: `Task ${task.id} failed after ${issued} fix directions; the phase fails, as agents/debugger.md specifies for a third failed direction.`,
+      } : {}),
     };
   }
 
