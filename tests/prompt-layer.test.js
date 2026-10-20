@@ -387,3 +387,19 @@ describe('prompt layer — planning-time level rules', () => {
     });
   }
 });
+
+describe('prompt layer — examples do not expire', () => {
+  it('no example expires_at is a literal date', () => {
+    // collectExpiredResearch treats a past expires_at as expired, and the
+    // server only checks that the value parses. A copied example date stored
+    // research that was stale the moment it was written. Any literal date ages
+    // into the past eventually, so the rule is "no literal", not "a later one".
+    const offenders = [];
+    for (const file of promptFiles) {
+      read(file).split('\n').forEach((line, i) => {
+        if (/"expires_at":\s*"\d{4}-\d{2}-\d{2}/.test(line)) offenders.push(`${file}:${i + 1}`);
+      });
+    }
+    assert.deepEqual(offenders, [], `use a placeholder; a literal date ages into the past:\n  ${offenders.join('\n  ')}`);
+  });
+});

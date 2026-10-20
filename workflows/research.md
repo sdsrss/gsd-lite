@@ -130,7 +130,7 @@ Decision ID 供 plan/task 的 `research_basis` 字段引用，建立研究→计
 {
   "decision_ids": ["decision:jwt-rotation", "decision:orm-choice"],
   "volatility": "medium",
-  "expires_at": "2026-03-17T10:30:00Z",
+  "expires_at": "<ISO 8601：研究完成时间 + 上方 TTL>",
   "sources": [
     { "id": "src1", "type": "Context7", "ref": "Next.js auth docs" },
     { "id": "src2", "type": "官方文档", "ref": "Prisma migration guide" }

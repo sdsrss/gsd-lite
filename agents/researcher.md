@@ -50,7 +50,7 @@ tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 {
   "decision_ids": ["decision:jwt-rotation"],
   "volatility": "medium",
-  "expires_at": "2026-03-16T10:30:00Z",
+  "expires_at": "<ISO 8601：研究完成时间 + TTL>",
   "sources": [
     { "id": "src1", "type": "Context7", "ref": "Next.js auth docs" }
   ]
@@ -63,10 +63,12 @@ tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
   "decision:jwt-rotation": {
     "summary": "Use refresh token rotation for JWT auth",
     "source": "Context7",
-    "expires_at": "2026-03-16T10:30:00Z"
+    "expires_at": "<ISO 8601：研究完成时间 + TTL>"
   }
 }
 ```
+
+`expires_at` 按领域波动性取 TTL：前端框架 / 云服务 / 安全 3 天，通用 Web 开发 7 天，稳定后端 / 企业内部 / 基础设施 14-30 天。填计算出的时间，不要照抄示例：早于现在的时间会让研究一存下就被判为过期。
 
 **3. artifacts** — 四个研究文档的 Markdown 内容 (上方 research_output 中的四个文件):
 ```json
