@@ -12,6 +12,7 @@ import {
   handleExecutorResult,
   handleReviewerResult,
   handleDebuggerResult,
+  resumeWorkflow,
 } from '../src/tools/orchestrator/index.js';
 import {
   reclassifyReviewLevel,
@@ -564,5 +565,71 @@ describe('TC11: a debugger that keeps reporting fix_attempts: 0 still runs out o
     assert.equal(state.phases[0].lifecycle, 'failed');
     assert.equal(state.phases[0].todo[0].lifecycle, 'failed');
     assert.equal(state.phases[0].todo[0].debug_context.fix_attempts, 3);
+  });
+});
+
+// ── TC12/TC13: the direction count around recovery, and a debugger that copies it ──
+
+async function debuggerRounds(dir, { reported, outcome = () => 'fix_suggested', limit = 6 }) {
+  const rounds = [];
+  let res = await failExecutorNTimes(dir, '1.1', 3);
+  for (let round = 1; round <= limit && res.action === 'dispatch_debugger'; round++) {
+    const task = (await read({ basePath: dir })).phases[0].todo[0];
+    const given = task.debug_context?.fix_attempts ?? 0;
+    res = await handleDebuggerResult({
+      result: {
+        task_id: '1.1', outcome: outcome(given), root_cause: `Hypothesis ${round}`, fix_direction: `Direction ${round}`,
+        evidence: [], hypothesis_tested: [{ hypothesis: `H${round}`, result: 'confirmed', evidence: `ev:${round}` }],
+        fix_attempts: reported(given), blockers: [], architecture_concern: false,
+      },
+      basePath: dir,
+    });
+    rounds.push({ given, action: res.action ?? `error: ${res.message}` });
+    if (res.action !== 'dispatch_executor') break;
+    res = await failExecutorNTimes(dir, '1.1', 3);
+  }
+  return rounds;
+}
+
+describe('TC12: retry_failed after the phase ran out of directions gives the debugger a fresh budget', () => {
+  // applyRecovery's retry_failed resets retry_count ("a fresh retry budget")
+  // but kept debug_context, whose fix_attempts the server now counts: the
+  // first debugger result after the retry failed the phase again with no new
+  // direction issued (pre-tag review).
+  let dir;
+  before(async () => { dir = await createTempDir(); });
+  after(async () => { await removeTempDir(dir); });
+
+  it('issues directions again after the user retries', async () => {
+    await initProject(dir, { phases: [{ name: 'Phase 1', tasks: [{ index: 1, name: 'Stubborn task', level: 'L1', requires: [] }] }] });
+    await walkToRunning(dir, 1, '1.1');
+    const first = await debuggerRounds(dir, { reported: () => 0 });
+    assert.equal(first.at(-1).action, 'phase_failed', JSON.stringify(first));
+
+    const recovered = await resumeWorkflow({ basePath: dir, recovery: 'retry_failed' });
+    assert.ok(recovered.success, JSON.stringify(recovered));
+    assert.equal((await read({ basePath: dir })).phases[0].todo[0].debug_context, null, 'the retried task kept its exhausted direction count');
+    await walkToRunning(dir, 1, '1.1');
+    const second = await debuggerRounds(dir, { reported: () => 0, limit: 1 });
+    assert.deepEqual(second, [{ given: 0, action: 'dispatch_executor' }], JSON.stringify(second));
+  });
+});
+
+describe('TC13: a debugger that reports the count it was given still fails the phase on the fourth result', () => {
+  // debugger.md tells it to copy fix_attempts from its dispatch. Copying 3 and
+  // returning a root cause was refused by the result validator ("fix_attempts
+  // >= 3 requires failed outcome"), the state stayed running and the next
+  // resume dispatched the debugger again (pre-tag review). The count that
+  // decides is the server's, so the self-report is not checked against it.
+  let dir;
+  before(async () => { dir = await createTempDir(); });
+  after(async () => { await removeTempDir(dir); });
+
+  it('ends in phase_failed, never in a refused result', async () => {
+    await initProject(dir, { phases: [{ name: 'Phase 1', tasks: [{ index: 1, name: 'Stubborn task', level: 'L1', requires: [] }] }] });
+    await walkToRunning(dir, 1, '1.1');
+    const rounds = await debuggerRounds(dir, { reported: (given) => given, outcome: () => 'root_cause_found' });
+    assert.deepEqual(rounds.map((r) => r.action), ['dispatch_executor', 'dispatch_executor', 'dispatch_executor', 'phase_failed'], JSON.stringify(rounds));
+    assert.deepEqual(rounds.map((r) => r.given), [0, 1, 2, 3]);
   });
 });

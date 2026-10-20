@@ -144,7 +144,10 @@ async function applyRecovery(state, basePath, recovery) {
     const failed = (phase.todo || []).filter((t) => t.lifecycle === 'failed');
     if (failed.length > 0) {
       if (recovery === 'retry_failed') {
-        patch.todo = failed.map((t) => ({ id: t.id, lifecycle: 'pending', retry_count: 0 }));
+        // A fresh budget includes the fix directions: handleDebuggerResult
+        // counts them in debug_context, and a task that failed on its third
+        // kept that count and failed again on the first debugger result.
+        patch.todo = failed.map((t) => ({ id: t.id, lifecycle: 'pending', retry_count: 0, debug_context: null }));
         touched = true;
         retriedTasks.push(...failed.map((t) => t.id));
       } else {
