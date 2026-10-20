@@ -74,7 +74,7 @@ tools: Read, Bash, Grep, Glob
 每个审查对象都带着 `level` (计划阶段定下，服务端可能已在 checkpoint 时调整过)，由它决定审查深度。你不重新判定级别，也不因为改动看起来简单就降级；在结果的 `review_level` 里如实回报（阶段批量审查填 `L1-batch`）。L0 task 不会派到你这里。
 
 - L1（阶段批量）/ L2（单任务）：按下面的双阶段审查。
-- L3（通常是单任务审查；阶段批量里出现 L3 task 时也一样）：同 L2，另外质量审查要覆盖 OWASP Top 10 相关问题，在 `security_implications` 列出安全影响，`requires_human_confirmation` 填 true。通过审查的 L3 task 照常放进 `accepted_tasks`：服务端据此把它转入 awaiting_user 等用户确认。每漏掉一次，它就停在 checkpointed、等下一轮阶段审查再被提出来，多走一轮审查；一直漏掉就一直绕圈，到不了人工确认。
+- L3（通常是单任务审查；阶段批量里出现 L3 task 时也一样）：同 L2，另外质量审查要覆盖 OWASP Top 10 相关问题，在 `security_implications` 列出安全影响，`requires_human_confirmation` 填 true。通过审查的 L3 task 照常放进 `accepted_tasks`：服务端据此把它转入 awaiting_user 等用户确认。漏掉它的那一轮不算审查通过 (见结果契约的规则补充)，它到不了人工确认。
 </review_strategy>
 
 <impact_analysis>
@@ -159,6 +159,7 @@ Minor = 建议修复 (命名/风格)
 ```
 
 规则补充:
+- 阶段批量审查里，`review_targets` 的每个 task 都要出现在 `accepted_tasks` 或 `rework_tasks` 里。漏掉任何一个，这一轮就不算审查通过：列出的 task 照常处理，服务端记一次重试，下一轮再审漏掉的；重试次数用完就停下来交给用户
 - `Important` 必须转成后续 task 或显式记录为 deferred debt
 - `Minor` 不阻塞 accepted，但必须进入 review report
 </result_contract>
