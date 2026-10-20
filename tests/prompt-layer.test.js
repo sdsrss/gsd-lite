@@ -210,13 +210,21 @@ describe('prompt layer — agents', () => {
   });
 
   // Grows as each agent is rewritten; the end state is every file in agents/.
-  const RESTATED = ['agents/debugger.md'];
+  const RESTATED = ['agents/debugger.md', 'agents/executor.md'];
   it('no agent wraps a rule in a pressure block or states it as an all-caps iron law', () => {
     for (const file of RESTATED) {
       const src = read(file);
       assert.doesNotMatch(src, /EXTREMELY-IMPORTANT/, `${file} raises the volume instead of giving the reason`);
       assert.doesNotMatch(src, /\bNO [A-Z]+(?: [A-Z]+)* WITHOUT\b/, `${file} carries an all-caps iron law`);
+      assert.doesNotMatch(src, /来自 Superpowers/, `${file} cites a disabled plugin as the authority for a rule`);
     }
+  });
+
+  it('the executor gives the reason for test-first and for fresh evidence', () => {
+    const rules = tagBlock(read('agents/executor.md'), 'testing_rules');
+    assert.match(rules, /后写的测试/, 'test-first has lost its reason');
+    assert.match(rules, /本次运行/, 'the completion rule no longer asks for output from this run');
+    assert.match(section(rules, '## TDD 例外'), /checkpoint commit/, 'the TDD exemption list is gone');
   });
 
   it('the debugger states its root-cause rule once, with its reason', () => {
