@@ -1,5 +1,5 @@
 # 提示词审计 2026-10-17 的修复
-状态：进行中（第三次复审的 BLOCKER 与 4 个 MEDIUM 已修；经用户同意再做一次增量复审，通过后发版）
+状态：受阻（第四次复审在 8bb501e 上又报 BLOCKER 并已复现；修复已超出提示词审计的范围，等用户决定发版方案）
 
 ## 背景与目标
 
@@ -134,6 +134,16 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   - MEDIUM（已对照代码核实）：c47cca9 去掉了收集门禁的"读取"（prompt-layer.test.js:455）；STEP 10 交接顺序断言会命中
     124 行的核对项，删掉或前移第 4 项仍绿（:510-512）；INSTRUCTIONS 表挡不住句外追加的否定；重新开始且跳过研究时，
     STEP 5（execution-flow.md:12）与 STEP 8（:68）互相矛盾。
+- 第四次复审（8bb501e，增量）：BLOCKER 1，HIGH 1，MEDIUM 4，LOW 若干。修补已从提示词扩展到服务端的研究刷新状态机，交给用户决定。
+  - BLOCKER（已复现，scratchpad `repro/accepted-phase.mjs`）：刷新去掉或改写了某个决策，而引用它的 task 在已验收的 phase 里。
+    `applyResearchRefresh` 把 task 设为 `needs_revalidation`，phase 仍是 accepted（logic.js:520-531，不像
+    `propagateCrossPhaseInvalidation` 那样重开 phase）；`validateState` 拒收（schema.js:588）；`storeResearch` 返回
+    VALIDATION_FAILED，此前已覆盖四个研究文件并删掉提交标记（logic.js:581/640-642）；state 停在 `research_refresh_needed`，
+    每次 resume 都派发 researcher。`PHASE_LIFECYCLE.accepted` 为空（schema.js:88），没有出口。代码早于本次，0.16.0 让它可达。
+  - HIGH：规则 3 保留的条目以后每次刷新都会再触发规则 3，重复让引用它的 task 回到 `needs_revalidation`（logic.js:496-503）。
+  - MEDIUM：researcher 返回的单个决策 `expires_at` 早于现在时服务端照存，仍会循环；`workflows/research.md:30` 仍写"已有研究且未过期 → 跳过研究"，
+    与 1e1700c 的 STEP 5 相反；CHANGELOG 与 3dc41eb/1e1700c 的说法超出代码（"A research refresh now ends"、"only a restarted project
+    has those files" —— README 写了可以提交 `.gsd/research/`）；3dc41eb 的门禁只覆盖固定词表（复审 22 个变异 12 个保持绿，5 个正确写法被误判红）。
 - 本次不改、留给后续的（审计未点名、属于代码改动，或超出本次范围）：
   - researcher 的 `tools` 仍含 `Write`（去掉它能从机制上保证不自写）。
   - `fix_attempts` 没有代码递增，`architecture_concern` 也不由服务端强制，"第 3 次失败 → phase 失败"只靠提示词。
