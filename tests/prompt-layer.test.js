@@ -364,6 +364,29 @@ describe('prompt layer — agents', () => {
       assert.match(protocol, /\.gsd\/phases\/phase-<phase_id>\.md/, 'reviewer has no way to find the task spec');
     });
   });
+
+  it('every reviewer dispatch forwards the response instead of gathering checkpoint info from state', () => {
+    // The response's targets are what taskRefsForAgent constrained. resume.md's
+    // phase path said "收集该 phase 中所有 L1 task 的 checkpoint 信息" and its task
+    // path "加载对应 task 的 checkpoint 信息" — both an instruction to read the
+    // raw values. untrusted-checkout.test.js's routing gate keys on the field
+    // NAMES and so could not see a bullet that only said "checkpoint 信息".
+    const resume = read('commands/resume.md');
+    for (const [mode, field] of [['reviewing_task', 'review_target'], ['reviewing_phase', 'review_targets']]) {
+      const body = section(resume, `### \`${mode}\``);
+      assert.ok(body.includes(`\`${field}\` 原样转发`), `resume.md ${mode} does not forward ${field} from the response`);
+    }
+    const gathering = [];
+    for (const file of [...mdFiles('commands'), ...mdFiles('workflows')]) {
+      read(file).split('\n').forEach((line, i) => {
+        if (/(收集|加载)[^\n]*checkpoint/.test(line) && !/不要/.test(line)) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
+      });
+    }
+    assert.deepEqual(gathering, [], `these tell the orchestrator to gather checkpoint info itself:\n  ${gathering.join('\n  ')}`);
+    const row = read('workflows/execution-flow.md').split('\n').find((l) => l.startsWith('| `dispatch_reviewer`'));
+    assert.ok(row?.includes('`review_target`') && row.includes('`review_targets`'),
+      'the action table dispatches the reviewer without saying what to forward');
+  });
 });
 
 describe('prompt layer — planning-time level rules', () => {
