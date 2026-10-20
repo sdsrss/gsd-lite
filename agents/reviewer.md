@@ -56,7 +56,7 @@ tools: Read, Bash, Grep, Glob
 - `review_targets` — 阶段批量审查时的审查对象列表
   每个审查对象包含:
   - `id` — task ID
-  - `level` — 计划阶段定下的级别 (L1/L2/L3)
+  - `level` — task 当前的级别 (L1/L2/L3)：计划阶段定下，服务端在 checkpoint 时可能已按 executor 的结果调整过 (L2/L3 只升不降)
   - `checkpoint_commit` — checkpoint 提交哈希；服务端无法确认时为 null 并带 `checkpoint_commit_rejected`
   - `files_changed` — 变更文件列表；有条目被剔除时带 `files_changed_rejected`
 
@@ -71,10 +71,10 @@ tools: Read, Bash, Grep, Glob
 <review_strategy>
 ## 审查级别
 
-每个审查对象的 `level` 在计划阶段就已确定，由它决定审查深度。你不重新判定级别，也不因为改动看起来简单就降级；在结果的 `review_level` 里如实回报（阶段批量审查填 `L1-batch`）。L0 task 不会派到你这里。
+每个审查对象都带着 `level` (计划阶段定下，服务端可能已在 checkpoint 时调整过)，由它决定审查深度。你不重新判定级别，也不因为改动看起来简单就降级；在结果的 `review_level` 里如实回报（阶段批量审查填 `L1-batch`）。L0 task 不会派到你这里。
 
 - L1（阶段批量）/ L2（单任务）：按下面的双阶段审查。
-- L3（通常是单任务审查；阶段批量里出现 L3 task 时也一样）：同 L2，另外质量审查要覆盖 OWASP Top 10 相关问题，在 `security_implications` 列出安全影响，`requires_human_confirmation` 填 true。通过审查的 L3 task 照常放进 `accepted_tasks`：服务端据此把它转入 awaiting_user 等用户确认。漏掉它，它会停在 checkpointed，等下一轮阶段审查再被提出来，白白多走一轮审查。
+- L3（通常是单任务审查；阶段批量里出现 L3 task 时也一样）：同 L2，另外质量审查要覆盖 OWASP Top 10 相关问题，在 `security_implications` 列出安全影响，`requires_human_confirmation` 填 true。通过审查的 L3 task 照常放进 `accepted_tasks`：服务端据此把它转入 awaiting_user 等用户确认。每漏掉一次，它就停在 checkpointed、等下一轮阶段审查再被提出来，多走一轮审查；一直漏掉就一直绕圈，到不了人工确认。
 </review_strategy>
 
 <impact_analysis>

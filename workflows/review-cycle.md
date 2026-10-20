@@ -9,11 +9,11 @@
 
 ### L0: 自审即可
 
-**适用范围:** 配置修改、文档更新、CSS 样式、注释变更等无运行时语义变化的任务。
+**适用范围:** 配置修改、文档更新、CSS 样式、注释变更等无运行时语义变化的任务 (CI/CD 与部署配置不算，见 L2)。
 
 - executor 自审通过 → checkpoint commit = accepted
 - **不启动 reviewer**
-- 判定依据: 纯 docs/comment/style/config 且无运行时语义变化
+- 判定依据: 纯 docs/comment/style/config 且无运行时语义变化 (CI/CD 与部署配置除外)
 
 ### L1: 自审 + 阶段批量审查
 
@@ -26,7 +26,7 @@
 
 ### L2: 即时独立审查
 
-**适用范围:** 涉及认证、支付、数据安全、核心架构的关键任务。
+**适用范围:** 涉及认证、支付、数据安全、核心架构、数据库迁移、CI/CD 与部署配置的关键任务。
 
 - executor 完成 → 立即派发 reviewer (不等 phase 结束)
 - reviewer 独立审查 (不信任 executor 报告)
@@ -35,7 +35,7 @@
 
 ### L3: 即时独立审查 + 人工确认
 
-**适用范围:** 最高风险任务 (auth/payment/security architecture)。
+**适用范围:** 最高风险任务 (auth/payment/security architecture，以及涉及生产环境的变更)。
 
 - 与 L2 相同的双阶段审查流程，外加:
 - reviewer 必须检查 OWASP Top 10 相关问题
@@ -45,14 +45,19 @@
 - 用户显式确认 → accepted，释放下游依赖
 - 用户拒绝 → 返工
 
-### 判定规则
+### 计划阶段的判定规则
+
+这是 planner 定级用的规则。reviewer 不重新判定，按每个审查对象带的 `level` 审查。
 
 ```
-改 auth/payment/permission/public API/DB migration/core architecture → L2
-纯 docs/comment/style/config 且无运行时语义变化 → L0
+涉及生产环境的变更 (生产数据迁移、生产部署) / 安全架构 / 破坏性 schema → L3
+改 auth/payment/permission/public API/DB migration/CI/CD 配置/部署配置/core architecture → L2
+纯 docs/comment/style/config 且无运行时语义变化 (CI/CD 与部署配置除外) → L0
 其余 → L1
 拿不准时 → 升一级处理
 ```
+
+迁移、CI/CD、部署配置免写失败测试，但不免审查：至少 L2，且 `review_required` 保持 `true`。
 
 ### 运行时重分类
 

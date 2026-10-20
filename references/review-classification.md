@@ -55,7 +55,7 @@ executor checkpointed
   -> 释放下游依赖
 ```
 
-不派发 reviewer。`review_required: false` 的 task 同样走此路径。
+不派发 reviewer。`review_required: false` 的 L1/L2 task 同样走此路径；L3 不受它影响。
 
 ### L1 流程
 
@@ -85,7 +85,7 @@ executor checkpointed
 
 ```
 executor checkpointed
-  -> handleExecutorResult 检测 reviewLevel === 'L3' && review_required !== false
+  -> handleExecutorResult 检测 reviewLevel === 'L3' (不看 review_required，L3 一律审查)
   -> 设置 current_review = { scope: 'task', scope_id: task.id, stage: 'spec' }
   -> workflow_mode = 'reviewing_task'
   -> 派发 reviewer (scope='task', review_level='L3')
