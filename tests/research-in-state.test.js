@@ -16,7 +16,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildExecutorContext, init, phaseComplete, read, storeResearch, update } from '../src/tools/state/index.js';
 import { WORKFLOW_MODES } from '../src/schema.js';
-import { REFRESH_MODES } from '../src/tools/orchestrator/helpers.js';
+// A namespace import, so this file still loads on a tree without the export
+// and gate-replay can see its cases fail there instead of a load error.
+import * as orchestratorHelpers from '../src/tools/orchestrator/helpers.js';
+
+const { REFRESH_MODES = [] } = orchestratorHelpers;
 import {
   handleExecutorResult,
   handleResearcherResult,
@@ -474,6 +478,7 @@ describe('a refresh that changes nothing returns the workflow to the action it w
   it('covers every workflow mode, on the side the server puts it', () => {
     // Preflight skips completed and failed; research_refresh_needed is the
     // refresh itself. A mode added later fails here until it has a shape.
+    assert.ok(REFRESH_MODES.length > 0, 'premise: orchestrator/helpers.js exports REFRESH_MODES');
     const covered = new Set(['completed', 'failed', 'research_refresh_needed']);
     for (const [name, { mode }] of Object.entries(SHAPES)) {
       assert.ok(REFRESH_MODES.includes(mode), `${name}: ${mode} is not a mode the server refreshes in`);
