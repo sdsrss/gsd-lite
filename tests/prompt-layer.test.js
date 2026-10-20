@@ -215,6 +215,11 @@ describe('prompt layer — agents', () => {
       assert.match(description, /dispatched by the GSD orchestrator/, `${file} description does not say who dispatches it`);
       assert.match(description, /\bNot for\b/, `${file} description does not say what it is not for: ${description}`);
     }
+    // The researcher has two dispatch paths, and a description naming one of
+    // them under-describes when it runs.
+    assert.match(read('src/tools/orchestrator/resume.js'), /action: 'dispatch_researcher'/, 'premise: resume no longer re-dispatches the researcher');
+    assert.match(frontmatterDescription(read('agents/researcher.md')), /before planning or when stored research expires/,
+      'researcher description names only the planning dispatch, not the refresh one');
   });
 
   it('no agent wraps a rule in a pressure block or states it as an all-caps iron law', () => {
