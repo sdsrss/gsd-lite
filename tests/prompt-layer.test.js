@@ -44,6 +44,13 @@ function section(src, heading) {
   return next === -1 ? rest : rest.slice(0, next);
 }
 
+function tagBlock(src, tag) {
+  const open = src.indexOf(`<${tag}>`);
+  const close = src.indexOf(`</${tag}>`);
+  assert.ok(open !== -1 && close > open, `premise: <${tag}> block not found`);
+  return src.slice(open, close);
+}
+
 describe('prompt layer — the corpus', () => {
   it('finds the shipped prompt files', () => {
     // Vacuity guard for every gate below that loops over promptFiles.
@@ -148,4 +155,14 @@ describe('prompt layer — upgrade instructions use commands Claude Code has', (
       assert.match(src, /Installed[\s\S]{0,80}Update now/, `${file} lacks the /plugin → Installed → Update now path`);
     });
   }
+});
+
+describe('prompt layer — commands', () => {
+  it('stop writes state only through state-update', () => {
+    // "先写 .tmp 再 rename" told the orchestrator to do the server's job by
+    // hand, outside its lock and its schema check.
+    const rules = tagBlock(read('commands/stop.md'), 'rules');
+    assert.match(rules, /`state-update`/, 'stop.md rules do not route the write through state-update');
+    assert.doesNotMatch(rules, /\.tmp|rename/, 'stop.md tells the orchestrator to do the atomic write itself');
+  });
 });
