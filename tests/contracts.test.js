@@ -149,8 +149,11 @@ describe('debugger result contract', () => {
     assert.equal(validateDebuggerResult(r).valid, false);
   });
 
-  it('requires failed outcome after three fix attempts', () => {
+  it('does not judge the outcome by the self-reported fix_attempts', () => {
+    // The server counts fix directions itself and fails the phase on its own
+    // count (tests/e2e-rework-debugger.test.js TC11, TC13); refusing this shape
+    // re-dispatched a debugger that had copied its dispatch's count of 3.
     const r = { ...validResult, fix_attempts: 3, outcome: 'fix_suggested' };
-    assert.equal(validateDebuggerResult(r).valid, false);
+    assert.equal(validateDebuggerResult(r).valid, true, JSON.stringify(validateDebuggerResult(r).errors));
   });
 });

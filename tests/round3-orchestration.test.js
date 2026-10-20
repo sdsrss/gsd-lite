@@ -403,13 +403,15 @@ describe('round3 — full orchestration cycles', () => {
         phases: [{ name: 'P', tasks: [{ name: 't', level: 'L1' }] }],
       });
 
-      // fix_attempts=5 but outcome!=failed should be rejected with a clear message
+      // A negative fix_attempts should be rejected with a clear message. (The
+      // example used to be fix_attempts=5 with outcome!=failed; the server now
+      // counts fix directions itself and no longer judges the self-report.)
       const r = await mcp.call('orchestrator-handle-debugger-result', {
         result: {
           task_id: '1.1', outcome: 'fix_suggested',
           root_cause: 'x', fix_direction: 'y',
           evidence: [], hypothesis_tested: [],
-          fix_attempts: 5, blockers: [],
+          fix_attempts: -1, blockers: [],
           architecture_concern: false,
         },
       });

@@ -886,7 +886,11 @@ export function validateDebuggerResult(r) {
   if (!Number.isInteger(r.fix_attempts) || r.fix_attempts < 0) errors.push('fix_attempts must be non-negative integer');
   if (!Array.isArray(r.blockers)) errors.push('blockers must be array');
   if (typeof r.architecture_concern !== 'boolean') errors.push('architecture_concern must be boolean');
-  if (r.fix_attempts >= 3 && r.outcome !== 'failed') errors.push('fix_attempts >= 3 requires failed outcome');
+  // fix_attempts is the debugger's own report and is not checked against the
+  // outcome. The count that decides is the server's (handleDebuggerResult),
+  // which fails the phase once three directions have failed whatever the
+  // result says. Refusing "fix_attempts 3 with a root cause" here sent a
+  // debugger that copied its dispatch's count of 3 back for another round.
 
   for (const hypothesis of r.hypothesis_tested || []) {
     if (!isPlainObject(hypothesis)) {
