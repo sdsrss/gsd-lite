@@ -1946,7 +1946,8 @@ describe('orchestrator skeleton', () => {
     }
     await update({ updates: { current_phase: 3, phases: [{ id: 3, lifecycle: 'active' }] }, basePath: tempDir });
 
-    // Dirty only phase 2 (task invalidated; phase active, as above)
+    // Dirty only phase 2. Its accepted transition was refused like the others,
+    // and nothing activated it, so it is still pending here.
     await update({
       updates: {
         phases: [{ id: 2, todo: [{ id: '2.1', lifecycle: 'needs_revalidation', evidence_refs: [] }] }],
