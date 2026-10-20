@@ -27,7 +27,7 @@
 | 新项目 | **必须研究** | 技术栈选型需要依据 |
 | 涉及新技术栈 | **必须研究** | 不熟悉的领域需要 pitfall 分析 |
 | 简单 bug 修复 | **跳过研究** | 已有代码即上下文 |
-| 已有研究且未过期 | **跳过研究** | 复用缓存 |
+| 已有 `.gsd/research/` 文件 | **不能据此跳过** | 规划阶段只有重新开始的项目留着它们，`state-init` 会清掉对应的研究记录 (见 execution-flow STEP 5) |
 | 用户明确要求 | **研究** | 用户意图优先 |
 | 已有研究但需求方向变了 | **增量研究** | 只研究新方向，不重做已有部分 |
 
@@ -49,7 +49,7 @@
 - `package.json` 主依赖大版本有变更 → 立即过期
 - 用户说"重新研究" → 强制过期
 
-**TTL 存储在** `state.json` 的 `research.expires_at` 字段。
+**TTL 存储在** `state.json` 的 `research.expires_at` 字段 (每条决策也可以带自己的 `expires_at`)。服务端存储时拒收早于现在的日期；记录里的日期到期后，下一次 `orchestrator-resume` 会派发 researcher 刷新 (等用户决定的 `awaiting_user` / `paused_by_user` 状态除外)。
 
 ---
 
@@ -68,18 +68,22 @@ Decision ID 供 plan/task 的 `research_basis` 字段引用，建立研究→计
 
 ### 研究刷新后的 Decision ID 处理
 
+刷新返回的是完整的决策集，服务端用它整体替换已记录的决策；下表只决定哪些 task 要重新验证。
+
 | 场景 | 处理方式 |
 |------|----------|
-| 新研究 decision 与旧 ID 相同且结论一致 | 保留引用，更新 `expires_at` |
+| 新研究 decision 与旧 ID 相同且结论一致 | 保留引用，条目换成新结果里的 (含新的 `expires_at`) |
 | 新研究 decision 与旧 ID 相同但结论变了 | 标记所有引用该 decision 的 task 为 `needs_revalidation` |
-| 旧 decision ID 在新研究中不再存在 | 标记引用 task 为 `needs_revalidation` + 警告编排器 |
+| 旧 decision ID 在新研究中不再存在 | 标记引用 task 为 `needs_revalidation` + 警告编排器；该 ID 从记录中删除 |
 | 新研究产生了全新 decision ID | 不影响已有 task，供后续 planning 使用 |
+
+被标记的 task 所在的 phase 如果已经验收，会重新打开；它在 `current_phase` 之前时，resume 会先回滚到它。
 
 ---
 
 ## 输出结构
 
-研究结果写入 `.gsd/research/` 目录:
+研究结果由服务端写入 `.gsd/research/` 目录 (researcher 把四份文档放进 `artifacts` 返回，不自己写):
 
 ### STACK.md — 技术栈推荐
 

@@ -6,7 +6,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,6 +91,20 @@ describe('round1 — MCP stdio smoke', () => {
     const health = await mcp.call('health', {});
     assert.equal(health.status, 'ok');
     assert.equal(health.state_exists, false, 'health reports no state before init');
+  });
+
+  it('state-init declares every task field the planning step tells the planner to set', async () => {
+    // research_basis was set by every plan (execution-flow STEP 7) and read by
+    // createInitialState, but the schema the planner reads did not name it.
+    const list = await mcp.request('tools/list', {});
+    const stateInit = list.result.tools.find((t) => t.name === 'state-init');
+    const declared = Object.keys(stateInit.inputSchema.properties.phases.items.properties.tasks.items.properties);
+    const flow = readFileSync(join(__dirname, '..', 'workflows', 'execution-flow.md'), 'utf8');
+    const step7 = flow.slice(flow.indexOf('## STEP 7'), flow.indexOf('## STEP 8'));
+    const metadata = step7.slice(step7.indexOf('每个 task 补充元数据'));
+    const fields = [...metadata.matchAll(/^ {2}- `(\w+)` —/gm)].map((m) => m[1]);
+    assert.ok(fields.length >= 3, `premise: STEP 7 lists ${fields.length} task fields`);
+    assert.deepEqual(fields.filter((f) => !declared.includes(f)), [], `state-init declares ${declared.join(', ')}`);
   });
 
   it('initializes a minimal project and surfaces state', async () => {

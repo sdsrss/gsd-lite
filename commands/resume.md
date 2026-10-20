@@ -159,12 +159,15 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - 过期的研究内容摘要
   - 过期时间
   - 可能受影响的 task (引用了过期 decision 的 task)
-- 自动派发 researcher 子代理刷新研究
-- 把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`。服务端写入 `.gsd/research/`，并按下面的规则处理 decision ID 变更 —— 这些都由服务端完成，不要自己改 state 或写这些文件:
-  - 结论一致 → 保留引用，更新 expires_at
+- 自动派发 researcher 子代理刷新研究，把响应里的 `expired_research` 和 `current_decision_index` (已记录的决策) 一并交给它：它要返回完整的决策集，仍然成立的结论沿用原来的 id
+- 把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`。服务端写入 `.gsd/research/`，用新的 decision_index 整体替换已记录的决策，并按下面的规则处理 decision ID 变更 —— 这些都由服务端完成，不要自己改 state 或写这些文件:
+  - 结论一致 → 保留引用，条目换成新结果里的
   - 结论变了 → 标记引用 task 为 needs_revalidation
-  - ID 消失 → 标记引用 task 为 needs_revalidation + 警告
-- 返回 `research_stored` 后恢复执行；`research_warnings` 里的警告先转达给用户
+  - ID 消失 → 标记引用 task 为 needs_revalidation + 警告；该 ID 从记录中删除
+  - 被标记的 task 所在的已验收 phase 重新打开，之后的 resume 会回滚到它
+- 返回 `research_stored` 后恢复执行；`research_warnings` 里的警告和 `invalidated_tasks` 先转达给用户
+- 返回校验错误时什么都没有写入 (例如某个 `expires_at` 早于现在)：把错误原文交给 researcher 重新派发一次；第二次仍然报错就停下，把错误展示给用户。不要自己改 state 或写研究文件
+- `awaiting_user` 和 `paused_by_user` 时研究过期不会走到这里：用户先做决定，之后的 resume 再刷新
 
 ---
 
