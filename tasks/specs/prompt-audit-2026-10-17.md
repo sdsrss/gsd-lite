@@ -1,5 +1,5 @@
 # 提示词审计 2026-10-17 的修复
-状态：受阻（第三次复审在 4ae8da3 上报 BLOCKER 并已复现，复审次数已用完，等用户决定处理方式后再发版）
+状态：进行中（第三次复审的 BLOCKER 与 4 个 MEDIUM 已修；经用户同意再做一次增量复审，通过后发版）
 
 ## 背景与目标
 
@@ -16,7 +16,7 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 
 - 做：`commands/*.md`、`agents/*.md`、`workflows/*.md`、`references/*.md`、`README.md` 中审计点名的文字；
   钉住这些文字的测试；为这些缺陷类新增的提示词层门禁测试；CHANGELOG 与版本号。
-- 不做：`~/.claude/` 下的已安装副本（会被 24 小时一次的自动更新覆盖）；服务端行为；
+- 不做：`~/.claude/` 下的已安装副本（会被 24 小时一次的自动更新覆盖）；服务端行为（例外：研究刷新的死循环，见决策与进展）；
   researcher 的 `tools` 列表（见决策与进展）。
 
 ## 验收标准
@@ -125,6 +125,12 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
     `dispatch_researcher`。复现：scratchpad `repro/livelock.mjs`（去掉一个 ID）和 `repro/livelock-rule1.mjs`（ID 不变、不带 expires_at），
     各 3 轮，每轮都是 `dispatch_researcher ["decision:b"]` → `research_stored`。9a5ade6 上规划阶段的研究不进 state，走不到这条路径；
     0.16.0 让它可达。修它要改服务端，超出本 spec 的范围。
+  - 2026-10-20 问过用户：BLOCKER 修服务端，4 个 MEDIUM 一并修，修完再做一次增量复审（超出两轮上限，用户同意）。
+    - e3d5424：规则 3 保留条目但去掉 `expires_at`，规则 1 在新条目缺 `expires_at` 时取本次研究的值；TC8 先红（2/9）后绿，
+      两个复现脚本都在第 2 轮回到 `dispatch_executor`。
+    - 3dc41eb：三个门禁（收集门禁加回"读"、交接按指令句定位并数 STEP 10 之前的提及、INSTRUCTIONS 加两端边界和撤销检查）；
+      变异回放：旧门禁 30/31 保持绿，新门禁 31/31 变红。
+    - 1e1700c：STEP 5 不再因已有 `.gsd/research/` 跳过研究；STEP 8 没做研究时跳过陷阱检查；researcher 沿用仍然成立的 decision id。
   - MEDIUM（已对照代码核实）：c47cca9 去掉了收集门禁的"读取"（prompt-layer.test.js:455）；STEP 10 交接顺序断言会命中
     124 行的核对项，删掉或前移第 4 项仍绿（:510-512）；INSTRUCTIONS 表挡不住句外追加的否定；重新开始且跳过研究时，
     STEP 5（execution-flow.md:12）与 STEP 8（:68）互相矛盾。
@@ -132,8 +138,14 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   - researcher 的 `tools` 仍含 `Write`（去掉它能从机制上保证不自写）。
   - `fix_attempts` 没有代码递增，`architecture_concern` 也不由服务端强制，"第 3 次失败 → phase 失败"只靠提示词。
   - reviewer 反复漏掉通过的 L3 task 时会无限绕圈（审查记为 accepted、retry_count 每轮清零）。
-  - STEP 5 保留的研究只在上下文里，STEP 10 之前 `/clear` 或压缩会丢；规划阶段因已有 `.gsd/research/` 跳过研究时，
-    state 里不记研究，`research_basis` 解析不到（本次之前也是如此）。
+  - STEP 5 保留的研究只在上下文里，STEP 10 之前 `/clear` 或压缩会丢。
+  - researcher 返回早于现在的 `result.expires_at` 时服务端照存（`validateResearcherResult` 只查非空），下一次 resume 又派发
+    researcher，是同一类死循环；触发条件是 researcher 不按提示词计算 TTL。服务端拒收过去的时间会牵动一批用固定日期的测试，未做。
+  - `npm audit` 新出现 1 个 moderate（hono GHSA-5r4p-p66f-jhc7，经 SDK 引入）；门禁是 high，不阻塞。
+  - 第三次复审的 LOW 未改：几处修复没有测试钉住（STEP 10 核对项、resume.md:167 等）；researcher 自写门禁漏"写到"/"由你写入"；
+    description 门禁 `/Triggers?:/` 放过 "Triggered whenever…"；`prompt-layer.test.js` 的级别代码块只认裸 ``` 围栏；
+    reviewer.md:59 "(L2/L3 只升不降)" 与 L0 可升 L2 的代码不完全对应；review-cycle.md:38 把 auth/payment 放在 L3，
+    同文件 53–54 放在 L2；`state-init` 的输入 schema 不声明 `research_basis`；CHANGELOG 第 75 行仍写"多一轮审查"、第 40 行未折行。
   - `storeResearch` 校验 `expires_at` 失败前已覆盖部分文档并删掉提交标记（logic.js:633-636）。
   - `references/execution-loop.md:72-80` 的级别说明没有 L3；`commands/start.md:19` 写"STEP 3 的 `state-init`"，实际在 STEP 10。
   - `scripts/sync-versions.js:98,110` 写 `claude plugin update gsd`（没带 `@gsd`）；scripts/ 不随包发布。
@@ -151,3 +163,7 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 - `npm run lint`（a348ca4）→ 通过（111 files，0 findings）
 - `npm test`（a348ca4，load 12）→ 1540/1544 通过，exit 1：失败只有 e2e-install Layer B 超时（4 个子测试被取消），见上
 - `npm test`（1ff63dd 之前各提交的 pre-commit）→ 通过，多次；单独运行 `--test-name-pattern="npx from tarball"` → 通过（4/4，12 秒）
+- 第三次复审修复后（1e1700c）：`npm test` → 通过（1581/1581，exit 0）；`npm run lint` → 通过（111 files）；
+  `npm audit --omit=dev --audit-level=high` → 通过（exit 0，1 moderate 见遗留）；
+  `bash scripts/gate-replay-changed.sh origin/main HEAD` → 通过（4 个测试文件均 DISCRIMINATIVE）；
+  `bash scripts/gate-replay-changed.sh 4ae8da3 HEAD` → 通过（e2e-research-integration 2/9、prompt-layer 4/65 在 4ae8da3 上失败）
