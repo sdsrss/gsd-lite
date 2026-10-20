@@ -230,6 +230,13 @@ describe('prompt layer — agents', () => {
     assert.match(principles, /`architecture_concern: true`/, 'the 2+ failed directions case is gone');
   });
 
+  it('the debugger, which has no Edit tool, is not told to add logging', () => {
+    const src = read('agents/debugger.md');
+    const tools = src.match(/^tools:\s*(.*)$/m)?.[1] ?? '';
+    assert.ok(tools.length > 0 && !/\bEdit\b|\bWrite\b/.test(tools), `premise: debugger tools are ${tools}`);
+    assert.doesNotMatch(src, /添加日志/, 'debugger.md asks for an edit its tools and its role both rule out');
+  });
+
   it('the reviewer takes the level from the task and reports it in the vocabulary the server accepts', () => {
     const schema = read('src/schema.js');
     const accepted = schema.match(/if \(!\[([^\]]+)\]\.includes\(r\.review_level\)\)/)?.[1];
