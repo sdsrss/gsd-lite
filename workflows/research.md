@@ -49,7 +49,7 @@
 - `package.json` 主依赖大版本有变更 → 立即过期
 - 用户说"重新研究" → 强制过期
 
-**TTL 存储在** `state.json` 的 `research.expires_at` 字段 (每条决策也可以带自己的 `expires_at`)。服务端存储时拒收早于现在的日期；记录里的日期到期后，下一次 `orchestrator-resume` 会派发 researcher 刷新 (等用户决定的 `awaiting_user` / `paused_by_user` 状态除外)。
+**TTL 存储在** `state.json` 的 `research.expires_at` 字段 (每条决策也可以带自己的 `expires_at`)。服务端存储时拒收早于现在的日期；记录里的日期到期后，项目处在执行或审查中时，下一次 `orchestrator-resume` 会派发 researcher 刷新；其他状态 (等用户、暂停、规划中、等 /clear 等) 等项目回到执行后再刷新。到期时间至少要在一小时之后。
 
 ---
 

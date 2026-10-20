@@ -17,8 +17,13 @@ const MAX_FIX_DIRECTIONS = 3;
 const MAX_RESUME_DEPTH = 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
 const MAX_PHASE_REVIEW_RETRY = 5;
-// Modes that wait on the user. A research refresh does not take them over.
-const USER_HOLD_MODES = ['awaiting_user', 'paused_by_user'];
+// The modes a research refresh may interrupt: the ones that are executing or
+// reviewing, and the refresh itself. Named this way round on purpose: the first
+// version listed the modes to leave alone, named two, and refreshed over
+// planning, reconcile_workspace, replan_required and awaiting_clear, each of
+// which then resumed execution. Any mode not listed waits until the project is
+// back to executing, and a mode added later is left alone by default.
+const REFRESH_MODES = ['executing_task', 'reviewing_task', 'reviewing_phase', 'research_refresh_needed'];
 
 // R-17: the former RESULT_CONTRACTS reference block was embedded in dispatch
 // responses as `result_contract` and then unconditionally stripped by the server
@@ -253,12 +258,11 @@ async function evaluatePreflight(state, basePath) {
     });
   }
 
-  // Not over a decision the user owes: a refresh restores the workflow from
-  // current_review afterwards, so every awaiting_user hold (retry exhausted,
-  // direction drift, blocked tasks) came back as a review or as execution
-  // without the user's answer, and a paused project came back running.
-  // Expired research waits for the resume after the user has answered.
-  const expired_research = USER_HOLD_MODES.includes(state.workflow_mode) ? [] : collectExpiredResearch(state);
+  // Only over execution or review: a refresh restores the workflow from
+  // current_review afterwards, so a hold the user or the planner owes an
+  // answer to (awaiting_user, paused_by_user, planning, reconcile, replan,
+  // awaiting_clear) came back as execution without that answer.
+  const expired_research = REFRESH_MODES.includes(state.workflow_mode) ? collectExpiredResearch(state) : [];
   if (expired_research.length > 0) {
     hints.push({
       workflow_mode: 'research_refresh_needed',
@@ -465,6 +469,7 @@ export {
   MAX_RESUME_DEPTH,
   CONTEXT_RESUME_THRESHOLD,
   MAX_PHASE_REVIEW_RETRY,
+  REFRESH_MODES,
   skipsPreflight,
   parseTimestamp,
   readContextHealth,
