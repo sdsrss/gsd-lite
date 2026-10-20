@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
+import { LOCK_STALE_MS } from '../src/utils.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(repoRoot, rel), 'utf8');
@@ -107,5 +108,17 @@ describe('prompt layer — doctor checks what the code actually does', () => {
     const health = server.slice(server.indexOf("case 'health':"), server.indexOf("case 'state-init':"));
     assert.match(health, /\bwarning:/, 'premise: the health response no longer carries `warning`');
     assert.match(section(doctor, '## STEP 5'), /`warning`/, 'doctor.md ignores the health response `warning`');
+  });
+
+  it('calls a lock stale at the age the server does', () => {
+    // A 5-minute threshold reported a lock the server had already declared
+    // abandoned as "likely active operation" for the 4m50s in between.
+    const units = { ms: 1, s: 1000, sec: 1000, second: 1000, seconds: 1000, min: 60_000, minute: 60_000, minutes: 60_000 };
+    const step = section(doctor, '## STEP 4');
+    const durations = [...step.matchAll(/(\d+)\s*(ms|seconds?|sec|s|minutes?|min)\b/g)]
+      .map((m) => Number(m[1]) * units[m[2]]);
+    assert.ok(durations.length >= 1, 'premise: doctor.md STEP 4 names no lock age');
+    assert.deepEqual([...new Set(durations)], [LOCK_STALE_MS],
+      `doctor.md STEP 4 uses ${durations.join('/')} ms; withFileLock breaks a lock older than LOCK_STALE_MS = ${LOCK_STALE_MS} ms`);
   });
 });

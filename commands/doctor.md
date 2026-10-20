@@ -75,9 +75,10 @@ and must not be reported as missing:
 
 Check if `.gsd/state.lock` exists:
 - If not exists: record PASS "No stale lock"
-- If exists: check file age
-  - Older than 5 minutes: record WARN "Stale lock file detected (age: {age}). May indicate a crashed process. Consider removing it."
-  - Recent (< 5 min): record INFO "Lock file present (age: {age}), likely active operation"
+- If exists: check file age. The lock is held only for the duration of one state write, and the
+  server treats a lock older than 10 seconds as abandoned and breaks it on the next write.
+  - Older than 10 seconds: record WARN "Stale lock file (age: {age}) — a process likely exited mid-write. The next state write clears it; no manual removal needed."
+  - Younger: record INFO "Lock file present (age: {age}), likely an active write"
 
 ## STEP 5: Auto-Update Status
 
