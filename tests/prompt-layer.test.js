@@ -464,20 +464,70 @@ describe('prompt layer — agents', () => {
   });
 });
 
-describe('prompt layer — planning research stays out of state', () => {
-  // Recording planning research in state makes the expiry refresh reachable,
-  // and that refresh cannot end yet: applyResearchRefresh leaves an accepted
-  // phase holding a needs_revalidation task, validateState rejects the state,
-  // and every resume re-dispatches the researcher (fourth pre-tag review).
-  // Until the refresh is redesigned, planning hands nothing to the handler and
-  // the researcher writes .gsd/research/ itself, as in 0.15. Remove this
-  // together with that redesign.
-  it('STEP 5–10 do not hand planning research to orchestrator-handle-researcher-result', () => {
+describe('prompt layer — research found at planning time reaches the server', () => {
+  // Until 0.17.0 the researcher wrote .gsd/research/ itself and planning
+  // recorded nothing in state, so every task's research_basis resolved to
+  // "not found" and research never expired (audit A12). Planning now holds the
+  // researcher's result until STEP 10's state-init and hands it to the server.
+  it('the researcher hands its documents to the server instead of writing them', () => {
+    // storeResearch writes .gsd/.research-commit-pending around the artifact
+    // renames; a researcher writing the files itself bypasses that marker.
+    const src = read('agents/researcher.md');
+    const selfWrites = src.split('\n').filter((l) =>
+      (/写入\s*`?\.gsd\/research/.test(l) && !/服务端/.test(l)) || /(?<!不)(自己|直接)写入\s*`?\.gsd\/research/.test(l));
+    assert.deepEqual(selfWrites, [], 'researcher.md tells the researcher to write .gsd/research/ itself');
+    assert.match(tagBlock(src, 'research_output'), /`artifacts`/, 'research_output does not route the documents through artifacts');
+    // Bash can still write; Write was the direct route, and nothing it does needs it.
+    const tools = src.match(/^tools:\s*(.*)$/m)?.[1] ?? '';
+    assert.ok(tools.length > 0, 'premise: researcher.md declares no tools');
+    assert.doesNotMatch(tools, /\bWrite\b/, 'the researcher still has the Write tool');
+  });
+
+  it('STEP 5 holds the result, STEP 8 reads the held pitfalls, STEP 10 hands it over after state-init', () => {
     const flow = read('workflows/execution-flow.md');
-    const planning = flow.slice(flow.indexOf('## STEP 5'), flow.indexOf('## STEP 11'));
-    assert.ok(planning.includes('## STEP 10') && !planning.includes('## STEP 11'), 'premise: the slice is not STEP 5–10');
-    assert.doesNotMatch(planning, /orchestrator-handle-researcher-result/,
-      'planning hands research to the handler, which records it in state and makes the refresh reachable');
+    const step5 = section(flow, '## STEP 5');
+    assert.doesNotMatch(step5, /研究输出写入/, 'STEP 5 still says the output is written there, before any state exists');
+    // STEP 10 only: an unbounded slice runs on into STEP 11's action table,
+    // whose dispatch_researcher row names the same tool.
+    const step10 = section(flow, '## STEP 10');
+    assert.ok(!step10.includes('## STEP 11'), 'premise: the STEP 10 slice runs past STEP 10');
+    // The hand-off instruction itself, not the tool name: the checklist names
+    // the tool after state-init too.
+    const initAt = step10.indexOf('state-init(');
+    const handAt = step10.indexOf('原样传给 `orchestrator-handle-researcher-result');
+    assert.ok(initAt !== -1, 'premise: STEP 10 no longer calls state-init');
+    assert.ok(handAt > initAt, 'STEP 10 does not hand the held research to orchestrator-handle-researcher-result after state-init');
+    // Before STEP 10 the handler is named once, by STEP 5, to say it is not
+    // called yet; counting mentions catches any phrasing of a call.
+    const beforeStep10 = flow.slice(0, flow.indexOf('## STEP 10'));
+    assert.equal(beforeStep10.split('`orchestrator-handle-researcher-result').length - 1, 1,
+      'the handler is named before STEP 10 other than to say it is not called yet');
+    assert.ok(step5.includes('也不调用 `orchestrator-handle-researcher-result`'), 'STEP 5 no longer says the handler waits for state-init');
+    assert.doesNotMatch(section(flow, '## STEP 8'), /research\/PITFALLS\.md/, 'STEP 8 reads a PITFALLS.md that is not written until STEP 10');
+  });
+
+  it('planning does not skip research because .gsd/research/ already exists', () => {
+    // Only a restarted project has those files while planning, and state-init
+    // (force) drops their record: reusing them left research_basis unresolved.
+    // research.md's trigger table said the same thing STEP 5 used to.
+    const step5 = section(read('workflows/execution-flow.md'), '## STEP 5');
+    assert.doesNotMatch(step5, /已有 \.gsd\/research\/[^\n]*→ *跳过研究/, 'STEP 5 still skips research when .gsd/research/ exists');
+    const triggers = section(read('workflows/research.md'), '## 研究触发规则');
+    // By column: a scenario cell that names existing research, with a skip decision.
+    const rows = triggers.split('\n').filter((l) => l.startsWith('|')).map((l) => l.split('|').map((c) => c.trim()));
+    assert.ok(rows.some((r) => r[1] === '新项目'), 'premise: research.md trigger table not found');
+    const skips = rows.filter((r) => /已有.*研究/.test(r[1]) && /跳过研究/.test(r[2])).map((r) => r.join(' | '));
+    assert.deepEqual(skips, [], 'research.md still skips research because research already exists');
+  });
+
+  it('the state diagram draws no refresh out of a state that waits on the user', () => {
+    const helpers = read('src/tools/orchestrator/helpers.js');
+    const holds = helpers.match(/const USER_HOLD_MODES = \[([^\]]+)\]/)?.[1];
+    assert.ok(holds, 'premise: USER_HOLD_MODES not found in orchestrator/helpers.js');
+    const diagram = read('references/state-diagram.md');
+    const edges = [...holds.matchAll(/'(\w+)'/g)].map((m) => m[1])
+      .filter((mode) => new RegExp(`^\\s*${mode} --> research_refresh_needed`, 'm').test(diagram));
+    assert.deepEqual(edges, [], 'preflight does not refresh research over these modes');
   });
 });
 
@@ -646,6 +696,22 @@ describe('prompt layer — the instruction sentences', () => {
     // The refresh path: with the researcher no longer writing, a step that only
     // said "更新 state.json" wrote no documents (second pre-tag review).
     ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
+    // A refused store writes nothing and the hold stays; re-dispatching
+    // without a bound looped on a researcher that kept returning past dates.
+    ['commands/resume.md', '把错误原文交给 researcher 重新派发一次；第二次仍然报错就停下，把错误展示给用户'],
+    ['commands/resume.md', '把响应里的 `expired_research` 和 `current_decision_index` (已记录的决策) 一并交给它'],
+    // A12: planning research reaches the server after state-init.
+    ['agents/researcher.md', '你不直接写这些文件'],
+    ['workflows/execution-flow.md', '这一步不写任何文件、也不调用 `orchestrator-handle-researcher-result`'],
+    ['workflows/execution-flow.md', '`state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`'],
+    ['workflows/execution-flow.md', '不要自己写这些文件。返回错误时把错误展示给用户并停下，修正后重新调用，也不要改为自己写文件'],
+    ['workflows/execution-flow.md', 'STEP 5 保留的 `artifacts["PITFALLS.md"]` 中的每个陷阱是否都有对应的防御 task 或验证条件？'],
+    ['workflows/execution-flow.md', '`.gsd/research/` 里已有的文件不是本次的研究'],
+    ['workflows/execution-flow.md', '(没做研究就跳过这一项。'],
+    // storeResearch overwrites all four files and replaces the decision index.
+    ['agents/researcher.md', '把仍然成立的内容并进新文档一起返回'],
+    ['agents/researcher.md', '仍然成立的结论沿用原来的 decision id，放进 `decision_ids` 和 `decision_index`：新结果里没有的 id 会被当作已删除，summary 变了的 id 会被当作结论已变，引用它们的 task 都要重新验证。'],
+    ['agents/researcher.md', '任何一个 `expires_at` 早于现在，服务端都会拒收整个结果，什么也不写。'],
     ['agents/debugger.md', '`architecture_concern` 为 true 时，编排器会把 phase 标为 failed'],
     ['README.md', 'sends an L1 or L2 task straight to accepted; only L3 ignores it.'],
     ['references/review-classification.md', '且 `review_required` 保持 `true` —— 设为 `false` 的 L1/L2 task 会跳过审查直接 accepted'],

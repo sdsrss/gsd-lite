@@ -84,6 +84,7 @@ const TOOLS = [
                     requires: { type: 'array', description: 'Dependencies: [{kind: "task"|"phase", id: "1.1", gate?: …}] (default: []). Gates are per kind: a task dependency takes "checkpoint" or "accepted"; a phase dependency also takes "phase_complete". "phase_complete" on a task dependency is rejected — the scheduler can never satisfy it, so the phase would never complete. Default gate: "accepted".' },
                     review_required: { type: 'boolean', description: 'Whether review is needed (default: true)' },
                     verification_required: { type: 'boolean', description: 'Whether verification is needed (default: true)' },
+                    research_basis: { type: 'array', items: { type: 'string' }, description: 'Ids from the research decision_index this task relies on (default: []). The executor receives their summaries; a refresh that changes or drops one sends the task back for revalidation.' },
                   },
                   required: ['name'],
                 },
@@ -235,7 +236,7 @@ const TOOLS = [
   },
   {
     name: 'orchestrator-handle-researcher-result',
-    description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration',
+    description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration. The decision_index replaces the one on record: a task citing a decision whose summary changed or that is missing is sent back for revalidation. Every expires_at must be a date in the future; nothing is written if the result is refused.',
     inputSchema: {
       type: 'object',
       properties: {
