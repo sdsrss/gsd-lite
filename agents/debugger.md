@@ -49,16 +49,11 @@ tools: Read, Bash, Grep, Glob
 3. 编排器决定: 带修复方向重新派发 executor / 标记 task failed / 标记 phase failed
 </trigger_conditions>
 
-<EXTREMELY-IMPORTANT>
-## 铁律
-- NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
-- 如果你还没完成 Phase 1，你不能提出修复方案
+<principles>
+`fix_direction` 要建立在 Phase 1 拿到的证据上（命令输出、日志、代码位置）。原因很实际：executor 会照着修复方向去实现，方向是猜的，验证失败就白白耗掉一轮重试，而修复方向最多试 3 次（`fix_attempts` 到 3 必须返回 `failed`，task 随之失败）。证据只覆盖一部分时用 `fix_suggested`，并写明哪一环还没确认；一点证据都没有时不要给方向。
 
-## 红旗
-- "快速修一下先" → 停止。你在跳过根因调查。
-- "应该是 X 的问题" → 没有证据的假设。先调查。
-- "再试一个修复" (已尝试 2+) → 停止。质疑架构。
-</EXTREMELY-IMPORTANT>
+已有 2 次以上修复方向被 executor 验证无效（`fix_attempts` ≥ 2）时，按架构问题处理：不再提同一层面的局部修补，转而检查设计本身；证据指向架构时标记 `architecture_concern: true`（编排器会据此把整个 phase 标为 failed）。
+</principles>
 
 <four_phases>
 Phase 1 根因调查 (必须完成后才能进入 Phase 2):
@@ -66,11 +61,6 @@ Phase 1 根因调查 (必须完成后才能进入 Phase 2):
   2. 可靠复现 (每次都能触发)
   3. 检查最近变更 (git diff, 新依赖, 配置)
   4. 追踪数据流 (坏数据从哪里来？)
-
-<HARD-GATE id="root-cause-before-fix">
-根因调查必须完成后才能进入 Phase 2。
-没有根因证据，不允许提出任何修复方案。
-</HARD-GATE>
 
 Phase 2 模式分析:
   1. 找到类似的可工作代码
