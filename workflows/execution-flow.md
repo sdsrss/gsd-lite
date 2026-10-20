@@ -16,7 +16,7 @@
 
 需要研究时:
 1. 派发 `researcher` 子代理 (新鲜上下文)
-2. 保留它返回的 `result` / `decision_index` / `artifacts` (四份文档的 Markdown) 原样不动。此时还没有 state，服务端无处可写，所以这一步不写任何文件；STEP 10 `state-init` 成功后再交给服务端写入 `.gsd/research/`
+2. 保留它返回的 `result` / `decision_index` / `artifacts` (四份文档的 Markdown) 原样不动，这一步不写任何文件、也不调用 `orchestrator-handle-researcher-result`。研究要记进 STEP 10 `state-init` 新建的 state：新项目此时还没有 state；重新开始的项目虽然还留着旧 state，但 `state-init` 会把它连同其中的研究记录一起覆盖。这份结果只在当前上下文里，STEP 10 之前上下文被清空就需要重新研究
 3. 向用户展示关键发现: 技术栈推荐 + 陷阱警告 + ⭐ 推荐方案
 
 不需要时: 跳过，直接进入 STEP 6。
@@ -65,7 +65,7 @@
 2. **风险排序:** 高风险 task 是否排在前面？(fail-fast 原则)
 3. **依赖安全:** L2 task 的下游是否都用了 `gate:accepted`？
 4. **验证充分:** 涉及 auth/payment 的 task 是否都有明确的安全验证条件？
-5. **陷阱规避:** `research/PITFALLS.md` 中的每个陷阱是否都有对应的防御 task 或验证条件？
+5. **陷阱规避:** STEP 5 保留的 `artifacts["PITFALLS.md"]` 中的每个陷阱是否都有对应的防御 task 或验证条件？(此时 `.gsd/research/` 还没写入；重新开始的项目里那里可能是上一个项目的旧文件，不要读它)
 
 输出: `pass` / `revise` (附具体修正建议)
 轮次: 最多 2 轮自审修正；2 轮后仍有问题 → 标注风险展示给用户
@@ -110,7 +110,7 @@
    ```
 2. 写入 `plan.md` — 项目总览索引 (不含 task 级细节)
 3. 写入 `phases/*.md` — 每阶段详细 task 规格 (source of truth)
-4. 如有研究: `state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`。返回 `research_stored` 即表示服务端已写入 `.gsd/research/` 并在 state 里记下研究 (task 的 `research_basis` 靠它解析)；不要自己写这些文件
+4. 如有研究: `state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`。返回 `research_stored` 即表示服务端已写入 `.gsd/research/` 并在 state 里记下研究 (task 的 `research_basis` 靠它解析)；不要自己写这些文件。返回错误时把错误展示给用户并停下，修正后重新调用，也不要改为自己写文件
 
 规则:
 - `plan.md` 是只读索引: 生成后不再修改 (除非 replan)
@@ -121,6 +121,7 @@
 □ plan.md 已写入
 □ phases/*.md 已写入 (每个 phase 一个文件)
 □ 所有 task 都有 lifecycle / level / requires / review_required
+□ 如有研究: `orchestrator-handle-researcher-result` 返回了 `research_stored`
 → 全部满足才可继续
 </HARD-GATE>
 
