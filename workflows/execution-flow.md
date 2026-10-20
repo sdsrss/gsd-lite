@@ -16,7 +16,7 @@
 
 需要研究时:
 1. 派发 `researcher` 子代理 (新鲜上下文)
-2. 研究输出写入 `.gsd/research/` (STACK.md, ARCHITECTURE.md, PITFALLS.md, SUMMARY.md)
+2. 保留它返回的 `result` / `decision_index` / `artifacts` (四份文档的 Markdown) 原样不动。此时还没有 state，服务端无处可写，所以这一步不写任何文件；STEP 10 `state-init` 成功后再交给服务端写入 `.gsd/research/`
 3. 向用户展示关键发现: 技术栈推荐 + 陷阱警告 + ⭐ 推荐方案
 
 不需要时: 跳过，直接进入 STEP 6。
@@ -110,7 +110,7 @@
    ```
 2. 写入 `plan.md` — 项目总览索引 (不含 task 级细节)
 3. 写入 `phases/*.md` — 每阶段详细 task 规格 (source of truth)
-4. 如有研究: 确认 `.gsd/research/` 已写入
+4. 如有研究: `state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`。返回 `research_stored` 即表示服务端已写入 `.gsd/research/` 并在 state 里记下研究 (task 的 `research_basis` 靠它解析)；不要自己写这些文件
 
 规则:
 - `plan.md` 是只读索引: 生成后不再修改 (除非 replan)

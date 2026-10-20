@@ -389,6 +389,45 @@ describe('prompt layer — agents', () => {
   });
 });
 
+describe('prompt layer — research found at planning time reaches the server', () => {
+  // The researcher no longer writes .gsd/research/ itself, so on the planning
+  // path someone else has to. STEP 5 researches before STEP 10's state-init,
+  // and storeResearch refuses without a state file — so the result has to be
+  // held across the steps and handed over after state-init. The pre-tag review
+  // found the gap: nothing wrote the documents for a new project.
+  it('the server cannot store research before state-init and can right after (premise)', async () => {
+    const { storeResearch } = await import('../src/tools/state/index.js');
+    const dir = await mkdtemp(join(tmpdir(), 'gsd-prompt-layer-research-'));
+    try {
+      const expires = new Date(Date.now() + 7 * 86_400_000).toISOString();
+      const payload = {
+        result: { decision_ids: ['decision:x'], volatility: 'medium', expires_at: expires, sources: [{ id: 's1', type: 'Context7', ref: 'r' }] },
+        decision_index: { 'decision:x': { summary: 'x', source: 'Context7', expires_at: expires } },
+        artifacts: { 'STACK.md': '# s\n', 'ARCHITECTURE.md': '# a\n', 'PITFALLS.md': '# p\n', 'SUMMARY.md': '# m\n' },
+        basePath: dir,
+      };
+      const before = await storeResearch(payload);
+      assert.equal(before.code, 'NO_PROJECT_DIR', `before state-init: ${JSON.stringify(before)}`);
+      await init({ project: 'p', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], research: true, basePath: dir });
+      const after = await storeResearch(payload);
+      assert.equal(after.success, true, `after state-init: ${JSON.stringify(after)}`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('execution-flow hands the researcher result to the server after state-init', () => {
+    const flow = read('workflows/execution-flow.md');
+    const step5 = section(flow, '## STEP 5');
+    assert.doesNotMatch(step5, /研究输出写入/, 'STEP 5 still says the output is written there, before any state exists');
+    const step10 = flow.slice(flow.indexOf('## STEP 10'));
+    const initAt = step10.indexOf('state-init(');
+    const handAt = step10.indexOf('orchestrator-handle-researcher-result');
+    assert.ok(initAt !== -1, 'premise: STEP 10 no longer calls state-init');
+    assert.ok(handAt > initAt, 'STEP 10 does not hand the held research to orchestrator-handle-researcher-result after state-init');
+  });
+});
+
 describe('prompt layer — planning-time level rules', () => {
   // Migrations, CI/CD and deployment config were L0-shaped ("config") or
   // absent. They are at least L2; anything touching production is L3, the
