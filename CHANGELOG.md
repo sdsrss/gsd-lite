@@ -93,10 +93,13 @@ code is the authority.
   write. It now puts the four documents in `artifacts`, as its result contract
   already asked. Research done while planning is held until `state-init` has created
   the project's state and is then handed to the server, which also records it in
-  state for the first time, so a task's `research_basis` now resolves. (When planning
-  skips research because `.gsd/research/` already exists, nothing is recorded — as
-  before.) A refresh goes through the same handler, and an incremental research
-  carries the earlier findings forward, since the server rewrites all four files.
+  state for the first time, so a task's `research_basis` now resolves. Planning no
+  longer skips research because `.gsd/research/` already exists: only a restarted
+  project has those files, and `state-init` clears their record, so reusing them left
+  `research_basis` unresolved and the research never refreshed. A refresh goes
+  through the same handler, and an incremental research or a refresh carries the
+  earlier findings forward under their old decision ids, since the server rewrites
+  all four files and treats a missing id as removed.
 
 - **A research refresh now ends.** After a refresh, a decision the new research no
   longer returned kept its old, already-passed `expires_at`, and so did a kept
