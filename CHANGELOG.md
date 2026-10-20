@@ -6,8 +6,9 @@ All notable changes to this project are documented here.
 
 Minor, not patch: this release changes when Claude Code offers gsd's commands and
 agents, which tasks stop for your confirmation, and the MCP SDK it runs on. No state
-field or tool contract changes; the only code changes are the wording of the update
-messages. **Most projects need to do nothing.** The points below say when that is not
+field or tool contract changes; the code changes are the wording of the update
+messages and one fix to how a research refresh merges decisions. **Most projects need
+to do nothing.** The points below say when that is not
 true.
 
 **Do I have to do anything?**
@@ -96,6 +97,15 @@ code is the authority.
   skips research because `.gsd/research/` already exists, nothing is recorded — as
   before.) A refresh goes through the same handler, and an incremental research
   carries the earlier findings forward, since the server rewrites all four files.
+
+- **A research refresh now ends.** After a refresh, a decision the new research no
+  longer returned kept its old, already-passed `expires_at`, and so did a kept
+  decision that came back without one of its own. The next `orchestrator-resume`
+  found expired research again and re-dispatched the researcher, every time, so the
+  project never got back to its tasks. A dropped decision now loses its `expires_at`
+  — it stays in the index, and the tasks that cite it still go back for
+  revalidation — and a kept one without its own takes the refresh's. Before this
+  release planning research was never recorded, so no project reached this path.
 
 - **Example expiry dates had already passed.** The researcher's and the research
   workflow's examples showed March 2026 `expires_at` values; the server treats a
