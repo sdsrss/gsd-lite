@@ -172,4 +172,10 @@ describe('prompt layer — commands', () => {
     const offenders = promptFiles.filter((f) => read(f).includes('codebase-retrieval'));
     assert.deepEqual(offenders, []);
   });
+
+  it('no command wraps its rules in a pressure tag (token check)', () => {
+    // The orchestration rules have reasons; the tag only raised the volume.
+    const offenders = mdFiles('commands').filter((f) => read(f).includes('EXTREMELY-IMPORTANT'));
+    assert.deepEqual(offenders, [], 'state the rule and its reason instead of raising the volume');
+  });
 });
