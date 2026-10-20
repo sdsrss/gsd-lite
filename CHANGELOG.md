@@ -2,6 +2,93 @@
 
 All notable changes to this project are documented here.
 
+## [0.17.0] - 2026-10-21
+
+Minor, not patch: research found while planning is now recorded in state, so it
+expires and is refreshed mid-project, and two loops that could run forever now end
+by stopping for you. **Most projects need to do nothing.** The points below say when
+that is not true.
+
+**Do I have to do anything?**
+
+- **Research now expires, and resuming refreshes it.** Research done during
+  `/gsd:start` or `/gsd:prd` used to be written to `.gsd/research/` and never
+  recorded in state, so every task's `research_basis` reached the executor as
+  `summary: "not found"` and the research never expired. It is now recorded right
+  after `state-init` creates the project. Once its `expires_at` passes — by default 3 days
+  for frontend, cloud and security work, 7 for general web work, 14–30 for stable
+  backends — the next `/gsd:resume` dispatches the researcher before continuing. A
+  decision whose conclusion changed or disappeared sends the tasks citing it back for
+  revalidation; if one sits in a phase you already accepted, that phase is reopened
+  and re-run first. Expect a research refresh, and sometimes re-run tasks, on longer
+  projects. Only a project that is executing or reviewing is interrupted; one that is
+  waiting on you, paused, being re-planned, waiting for `/clear`, or holding a
+  workspace or plan change for you to confirm is refreshed once it is executing
+  again. If the researcher cannot reach any source, the research on record is kept
+  and the resume stops to tell you; you can wait, narrow the scope, or give the
+  expired research up with `state-update` (`research: null`, `workflow_mode:
+  "executing_task"`). A project planned with no sources at all keeps going: its
+  placeholder research is simply refreshed again. Projects planned before 0.17.0 did
+  not record their research, so they see none of this until they are planned again.
+- **A phase review that leaves a task out now stops for you.** Each such round used
+  to be recorded as a passed review with the retry count reset, and the same review
+  came back on every resume, forever. It now counts as an incomplete round (new
+  action `review_incomplete`, with `unreviewed_tasks`), and a sixth such round stops
+  the phase in `awaiting_user` (`review_retry_exhausted`) like a rework loop. A task
+  whose level was lowered to L0 after its checkpoint is now reviewed with its phase;
+  it used to be left out of the review targets and held the review open the same way.
+- **A task whose third fix direction fails now fails its phase.** The debugger is
+  told that rule, but the server stored whatever attempt count the debugger
+  reported, and a fresh debugger reporting 0 each round kept a failing task cycling
+  between debugger and executor. The server now counts the directions itself; a
+  debugger result is no longer refused for reporting three attempts with a root
+  cause, and `recovery: 'retry_failed'` gives the task a fresh set of directions.
+
+To go back: npx installs pin `gsd-lite@0.16.0`. A plugin install follows its
+marketplace, which can be re-added pinned to the tag — remove the `gsd` marketplace
+(that uninstalls the plugin), `claude plugin marketplace add sdsrss/gsd-lite#v0.16.0`,
+then install `gsd@gsd` again. One caution: 0.16.0 also refreshes research it finds
+recorded in state, with the defects this release fixes. Before going back, clear a
+project's research with `state-update` (`research: null`, plus `workflow_mode:
+"executing_task"` if it is waiting on a refresh); its tasks' `research_basis` then
+resolves to "not found" again, as it always did under 0.16.0.
+
+**Also in this release:**
+
+- **A refused research store writes nothing.** It used to write the four documents,
+  then validate the state, and on a refusal leave the documents describing research
+  state.json did not record, with the commit marker removed. It now validates first.
+  It refuses an `expires_at` less than an hour away, which used to be stored and
+  expire before the next resume, and a `[BLOCKED]` result while real research is on
+  record. If a write fails after some documents were replaced, the commit marker now
+  stays, even through a retry that fails too, so `/gsd:resume` reports the mismatch.
+- **A refresh replaces the recorded decisions.** The researcher returns the complete
+  set, keeping the id of a conclusion that still holds (it is now given the
+  decisions on record as `current_decision_index`). A dropped decision used to stay
+  on record with its past `expires_at`, which expired the research again on the next
+  resume and invalidated its tasks again on every later refresh. The store reports
+  `invalidated_tasks`, and warns about a task citing an id the research does not
+  have.
+- **After a refresh, work resumes where it stopped.** A task being debugged went
+  back to a task review; it now goes back to debugging. A refresh that invalidated
+  tasks drops the review it interrupted, so the changed work is redone first.
+- **`phase-complete` moves on to the next phase not yet accepted**, instead of the
+  next phase by number, which after a rollback to an earlier phase could be one
+  already accepted.
+- **The researcher returns its documents and the server writes them.** It no longer
+  has the Write tool. Planning holds its result until `state-init` and then hands it
+  to `orchestrator-handle-researcher-result`; planning no longer skips research
+  because `.gsd/research/` exists, since only a restarted project has those files.
+  `state-init` now declares `research_basis` in its schema.
+- **Prompt corrections.** `/gsd:start` named STEP 3 for `state-init` (it is STEP 10);
+  the execution loop's level list had no L3; two copies of the level rules put
+  auth/payment at L3 as well as L2; "L2/L3 只升不降" said levels could rise to L3,
+  which nothing does, and not that L1 can drop to L0.
+- **Security: dependencies.** The `hono` override is raised to ^4.13.11
+  (GHSA-5r4p-p66f-jhc7, moderate: `serveStatic` decodes a path twice). hono comes
+  in through the MCP SDK; a stdio server never serves static files, and the audit
+  gate fails only on high, so nothing was blocked.
+
 ## [0.16.0] - 2026-10-20
 
 Minor, not patch: this release changes when Claude Code offers gsd's commands and
