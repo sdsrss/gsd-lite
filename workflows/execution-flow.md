@@ -40,10 +40,10 @@
   - `review_required` — 是否需要审查
   - `research_basis` — 引用的 research decision id
 - 审查级别按影响面判定:
-  - **L0** — 无运行时语义变化 (docs/config/style)
+  - **L0** — 无运行时语义变化 (docs/config/style；CI/CD 与部署配置不算，见 L2)
   - **L1** — 普通编码任务 (默认)
-  - **L2** — 高风险 (auth/payment/public API/DB migration/核心架构)
-  - **L3** — 最高风险 (安全敏感 / 破坏性 schema / 架构决策)。审查通过后**不自动 accepted**,而是进入 `awaiting_user` 人工确认门:reviewer 返回 `requires_human_confirmation: true` + `security_implications`,编排器持锁展示安全影响,用户显式确认 (`orchestrator-resume confirm_review: confirm`) 才 accepted;拒绝 (`reject`) 则返工。
+  - **L2** — 高风险 (auth/payment/public API/DB migration/CI/CD 配置/部署配置/核心架构)。迁移、CI/CD、部署配置可以免写失败测试 (executor 的 TDD 例外)，但免 TDD 不降低审查级别，所以至少是 L2
+  - **L3** — 最高风险 (安全敏感 / 破坏性 schema / 架构决策 / 涉及生产环境的变更，如生产数据迁移、生产部署)。审查通过后**不自动 accepted**,而是进入 `awaiting_user` 人工确认门:reviewer 返回 `requires_human_confirmation: true` + `security_implications`,编排器持锁展示安全影响,用户显式确认 (`orchestrator-resume confirm_review: confirm`) 才 accepted;拒绝 (`reject`) 则返工。
 - 标注可并行任务组 `[PARALLEL]` (当前仅作未来升级标记)
 
 ## STEP 8 — 计划自审

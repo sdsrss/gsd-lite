@@ -50,6 +50,8 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 - CI/CD 配置
 - 环境变量/部署配置
 → 这些任务改为: 实现 → 验证生效 → checkpoint commit
+
+免 TDD 不降低审查级别：task 的 `level` 照计划执行。迁移、CI/CD、部署配置这类任务出了错代价最大，计划阶段至少定为 L2，涉及生产环境的定为 L3；跳过的只是"先写失败测试"这一步，不是审查。
 </testing_rules>
 
 <rules>
