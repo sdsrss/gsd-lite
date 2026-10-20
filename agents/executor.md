@@ -1,6 +1,6 @@
 ---
 name: executor
-description: Execute one task with TDD/self-review and return structured result
+description: GSD-Lite executor, dispatched by the GSD orchestrator (/gsd:start, /gsd:prd, /gsd:resume) with one task's context — implements that task test-first, makes a checkpoint commit and returns the executor result JSON. Not for general implementation work outside a GSD project.
 tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 

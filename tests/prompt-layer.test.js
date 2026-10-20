@@ -194,3 +194,18 @@ describe('prompt layer — commands', () => {
     assert.deepEqual(offenders, [], 'state the rule and its reason instead of raising the volume');
   });
 });
+
+describe('prompt layer — agents', () => {
+  const agents = mdFiles('agents');
+
+  it('each agent description says GSD-Lite dispatches it and what it is not for', () => {
+    // Generic descriptions ("Systematic debugging with root cause analysis")
+    // route a user's ordinary debugging, review or research request here.
+    for (const file of agents) {
+      const description = frontmatterDescription(read(file));
+      assert.match(description, /GSD-Lite/, `${file} description does not say it belongs to GSD-Lite: ${description}`);
+      assert.match(description, /dispatched by the GSD orchestrator/, `${file} description does not say who dispatches it`);
+      assert.match(description, /\bNot for\b/, `${file} description does not say what it is not for: ${description}`);
+    }
+  });
+});
