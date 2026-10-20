@@ -4,7 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update } from '../src/tools/state/index.js';
-import { handleReviewerResult } from '../src/tools/orchestrator/index.js';
+import { handleReviewerResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
+import { MAX_PHASE_REVIEW_RETRY } from '../src/tools/orchestrator/helpers.js';
 
 function makeValidReviewerResult(overrides = {}) {
   return {
@@ -526,5 +527,87 @@ describe('handleReviewerResult', () => {
     const state = await read({ basePath: tempDir });
     assert.equal(state.workflow_mode, 'awaiting_user');
     assert.equal(state.current_review.stage, 'review_retry_exhausted');
+  });
+});
+
+describe('a phase review that leaves a target unreviewed', () => {
+  // selectRunnableTask returns trigger_review while any task in the phase is
+  // checkpointed. A reviewer that passed the phase without naming one of its
+  // targets was recorded as accepted with retry_count reset to 0, so the next
+  // resume triggered the same review, every round, with nothing to end it.
+  // Found for an L3 task; the level plays no part, so every reviewable level
+  // is driven through the same loop.
+  let tempDir;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'gsd-reviewer-omit-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  async function setupPhase(omittedLevel) {
+    await init({
+      project: 'reviewer-omit',
+      phases: [{ name: 'Core', tasks: [
+        { index: 1, name: 'Task A', level: 'L1' },
+        { index: 2, name: 'Task B', level: omittedLevel },
+      ] }],
+      basePath: tempDir,
+    });
+    for (const id of ['1.1', '1.2']) {
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'running' }] }] }, basePath: tempDir });
+      await update({ updates: { phases: [{ id: 1, todo: [{ id, lifecycle: 'checkpointed', checkpoint_commit: `c${id}` }] }] }, basePath: tempDir });
+    }
+  }
+
+  // One orchestrator round: resume until the reviewer is dispatched, then
+  // answer with a phase review that passes and names only `named`.
+  async function reviewRound(named) {
+    let dispatch = await resumeWorkflow({ basePath: tempDir });
+    if (dispatch.action === 'trigger_review') dispatch = await resumeWorkflow({ basePath: tempDir });
+    assert.equal(dispatch.action, 'dispatch_reviewer', `expected a reviewer dispatch, got ${JSON.stringify(dispatch)}`);
+    return handleReviewerResult({
+      result: makeValidReviewerResult({ scope: 'phase', scope_id: 1, review_level: 'L1-batch', accepted_tasks: named }),
+      basePath: tempDir,
+    });
+  }
+
+  for (const level of ['L1', 'L2', 'L3']) {
+    it(`ends at the retry limit when an ${level} target keeps being left out`, async () => {
+      await setupPhase(level);
+      const outcomes = [];
+      for (let round = 1; round <= MAX_PHASE_REVIEW_RETRY + 2; round++) {
+        const res = await reviewRound(round === 1 ? ['1.1'] : []);
+        outcomes.push(res.action);
+        const phase = (await read({ basePath: tempDir })).phases[0];
+        assert.notEqual(phase.phase_review.status, 'accepted', `round ${round}: a review that never named 1.2 was recorded as passed`);
+        assert.notEqual(phase.phase_handoff?.required_reviews_passed, true, `round ${round}: the handoff says reviews passed with 1.2 unreviewed`);
+        if (res.action === 'review_retry_exhausted') break;
+        assert.equal(res.action, 'review_incomplete', `round ${round}: ${JSON.stringify(res)}`);
+        assert.deepEqual(res.unreviewed_tasks, ['1.2']);
+      }
+      assert.equal(outcomes.at(-1), 'review_retry_exhausted', `the review loop did not end: ${outcomes.join(' → ')}`);
+      assert.equal(outcomes.length, MAX_PHASE_REVIEW_RETRY + 1, outcomes.join(' → '));
+
+      const state = await read({ basePath: tempDir });
+      assert.equal(state.workflow_mode, 'awaiting_user');
+      assert.equal(state.current_review.stage, 'review_retry_exhausted');
+      const lifecycle = Object.fromEntries(state.phases[0].todo.map((t) => [t.id, t.lifecycle]));
+      assert.deepEqual(lifecycle, { 1.1: 'accepted', 1.2: 'checkpointed' }, 'the task the review named was not accepted');
+    });
+  }
+
+  it('a later round that names the target completes the review and resets the count', async () => {
+    await setupPhase('L1');
+    const first = await reviewRound(['1.1']);
+    assert.equal(first.action, 'review_incomplete', JSON.stringify(first));
+    const second = await reviewRound(['1.2']);
+    assert.equal(second.action, 'review_accepted', JSON.stringify(second));
+    const phase = (await read({ basePath: tempDir })).phases[0];
+    assert.equal(phase.phase_review.status, 'accepted');
+    assert.equal(phase.phase_review.retry_count, 0);
+    assert.equal(phase.phase_handoff.required_reviews_passed, true);
   });
 });

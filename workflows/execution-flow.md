@@ -155,6 +155,7 @@
 | `complete_phase` | 调用 `phase-complete` MCP tool (参数见下方) → 自动推进下一 phase |
 | `rework_required` | 有 task 需要返工 → 继续循环 (resume 会自动选择返工 task) |
 | `review_accepted` | 审查通过 → 继续循环 |
+| `review_incomplete` | 阶段审查没有对 `unreviewed_tasks` 里的 task 给出结论，这一轮不算通过 (计入重试次数)。继续循环：resume 会重新触发阶段审查 |
 | `continue_execution` | L0/auto-accept 后 → 继续循环 |
 | `replan_required` | 计划文件被修改。**自动处理:** 确认计划无误后，调用 `state-update({updates: {workflow_mode: "executing_task"}})` → 继续循环 |
 | `reconcile_workspace` | Git HEAD 不一致。检查变更，调用 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: "executing_task"}})` → 继续循环 |
@@ -162,7 +163,7 @@
 | `trigger_review` | 所有 task 已 checkpointed，触发 phase review → 继续循环 (resume 会自动 dispatch_reviewer) |
 | `phase_failed` | debugger 报告架构问题，phase 标记 failed。向用户展示失败信息 |
 | `task_failed` | debugger 报告 task 不可修复 (非架构问题)，task 标记 failed。继续循环 (如有其他可运行 task) 或向用户报告 |
-| `review_retry_exhausted` | phase 审查返工次数超限。向用户展示问题，等待用户干预 |
+| `review_retry_exhausted` | phase 审查返工或漏审的轮数超限 (漏审时带 `unreviewed_tasks`)。向用户展示问题，等待用户干预 |
 | `research_stored` | researcher 结果已存储。继续循环 |
 | `awaiting_user` | task 被阻塞或方向漂移，需要用户输入。展示 blockers 列表，等待用户解除 |
 | `awaiting_human_confirmation` | L3 任务审查通过但需人工确认。展示 `security_implications` + `pending_tasks`，等待用户决定;确认 → `orchestrator-resume confirm_review:'confirm'`(accepted),拒绝 → `confirm_review:'reject'`(返工) |

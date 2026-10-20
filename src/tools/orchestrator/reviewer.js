@@ -3,6 +3,7 @@ import { validateReviewerResult } from '../../schema.js';
 import {
   MAX_PHASE_REVIEW_RETRY,
   getCurrentPhase,
+  getReviewTargets,
   getTaskById,
   persist,
 } from './helpers.js';
@@ -194,12 +195,24 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     }
   }
 
+  // A phase review that passes without naming every target leaves those tasks
+  // checkpointed, and selectRunnableTask triggers the same review on the next
+  // resume. It used to be recorded as accepted with retry_count reset to 0, so
+  // a reviewer that kept leaving a task out looped forever. Such a round is
+  // incomplete: the named tasks are handled, nothing records a pass, and it
+  // takes a retry, so the retry limit ends it like a rework loop.
+  const namedInResult = new Set([...(result.accepted_tasks || []), ...(result.rework_tasks || [])]);
+  const unreviewedTasks = !needsRework && result.scope === 'phase'
+    ? getReviewTargets(phase, 'phase').map((task) => task.id).filter((id) => !namedInResult.has(id))
+    : [];
+  const incomplete = unreviewedTasks.length > 0;
+
   // Compute retry count once for both exhaustion check and state update
   const currentRetryCount = phase.phase_review?.retry_count || 0;
-  const nextRetryCount = needsRework ? currentRetryCount + 1 : 0;
+  const nextRetryCount = needsRework || incomplete ? currentRetryCount + 1 : 0;
 
   // Phase review retry limit: prevent infinite reviewing↔active cycles
-  if (needsRework && nextRetryCount > MAX_PHASE_REVIEW_RETRY) {
+  if ((needsRework || incomplete) && nextRetryCount > MAX_PHASE_REVIEW_RETRY) {
     const persistError = await persist(basePath, {
       workflow_mode: 'awaiting_user',
       current_task: null,
@@ -212,7 +225,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
       phases: [{
         id: phase.id,
         lifecycle: phase.lifecycle === 'reviewing' ? 'active' : phase.lifecycle,
-        phase_review: { status: 'rework_required', retry_count: nextRetryCount },
+        phase_review: { status: needsRework ? 'rework_required' : 'pending', retry_count: nextRetryCount },
       }],
     }, { expectedVersion });
     if (persistError) return persistError;
@@ -223,11 +236,16 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
       workflow_mode: 'awaiting_user',
       phase_id: phase.id,
       retry_count: nextRetryCount,
-      message: `Phase ${phase.id} review failed ${nextRetryCount} times (limit: ${MAX_PHASE_REVIEW_RETRY}). User intervention required.`,
+      ...(incomplete ? { unreviewed_tasks: unreviewedTasks } : {}),
+      message: incomplete
+        ? `Phase ${phase.id} review ended ${nextRetryCount} rounds without a result for ${unreviewedTasks.join(', ')} (limit: ${MAX_PHASE_REVIEW_RETRY}). User intervention required.`
+        : `Phase ${phase.id} review failed ${nextRetryCount} times (limit: ${MAX_PHASE_REVIEW_RETRY}). User intervention required.`,
     };
   }
 
-  const reviewStatus = needsRework ? 'rework_required' : 'accepted';
+  let reviewStatus = 'accepted';
+  if (needsRework) reviewStatus = 'rework_required';
+  else if (incomplete) reviewStatus = 'pending';
 
   // done is auto-recomputed by update() — no manual tracking needed
   const phaseUpdates = {
@@ -244,7 +262,7 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
     phaseUpdates.lifecycle = 'active';
   }
 
-  if (!needsRework && result.scope === 'phase') {
+  if (!needsRework && !incomplete && result.scope === 'phase') {
     phaseUpdates.phase_handoff = { required_reviews_passed: true };
   }
 
@@ -267,12 +285,17 @@ export async function handleReviewerResult({ result, basePath = process.cwd() } 
   }, { _propagation_tasks: propagationTasks, expectedVersion });
   if (persistError) return persistError;
 
+  let action = 'review_accepted';
+  if (needsRework) action = 'rework_required';
+  else if (incomplete) action = 'review_incomplete';
+
   return {
     success: true,
-    action: needsRework ? 'rework_required' : 'review_accepted',
+    action,
     workflow_mode: workflowMode,
     phase_id: phase.id,
     review_status: reviewStatus,
+    ...(incomplete ? { unreviewed_tasks: unreviewedTasks } : {}),
     accepted_count: dedupedPatches.filter(p => p.lifecycle === 'accepted').length,
     rework_count: dedupedPatches.filter(p => p.lifecycle === 'needs_revalidation').length,
     critical_count: result.critical_issues?.length || 0,

@@ -223,7 +223,7 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
   1. 调用 MCP tool `orchestrator-resume` 获取 action
   2. 根据 action 分派:
 
-     ▸ 各非终止 action 的具体处理见 `<docs.workflows>/execution-flow.md` (路径由 `health` 工具的 `docs.workflows` 给出) STEP 11 的**权威 Action 处理表**(单一真相源，覆盖编排器全部可返回 action:dispatch_executor / dispatch_reviewer / dispatch_debugger / dispatch_researcher / retry_executor / complete_phase / trigger_review / rework_required / review_accepted / continue_execution / replan_required / reconcile_workspace / rollback_to_dirty_phase / research_stored);9 步循环语义见 `<docs.references>/execution-loop.md` (路径由 `health` 工具的 `docs.references` 给出)。
+     ▸ 各非终止 action 的具体处理见 `<docs.workflows>/execution-flow.md` (路径由 `health` 工具的 `docs.workflows` 给出) STEP 11 的**权威 Action 处理表**(单一真相源，覆盖编排器全部可返回 action:dispatch_executor / dispatch_reviewer / dispatch_debugger / dispatch_researcher / retry_executor / complete_phase / trigger_review / rework_required / review_accepted / review_incomplete / continue_execution / replan_required / reconcile_workspace / rollback_to_dirty_phase / research_stored);9 步循环语义见 `<docs.references>/execution-loop.md` (路径由 `health` 工具的 `docs.references` 给出)。
        派发子代理统一用 Agent tool;subagent_type 取 `gsd:executor` / `gsd:reviewer` / `gsd:researcher` / `gsd:debugger`(插件安装),npx/手动安装下 agent 注册为无前缀的 `executor` / `reviewer` / `researcher` / `debugger` — 以当前会话 agent 列表中实际存在的名字为准+ 对应 `orchestrator-handle-*-result` 回传;`complete_phase` 先 Bash 跑 lint/typecheck/test 再带 `verification`+`direction_ok` 调 `phase-complete`(见处理表)。每步完成回到步骤 1。
 
   3. 终止条件 — 遇到以下 action 时退出循环 (与处理表一致):
@@ -239,7 +239,7 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
                           phase-complete({direction_ok: true})
      phase_failed      → 展示架构失败信息，停止
      task_failed       → 展示 task 失败信息;有其他可运行 task 则继续，否则向用户报告
-     review_retry_exhausted → phase 审查返工超限，展示问题，等待用户干预
+     review_retry_exhausted → phase 审查返工或漏审超限，展示问题 (漏审时含 `unreviewed_tasks`)，等待用户干预
      noop (completed)  → 展示完成报告，停止
      await_recovery_decision (failed) → 展示失败信息和 recovery_options，等待用户选择;
                           用户决定后 → orchestrator-resume recovery:'retry_failed' |

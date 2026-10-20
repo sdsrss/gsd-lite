@@ -350,8 +350,8 @@ describe('prompt layer — agents', () => {
     // handleReviewerResult holds an L3 task for human confirmation only when it
     // arrives in accepted_tasks (src/tools/orchestrator/reviewer.js). A reviewer
     // told the task "enters awaiting_user instead of accepted" may leave it out.
-    // That does not get it past the hold — the level-driven gate re-raises it at
-    // the next phase review — but it costs a whole extra review round.
+    // That does not get it past the hold: the round that omits it does not count
+    // as a pass, takes a retry, and the next phase review raises it again.
     assert.match(read('src/tools/orchestrator/reviewer.js'),
       /result\.accepted_tasks \|\| \[\]\)\.filter\(\(taskId\) => \{[\s\S]{0,200}task\.level === 'L3'/,
       'premise: the L3 hold no longer filters accepted_tasks');
@@ -540,6 +540,33 @@ describe('prompt layer — planning-time level rules', () => {
   });
 });
 
+describe('prompt layer — every action the server returns has a row in the action table', () => {
+  // commands/resume.md calls execution-flow.md's STEP 11 table the single source
+  // of truth for what each action means; an action without a row leaves the
+  // orchestrator to guess. Literals are read in both shapes the source uses,
+  // `action: 'x'` (ternaries included) and `action = 'x'`.
+  // recovery_applied never reaches the orchestrator: resumeWorkflow replaces
+  // applyRecovery's result with the resumed workflow's (orchestrator/resume.js).
+  const INTERNAL = new Set(['recovery_applied']);
+
+  it('each action literal in src/ has a row', () => {
+    const files = readdirSync(join(repoRoot, 'src'), { recursive: true }).filter((f) => f.endsWith('.js')).map((f) => `src/${f}`);
+    const actions = new Set();
+    for (const file of files) {
+      for (const m of read(file).matchAll(/\baction(?::|\s*=)\s*(?:[^,\n;]*\?\s*)?'(\w+)'(?:\s*:\s*'(\w+)')?/g)) {
+        actions.add(m[1]);
+        if (m[2]) actions.add(m[2]);
+      }
+    }
+    for (const premise of ['dispatch_executor', 'review_accepted', 'rework_required', 'direction_drift']) {
+      assert.ok(actions.has(premise), `premise: the extraction misses ${premise}; found ${[...actions]}`);
+    }
+    const rows = new Set([...read('workflows/execution-flow.md').matchAll(/^\| `(\w+)` \|/gm)].map((m) => m[1]));
+    const missing = [...actions].filter((a) => !rows.has(a) && !INTERNAL.has(a));
+    assert.deepEqual(missing, [], 'execution-flow.md STEP 11 has no row for these actions');
+  });
+});
+
 describe('prompt layer — the instruction sentences', () => {
   // One home for the instructions the fixes in this file introduced — both
   // review rounds' repairs included; the first version of this list covered
@@ -572,7 +599,9 @@ describe('prompt layer — the instruction sentences', () => {
     ['commands/resume.md', '**`orchestrator-resume` 响应里的 `review_targets` 原样转发** —— 不要自己从 state 里收集各 task 的'],
     ['workflows/review-cycle.md', 'reviewer 不重新判定，按每个审查对象带的 `level` 审查'],
     ['references/review-classification.md', '`review_required: false` 的 L1/L2 task 同样走此路径；L3 不受它影响'],
-    ['agents/reviewer.md', '一直漏掉就一直绕圈，到不了人工确认'],
+    // handleReviewerResult counts a phase review that leaves a target out as an
+    // incomplete round; it used to loop forever.
+    ['agents/reviewer.md', '漏掉任何一个，这一轮就不算审查通过：列出的 task 照常处理，服务端记一次重试，下一轮再审漏掉的；重试次数用完就停下来交给用户'],
     // The refresh path: with the researcher no longer writing, a step that only
     // said "更新 state.json" wrote no documents (second pre-tag review).
     ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
