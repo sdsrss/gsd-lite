@@ -489,11 +489,20 @@ describe('prompt layer — research found at planning time reaches the server', 
     const flow = read('workflows/execution-flow.md');
     const step5 = section(flow, '## STEP 5');
     assert.doesNotMatch(step5, /研究输出写入/, 'STEP 5 still says the output is written there, before any state exists');
-    const step10 = flow.slice(flow.indexOf('## STEP 10'));
+    // STEP 10 only. An unbounded slice ran on into STEP 11's action table,
+    // whose dispatch_researcher row names the same tool, so deleting STEP 10's
+    // hand-off left this green (found by the second pre-tag review).
+    const step10 = section(flow, '## STEP 10');
+    assert.ok(!step10.includes('## STEP 11'), 'premise: the STEP 10 slice runs past STEP 10');
     const initAt = step10.indexOf('state-init(');
     const handAt = step10.indexOf('orchestrator-handle-researcher-result');
     assert.ok(initAt !== -1, 'premise: STEP 10 no longer calls state-init');
     assert.ok(handAt > initAt, 'STEP 10 does not hand the held research to orchestrator-handle-researcher-result after state-init');
+    // An affirmative call; STEP 5 names the tool to say it is NOT called yet.
+    assert.doesNotMatch(step5, /(?<!不)调用 `orchestrator-handle-researcher-result`/, 'STEP 5 calls the handler before state-init');
+    // STEP 8 reviews the plan against the pitfalls before anything is written,
+    // so it has to read the held artifact, not .gsd/research/.
+    assert.doesNotMatch(section(flow, '## STEP 8'), /research\/PITFALLS\.md/, 'STEP 8 reads a PITFALLS.md that is not written until STEP 10');
   });
 });
 
@@ -553,6 +562,10 @@ describe('prompt layer — the instruction sentences', () => {
     ['agents/debugger.md', '读取运行时输出和已有日志来验证假设；不修改源码'],
     ['agents/researcher.md', '你不直接写这些文件'],
     ['commands/resume.md', '**`orchestrator-resume` 响应里的 `review_targets` 原样转发** —— 不要自己从 state 里收集各 task 的'],
+    ['workflows/execution-flow.md', '这一步不写任何文件、也不调用 `orchestrator-handle-researcher-result`'],
+    ['workflows/execution-flow.md', '`state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`'],
+    ['workflows/execution-flow.md', '不要自己写这些文件。返回错误时把错误展示给用户并停下，修正后重新调用，也不要改为自己写文件'],
+    ['workflows/execution-flow.md', 'STEP 5 保留的 `artifacts["PITFALLS.md"]` 中的每个陷阱'],
   ];
   for (const [file, sentence] of INSTRUCTIONS) {
     it(`${file} says: ${sentence.slice(0, 40)}…`, () => {
