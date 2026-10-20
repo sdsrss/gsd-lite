@@ -7,7 +7,7 @@
 | L0 | 无运行时语义变化 (docs/config/style；CI/CD 与部署配置除外) | checkpoint 后直接 accepted |
 | L1 | 普通编码任务 (默认) | phase 结束后批量审查 |
 | L2 | 高风险 (auth/payment/public API/DB migration/CI/CD 配置/部署配置) | checkpoint 后立即独立审查 |
-| L3 | 最高风险 (auth/payment/security architecture/涉及生产环境的变更) | checkpoint 后立即独立审查 + 人工确认 |
+| L3 | 最高风险 (安全架构/破坏性 schema/涉及生产环境的变更) | checkpoint 后立即独立审查 + 人工确认 |
 
 迁移、CI/CD、部署配置在 executor 那里免写失败测试，但免 TDD 不降低审查级别：它们至少是 L2，且 `review_required` 保持 `true` —— 设为 `false` 的 L1/L2 task 会跳过审查直接 accepted。
 
@@ -23,7 +23,7 @@
 /\b(auth|payment|security|public.?api|login|token|credential|session|oauth)\b/i
 ```
 
-规则: L2/L3 只升不降。L1 在满足条件时可降为 L0:
+规则: L2/L3 不会被调整；L0/L1 可升为 L2，L1 在满足条件时可降为 L0:
 - `confidence: 'high'` + `contract_changed: false`
 - 有 evidence 且无测试失败
 - 此时自审即可，无需独立审查

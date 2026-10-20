@@ -75,9 +75,11 @@ executor 上下文传递协议 (orchestrator → executor):
 ├── L0: checkpoint commit 后可直接 accepted (无需 reviewer)
 ├── L1: phase 结束后批量 reviewer 审查
 │       → 派发 reviewer 子代理，scope = phase
-└── L2: checkpoint commit 后立即独立审查
-        → 派发 reviewer 子代理，scope = task
-        → 未 accepted 前不释放其下游依赖
+├── L2: checkpoint commit 后立即独立审查
+│       → 派发 reviewer 子代理，scope = task
+│       → 未 accepted 前不释放其下游依赖
+└── L3: 同 L2，审查通过后不直接 accepted，进入 awaiting_user 等人工确认
+        → 用户确认 (confirm_review: confirm) 才 accepted，拒绝则返工
 ```
 
 **审查级别运行时重分类:**

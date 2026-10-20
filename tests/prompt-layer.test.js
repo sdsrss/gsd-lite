@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
 import { LOCK_STALE_MS } from '../src/utils.js';
+import { TASK_LEVELS } from '../src/schema.js';
 import { init, update } from '../src/tools/state/index.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
@@ -502,6 +503,9 @@ describe('prompt layer — planning-time level rules', () => {
         assert.match(at('L2'), word, `${file} L2 does not name ${word}`);
       }
       assert.match(at('L3'), /生产|production/i, `${file} L3 does not name production`);
+      // auth/payment are L2 in every copy; naming them at L3 too put one task at
+      // two levels depending on which line the planner read.
+      assert.doesNotMatch(at('L3'), /auth|payment|认证|支付/i, `${file} L3 also names auth/payment, which its L2 line holds: ${at('L3')}`);
       if (/CI\/CD/.test(at('L0'))) {
         assert.match(at('L0'), /except|不算|除外/, `${file} L0 lists CI/CD as L0 work again: ${at('L0')}`);
       }
@@ -518,6 +522,11 @@ describe('prompt layer — planning-time level rules', () => {
     const to = (level) => rules.find((l) => l.trim().endsWith(`→ ${level}`)) ?? '';
     for (const word of [/迁移|migration/i, /CI\/CD/, /部署|deploy/i]) assert.match(to('L2'), word, `review-cycle L2 does not name ${word}`);
     assert.match(to('L3'), /生产|production/i, 'review-cycle L3 does not name production');
+    // The same file's L3 section opens with its own scope line; it said
+    // auth/payment while the rules below put them at L2.
+    const scope = section(read('workflows/review-cycle.md'), '### L3').split('\n').find((l) => l.includes('适用范围')) ?? '';
+    assert.match(scope, /生产/, `premise: review-cycle's L3 scope line not found: ${scope}`);
+    assert.doesNotMatch(`${to('L3')}\n${scope}`, /auth|payment|认证|支付/i, `review-cycle L3 also names auth/payment: ${scope}`);
     assert.match(to('L0'), /除外/, 'review-cycle L0 does not exclude CI/CD and deployment config');
   });
 
@@ -537,6 +546,37 @@ describe('prompt layer — planning-time level rules', () => {
     const bullet = section(read('workflows/execution-flow.md'), '## STEP 7').split('\n').find((l) => l.includes('`review_required`'));
     assert.ok(bullet?.includes('迁移、CI/CD、部署配置') && bullet.includes('必须保持 `true`'),
       `STEP 7 does not say those tasks keep review_required: true:\n  ${bullet}`);
+  });
+});
+
+describe('prompt layer — what the levels do after planning', () => {
+  it('no prompt says L2/L3 "只升不降": nothing raises them and the code lowers L1', () => {
+    // reclassifyReviewLevel returns L2 and L3 unchanged, raises L0/L1 to L2 and
+    // lowers a high-confidence L1 to L0. "L2/L3 只升不降" told the reviewer an
+    // L2 task might have become L3.
+    const reclassify = read('src/tools/state/logic.js').split('export function reclassifyReviewLevel')[1]?.split('\nexport ')[0] ?? '';
+    assert.match(reclassify, /return 'L2'/, 'premise: reclassifyReviewLevel not found');
+    assert.doesNotMatch(reclassify, /return 'L3'/, 'premise: reclassifyReviewLevel raises to L3 now — update this gate');
+    const offenders = [...promptFiles, 'README.md'].filter((f) => read(f).includes('只升不降'));
+    assert.deepEqual(offenders, []);
+  });
+
+  it('the execution loop names every level the schema has', () => {
+    const tiers = section(read('references/execution-loop.md'), '### 11.5');
+    const missing = TASK_LEVELS.filter((level) => !tiers.includes(`${level}:`));
+    assert.deepEqual(missing, [], `references/execution-loop.md 11.5 does not say what happens to ${missing.join(', ')}`);
+  });
+
+  it('a command that names the state-init step names the step that calls it', () => {
+    // start.md said "STEP 3 的 `state-init`"; STEP 3 asks open questions.
+    const flow = read('workflows/execution-flow.md');
+    const steps = flow.split(/^(?=## STEP \d+)/m).filter((s) => s.startsWith('## STEP'));
+    const calling = steps.filter((s) => s.includes('state-init(')).map((s) => s.match(/^## STEP (\d+)/)[1]);
+    assert.equal(calling.length, 1, `premise: expected one execution-flow step to call state-init, found ${calling}`);
+    const refs = mdFiles('commands').flatMap((f) => [...read(f).matchAll(/STEP (\d+) 的 `state-init`/g)].map((m) => [f, m[1]]));
+    assert.ok(refs.length >= 1, 'premise: no command names the state-init step any more');
+    const wrong = refs.filter(([, n]) => n !== calling[0]).map(([f, n]) => `${f}: STEP ${n}`);
+    assert.deepEqual(wrong, [], `state-init is called in STEP ${calling[0]}`);
   });
 });
 
