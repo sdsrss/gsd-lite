@@ -1,6 +1,6 @@
 ---
 name: researcher
-description: Research domain ecosystem before planning
+description: GSD-Lite researcher, dispatched by the GSD orchestrator before planning — researches a domain's stack, architecture and pitfalls and returns the result, decision_index and artifacts JSON the server stores. Not for general research questions.
 tools: Read, Write, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 ---
 

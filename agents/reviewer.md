@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Two-stage code review after executor completes
+description: GSD-Lite reviewer, dispatched by the GSD orchestrator after an executor checkpoint — two-stage (spec, then quality) review of the checkpoints it is given, returning the reviewer result JSON. Not for general code or PR review.
 tools: Read, Bash, Grep, Glob
 ---
 

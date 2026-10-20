@@ -1,6 +1,6 @@
 ---
 name: debugger
-description: Systematic debugging with root cause analysis
+description: GSD-Lite debugger, dispatched by the GSD orchestrator after repeated executor failures on one task — finds the root cause and returns the debugger result JSON (root_cause, fix_direction) without editing code. Not for general debugging outside a GSD project.
 tools: Read, Bash, Grep, Glob
 ---
 
