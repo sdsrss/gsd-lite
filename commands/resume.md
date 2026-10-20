@@ -76,7 +76,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
     路径须落在项目内），因为 reviewer 会把它们拼进 `git diff` 命令和文件读取，而 `.gsd/`
     可以随仓库提交。自己取原始值等于绕开这道校验。
   - `review_target` 里若带 `checkpoint_commit_rejected` / `files_changed_rejected`，一并转发
-  - 当前审查阶段 (spec / quality)
+  - 响应里的 `review_scope` / `phase_id` / `current_review` 一并转发 (审查阶段 spec / quality 在 `current_review.stage`；reviewer 靠 `phase_id` 找 task 规格)
 - 审查完成后恢复正常调度
 
 ---
@@ -89,6 +89,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
     `checkpoint_commit` / `files_changed`。理由同 `reviewing_task`：服务端已对每个审查对象做了同样的形状校验，
     自己取原始值等于绕开这道校验。
   - 审查对象里若带 `checkpoint_commit_rejected` / `files_changed_rejected`，一并转发
+  - 响应里的 `review_scope` / `phase_id` / `current_review` 一并转发 (reviewer 靠 `phase_id` 找 task 规格)
 - 审查完成后:
   - 全部通过 → phase handoff gate 校验
   - 有 Critical → 标记返工 task + 失效传播 → 重新派发 executor
