@@ -441,9 +441,13 @@ describe('prompt layer — agents', () => {
     for (const file of [...mdFiles('commands'), ...mdFiles('workflows')]) {
       read(file).split('\n').forEach((line, i) => {
         // "不要" exempts a line only when it negates the read itself: "不要忘了先从
-        // state 读取 checkpoint_commit" is an instruction to read. Any read
-        // counts, from state or not: with 读取 off this list, "读取该 task 的
-        // `checkpoint_commit`…一并传给 reviewer" passed (third pre-tag review).
+        // state 读取 checkpoint_commit" is an instruction to read. 读 counts
+        // as well as 收集/加载, from state or not: with 读取 off this list,
+        // "读取该 task 的 `checkpoint_commit`…一并传给 reviewer" passed (third
+        // pre-tag review). A word list on one line: other verbs (获取, 取出), a
+        // verb after `checkpoint` or across a line break, and Checkpoint
+        // capitalised all pass, and a negation other than 不要 still reads as
+        // gathering (fourth pre-tag review).
         const gathers = /(收集|加载|读)[^\n]*checkpoint/.test(line);
         const negated = /不要(自己)?(从 ?state ?里?)?(读|收集|加载)/.test(line);
         if (gathers && !negated) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
@@ -537,11 +541,14 @@ describe('prompt layer — the instruction sentences', () => {
   // review rounds' repairs included; the first version of this list covered
   // only the first round's, while its commit message said "every". Each entry
   // was checked against a mutation that kept a word-level gate green.
-  // Red: an edit inside the sentence; a word joined to either end ("不必等
-  // `state-init` 成功后…", "你不直接写这些文件之外的文件"); a revoking note
-  // in the same clause ("（以上这条已废止，不要照做）"). Those three passed
-  // when this checked only that the sentence was present (third pre-tag
-  // review). A contradicting sentence elsewhere is still invisible here.
+  // Red: an edit inside the sentence; a word joined straight onto either end
+  // ("不必等 `x`…", "…这些文件之外的文件"); a note in the same clause using one
+  // of the REVOKED words ("（以上这条已废止，不要照做）"). Those passed when
+  // this checked only that the sentence was present (third pre-tag review).
+  // Still green (fourth pre-tag review): a negation set off by punctuation
+  // ("禁止：…", "不要（…）"), a revocation in other words ("现在不用了",
+  // "已经取消", "never mind") or on the next line, an exception tacked on
+  // ("——除非…"), and any contradicting sentence elsewhere.
   const collapse = (t) => t.replace(/\s+/g, ' ');
   // Same length as collapse(t), so indexes carry over, but a whitespace run
   // with a line break in it stays a break: a paragraph end is a clause end.
