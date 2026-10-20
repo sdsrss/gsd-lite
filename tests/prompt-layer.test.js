@@ -165,4 +165,11 @@ describe('prompt layer — commands', () => {
     assert.match(rules, /`state-update`/, 'stop.md rules do not route the write through state-update');
     assert.doesNotMatch(rules, /\.tmp|rename/, 'stop.md tells the orchestrator to do the atomic write itself');
   });
+
+  it('names no tool another harness has and Claude Code does not (token check)', () => {
+    // `codebase-retrieval` is another harness's tool. Under Claude Code the
+    // instruction names nothing callable, and the step is skipped or guessed.
+    const offenders = promptFiles.filter((f) => read(f).includes('codebase-retrieval'));
+    assert.deepEqual(offenders, []);
+  });
 });
