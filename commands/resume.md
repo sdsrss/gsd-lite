@@ -262,7 +262,7 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
 
 </process>
 
-<EXTREMELY-IMPORTANT>
+<orchestrator_rules>
 ## 恢复纪律
 - 前置校验由服务端 `orchestrator-resume` 完成，编排器不重做、不自行覆写 workflow_mode
 - 服务端多个条件同时命中时，首个生效，其余在 `pending_issues` 里
@@ -270,4 +270,4 @@ STEP 3 完成初次恢复后，进入自动执行循环。这是编排器的核�
 - 只有编排器写 state.json，子代理不直接写
 - 上下文 < 35% → 保存状态 + workflow_mode = awaiting_clear + 停止执行
 - **进入自动执行循环后，不要在循环中间停下来等用户 — 让编排器驱动**
-</EXTREMELY-IMPORTANT>
+</orchestrator_rules>
