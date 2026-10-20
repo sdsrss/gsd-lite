@@ -209,6 +209,27 @@ describe('prompt layer — agents', () => {
     }
   });
 
+  // Grows as each agent is rewritten; the end state is every file in agents/.
+  const RESTATED = ['agents/debugger.md'];
+  it('no agent wraps a rule in a pressure block or states it as an all-caps iron law', () => {
+    for (const file of RESTATED) {
+      const src = read(file);
+      assert.doesNotMatch(src, /EXTREMELY-IMPORTANT/, `${file} raises the volume instead of giving the reason`);
+      assert.doesNotMatch(src, /\bNO [A-Z]+(?: [A-Z]+)* WITHOUT\b/, `${file} carries an all-caps iron law`);
+    }
+  });
+
+  it('the debugger states its root-cause rule once, with its reason', () => {
+    // It was written four times — iron law, red flags, a HARD-GATE, the phase
+    // heading — and never said why.
+    const src = read('agents/debugger.md');
+    assert.doesNotMatch(src, /root-cause-before-fix/, 'the HARD-GATE restating the rule is back');
+    const principles = tagBlock(src, 'principles');
+    assert.match(principles, /`fix_direction`/, 'the rule no longer names what it gates');
+    assert.match(principles, /重试/, 'the rule no longer says what an unfounded direction costs');
+    assert.match(principles, /`architecture_concern: true`/, 'the 2+ failed directions case is gone');
+  });
+
   it('the reviewer takes the level from the task and reports it in the vocabulary the server accepts', () => {
     const schema = read('src/schema.js');
     const accepted = schema.match(/if \(!\[([^\]]+)\]\.includes\(r\.review_level\)\)/)?.[1];
