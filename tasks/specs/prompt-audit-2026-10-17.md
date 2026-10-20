@@ -1,5 +1,5 @@
 # 提示词审计 2026-10-17 的修复
-状态：受阻（第四次复审在 8bb501e 上又报 BLOCKER 并已复现；修复已超出提示词审计的范围，等用户决定发版方案）
+状态：进行中（用户选择拆开发版：A12 推迟到研究刷新重设计；回退已完成，等只看回退的复审，通过后发版）
 
 ## 背景与目标
 
@@ -16,7 +16,8 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 
 - 做：`commands/*.md`、`agents/*.md`、`workflows/*.md`、`references/*.md`、`README.md` 中审计点名的文字；
   钉住这些文字的测试；为这些缺陷类新增的提示词层门禁测试；CHANGELOG 与版本号。
-- 不做：`~/.claude/` 下的已安装副本（会被 24 小时一次的自动更新覆盖）；服务端行为（例外：研究刷新的死循环，见决策与进展）；
+- 不做：`~/.claude/` 下的已安装副本（会被 24 小时一次的自动更新覆盖）；服务端行为；
+  A12（researcher 不自写 `.gsd/research/`）—— 推迟，见决策与进展；
   researcher 的 `tools` 列表（见决策与进展）。
 
 ## 验收标准
@@ -30,7 +31,7 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
 - [x] AC6：reviewer 按 task 已有 level 审查，`review_level` 取值与 `src/schema.js` 一致，L3 流程与 `reviewer.js` 一致
 - [x] AC7：四个代理的 description 写明由 GSD-Lite 编排器派发、返回什么、不用于什么
 - [x] AC8：commands/agents 里没有 `<EXTREMELY-IMPORTANT>`；debugger/executor/reviewer 的重复施压段并成带理由的规则
-- [x] AC9：debugger 不再写"添加日志"；researcher 不自己写 `.gsd/research/`
+- [x] AC9：debugger 不再写"添加日志"（researcher 一半随 A12 推迟，见决策与进展）
 - [x] AC10：命令 description 不再枚举触发短语
 - [x] AC11：reviewer 的输入协议与 `orchestrator-resume` 实际载荷一致
 - [x] AC12：示例里的 `expires_at` 不再是会过期的字面日期
@@ -144,19 +145,33 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   - MEDIUM：researcher 返回的单个决策 `expires_at` 早于现在时服务端照存，仍会循环；`workflows/research.md:30` 仍写"已有研究且未过期 → 跳过研究"，
     与 1e1700c 的 STEP 5 相反；CHANGELOG 与 3dc41eb/1e1700c 的说法超出代码（"A research refresh now ends"、"only a restarted project
     has those files" —— README 写了可以提交 `.gsd/research/`）；3dc41eb 的门禁只覆盖固定词表（复审 22 个变异 12 个保持绿，5 个正确写法被误判红）。
+- 2026-10-20 问过用户，选"拆开发版"：0.16.0 不带 A12，规划阶段的研究回到 0.15 的做法（researcher 自己写 `.gsd/research/`，
+  state 不记），刷新路径和 0.15 一样走不到；其余 12 条、两处冲突、hook 文案、依赖安全修复照发。
+  - da66046：撤回 e3d5424（服务端代码回到 4ae8da3，`git diff 4ae8da3 HEAD -- src/` 为空）。
+  - c165f66：researcher.md 的 research_output / data_not_instructions、execution-flow.md STEP 5 / STEP 8 第 5 项 / STEP 10 第 4 项
+    回到 v0.15.0 原文；保留 researcher 的 description（按回退后的行为改写）、`expires_at` 占位符和 resume.md 的刷新步骤
+    （描述的是服务端已有的 handler，两种情况下都走不到）。钉住 A12 的断言随之删除；新门禁在 STEP 5–10 再次提到 handler 时变红
+    （在父提交上 1/53 失败），重设计时一并删掉。CHANGELOG 去掉两条研究相关条目。
+  - a7454e4：门禁注释改为写明仍会漏过的写法（第四次复审的 22 个变异中 12 个保持绿）。
+  - 第四次复审的 MEDIUM 处理：research.md:30 的矛盾随 STEP 5 回退消失；过去的单个决策 `expires_at` 与 HIGH 一起归入重设计；
+    CHANGELOG 与提交说明的过度表述：CHANGELOG 已删掉相关条目，已推送的提交说明不改写，测试注释已更正。
 - 本次不改、留给后续的（审计未点名、属于代码改动，或超出本次范围）：
-  - researcher 的 `tools` 仍含 `Write`（去掉它能从机制上保证不自写）。
+  - 研究刷新重设计（含 A12）。起点：e3d5424（规则 1/3 与 TC8）、1e1700c（重新开始时的分析）、本 spec 第三、四次复审记录。要解决：
+    - 已验收 phase 里的 task 被刷新判为 `needs_revalidation` 时 phase 不重开，`validateState` 拒收（第四次复审 BLOCKER）；
+    - 规则 3 保留的条目每次刷新都再触发（HIGH）；
+    - researcher 返回早于现在的单个决策或整体 `expires_at` 时服务端照存，仍会循环；
+    - `storeResearch` 校验失败前已覆盖四个文档并删掉提交标记（logic.js:581/633-642）；
+    - 规划研究在 STEP 10 之前只在上下文里；`.gsd/research/` 可以随仓库提交（README:355），所以"已有文件"不等于重新开始；
+    - researcher 不知道自己处在新研究 / 增量 / 刷新哪种模式；resume.md 的刷新步骤没有 handler 报错时的处理；
+    - 落地后删掉 `tests/prompt-layer.test.js` 的 "planning research stays out of state" 门禁，再做 A12。
   - `fix_attempts` 没有代码递增，`architecture_concern` 也不由服务端强制，"第 3 次失败 → phase 失败"只靠提示词。
   - reviewer 反复漏掉通过的 L3 task 时会无限绕圈（审查记为 accepted、retry_count 每轮清零）。
-  - STEP 5 保留的研究只在上下文里，STEP 10 之前 `/clear` 或压缩会丢。
-  - researcher 返回早于现在的 `result.expires_at` 时服务端照存（`validateResearcherResult` 只查非空），下一次 resume 又派发
-    researcher，是同一类死循环；触发条件是 researcher 不按提示词计算 TTL。服务端拒收过去的时间会牵动一批用固定日期的测试，未做。
   - `npm audit` 新出现 1 个 moderate（hono GHSA-5r4p-p66f-jhc7，经 SDK 引入）；门禁是 high，不阻塞。
-  - 第三次复审的 LOW 未改：几处修复没有测试钉住（STEP 10 核对项、resume.md:167 等）；researcher 自写门禁漏"写到"/"由你写入"；
+  - 第三、四次复审的 LOW 未改：几处修复没有测试钉住（resume.md:167 等）；门禁误判正确写法（"编排器不读取 `checkpoint_commit`"、
+    "不要忽略…" 判红）；
     description 门禁 `/Triggers?:/` 放过 "Triggered whenever…"；`prompt-layer.test.js` 的级别代码块只认裸 ``` 围栏；
     reviewer.md:59 "(L2/L3 只升不降)" 与 L0 可升 L2 的代码不完全对应；review-cycle.md:38 把 auth/payment 放在 L3，
     同文件 53–54 放在 L2；`state-init` 的输入 schema 不声明 `research_basis`；CHANGELOG 第 75 行仍写"多一轮审查"、第 40 行未折行。
-  - `storeResearch` 校验 `expires_at` 失败前已覆盖部分文档并删掉提交标记（logic.js:633-636）。
   - `references/execution-loop.md:72-80` 的级别说明没有 L3；`commands/start.md:19` 写"STEP 3 的 `state-init`"，实际在 STEP 10。
   - `scripts/sync-versions.js:98,110` 写 `claude plugin update gsd`（没带 `@gsd`）；scripts/ 不随包发布。
   - e2e-install Layer B 用空 npm 缓存从 registry 装依赖、90 秒超时，机器负载高时超时，超时后会留下孤儿 `npm exec` 进程；
@@ -177,3 +192,7 @@ LLM 可见元数据。用户的请求点名了范围并要求发版，按此作�
   `npm audit --omit=dev --audit-level=high` → 通过（exit 0，1 moderate 见遗留）；
   `bash scripts/gate-replay-changed.sh origin/main HEAD` → 通过（4 个测试文件均 DISCRIMINATIVE）；
   `bash scripts/gate-replay-changed.sh 4ae8da3 HEAD` → 通过（e2e-research-integration 2/9、prompt-layer 4/65 在 4ae8da3 上失败）
+- 拆开发版后（a7454e4）：`npm test` → 通过（1567/1567，exit 0）；`npm run lint` → 通过（111 files）；
+  `npm audit --omit=dev --audit-level=high` → 通过（exit 0）；`bash scripts/gate-replay-changed.sh origin/main HEAD` → 通过
+  （auto-update、prompt-layer、session-init 均 DISCRIMINATIVE）。以 8bb501e 为基准时 e2e-research-integration 判 VACUOUS
+  （回退把文件恢复成旧内容，旧内容在 8bb501e 上本就全绿）；CI 只对 PR 和 main 推送运行，基准都是 main，不会走到这个范围。
