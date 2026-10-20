@@ -25,7 +25,7 @@ argument-hint: Optional feature or project description
 
 ## STEP 2 — 代码库分析
 
-分析代码库相关部分 (codebase-retrieval):
+分析代码库相关部分 (Glob/Grep/Read):
 - 读取项目根目录结构、package.json / pyproject.toml 等配置
 - 识别技术栈、框架、现有约定
 - 定位与用户意图相关的代码区域
