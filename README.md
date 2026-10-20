@@ -273,7 +273,8 @@ once they reach L2 or L3.
 | L3 | Highest risk — security architecture, breaking changes, anything touching production | Immediate independent review **and a human confirmation hold** |
 
 Migrations, CI/CD and deployment config are exempt from writing a failing test first, not from
-review: they are planned at L2 or above.
+review: they are planned at L2 or above with `review_required` left on. (`review_required: false`
+sends an L1 or L2 task straight to accepted; only L3 ignores it.)
 
 **The L3 gate is enforced by the orchestrator, not by agent prompts.** When a reviewer approves a
 task whose level is `L3`, the task is *not* accepted. It stays `checkpointed`, the workflow moves

@@ -9,7 +9,7 @@
 | L2 | 高风险 (auth/payment/public API/DB migration/CI/CD 配置/部署配置) | checkpoint 后立即独立审查 |
 | L3 | 最高风险 (auth/payment/security architecture/涉及生产环境的变更) | checkpoint 后立即独立审查 + 人工确认 |
 
-迁移、CI/CD、部署配置在 executor 那里免写失败测试，但免 TDD 不降低审查级别：它们至少是 L2。
+迁移、CI/CD、部署配置在 executor 那里免写失败测试，但免 TDD 不降低审查级别：它们至少是 L2，且 `review_required` 保持 `true` —— 设为 `false` 的 L1/L2 task 会跳过审查直接 accepted。
 
 ## 运行时重分类
 
