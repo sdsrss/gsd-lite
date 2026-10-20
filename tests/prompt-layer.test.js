@@ -534,6 +534,24 @@ describe('prompt layer — planning-time level rules', () => {
     });
   }
 
+  it('workflows/review-cycle.md, the fourth copy of the rule, agrees and does not hand it to the reviewer', () => {
+    // Found by the second pre-tag review: it kept "config → L0" with no L3
+    // branch — the rule removed from reviewer.md — and calls itself the
+    // reviewer's extension guide.
+    const block = section(read('workflows/review-cycle.md'), '### 计划阶段的判定规则');
+    const rules = block.match(/```\n([\s\S]*?)```/)?.[1].split('\n').filter(Boolean) ?? [];
+    const to = (level) => rules.find((l) => l.trim().endsWith(`→ ${level}`)) ?? '';
+    for (const word of [/迁移|migration/i, /CI\/CD/, /部署|deploy/i]) assert.match(to('L2'), word, `review-cycle L2 does not name ${word}`);
+    assert.match(to('L3'), /生产|production/i, 'review-cycle L3 does not name production');
+    assert.match(to('L0'), /除外/, 'review-cycle L0 does not exclude CI/CD and deployment config');
+  });
+
+  it('the static reference says what the code does with review_required and L3', () => {
+    // executor.js reviews L3 whatever review_required says (isL3 || …).
+    const flow = section(read('references/review-classification.md'), '### L3 流程');
+    assert.doesNotMatch(flow, /reviewLevel === 'L3' && review_required !== false/, 'the L3 flow is gated on review_required again');
+  });
+
   it('planning keeps review_required on for the tasks that skip TDD, since false skips review below L3', () => {
     // Pre-tag review: an L2 "DB migration" task planned with
     // review_required: false came back auto_accepted with no reviewer. The level
@@ -566,6 +584,9 @@ describe('prompt layer — the instruction sentences', () => {
     ['workflows/execution-flow.md', '`state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`'],
     ['workflows/execution-flow.md', '不要自己写这些文件。返回错误时把错误展示给用户并停下，修正后重新调用，也不要改为自己写文件'],
     ['workflows/execution-flow.md', 'STEP 5 保留的 `artifacts["PITFALLS.md"]` 中的每个陷阱'],
+    ['workflows/review-cycle.md', 'reviewer 不重新判定，按每个审查对象带的 `level` 审查'],
+    ['references/review-classification.md', '`review_required: false` 的 L1/L2 task 同样走此路径；L3 不受它影响'],
+    ['agents/reviewer.md', '一直漏掉就一直绕圈，到不了人工确认'],
   ];
   for (const [file, sentence] of INSTRUCTIONS) {
     it(`${file} says: ${sentence.slice(0, 40)}…`, () => {
