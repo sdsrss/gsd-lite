@@ -451,8 +451,10 @@ describe('prompt layer — agents', () => {
     for (const file of [...mdFiles('commands'), ...mdFiles('workflows')]) {
       read(file).split('\n').forEach((line, i) => {
         // "不要" exempts a line only when it negates the read itself: "不要忘了先从
-        // state 读取 checkpoint_commit" is an instruction to read.
-        const gathers = /(收集|加载)[^\n]*checkpoint|从 ?state[^\n]*(读|收集|加载)[^\n]*checkpoint/.test(line);
+        // state 读取 checkpoint_commit" is an instruction to read. Any read
+        // counts, from state or not: with 读取 off this list, "读取该 task 的
+        // `checkpoint_commit`…一并传给 reviewer" passed (third pre-tag review).
+        const gathers = /(收集|加载|读)[^\n]*checkpoint/.test(line);
         const negated = /不要(自己)?(从 ?state ?里?)?(读|收集|加载)/.test(line);
         if (gathers && !negated) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
       });
@@ -506,12 +508,20 @@ describe('prompt layer — research found at planning time reaches the server', 
     // hand-off left this green (found by the second pre-tag review).
     const step10 = section(flow, '## STEP 10');
     assert.ok(!step10.includes('## STEP 11'), 'premise: the STEP 10 slice runs past STEP 10');
+    // The hand-off instruction itself, not the tool name: STEP 10's checklist
+    // names the tool after state-init too, so with the instruction deleted or
+    // moved into STEP 9 the name still came after it (third pre-tag review).
     const initAt = step10.indexOf('state-init(');
-    const handAt = step10.indexOf('orchestrator-handle-researcher-result');
+    const handAt = step10.indexOf('原样传给 `orchestrator-handle-researcher-result');
     assert.ok(initAt !== -1, 'premise: STEP 10 no longer calls state-init');
     assert.ok(handAt > initAt, 'STEP 10 does not hand the held research to orchestrator-handle-researcher-result after state-init');
-    // An affirmative call; STEP 5 names the tool to say it is NOT called yet.
-    assert.doesNotMatch(step5, /(?<!不)调用 `orchestrator-handle-researcher-result`/, 'STEP 5 calls the handler before state-init');
+    // Before STEP 10 the handler is named once, by STEP 5, to say it is not
+    // called yet. Counting mentions catches any phrasing of a call ("交给",
+    // "调用 MCP 工具"), which a regex for one verb did not.
+    const beforeStep10 = flow.slice(0, flow.indexOf('## STEP 10'));
+    assert.equal(beforeStep10.split('`orchestrator-handle-researcher-result').length - 1, 1,
+      'the handler is named before STEP 10 other than to say it is not called yet');
+    assert.ok(step5.includes('也不调用 `orchestrator-handle-researcher-result`'), 'STEP 5 no longer says the handler waits for state-init');
     // STEP 8 reviews the plan against the pitfalls before anything is written,
     // so it has to read the held artifact, not .gsd/research/.
     assert.doesNotMatch(section(flow, '## STEP 8'), /research\/PITFALLS\.md/, 'STEP 8 reads a PITFALLS.md that is not written until STEP 10');
@@ -581,10 +591,19 @@ describe('prompt layer — the instruction sentences', () => {
   // One home for the instructions the fixes in this file introduced — both
   // review rounds' repairs included; the first version of this list covered
   // only the first round's, while its commit message said "every". Each entry
-  // was checked against a mutation that kept a word-level gate green:
-  // replacing or negating the instruction removes the sentence and turns this
-  // red. A contradicting sentence added elsewhere is still invisible here.
+  // was checked against a mutation that kept a word-level gate green.
+  // Red: an edit inside the sentence; a word joined to either end ("不必等
+  // `state-init` 成功后…", "你不直接写这些文件之外的文件"); a revoking note
+  // in the same clause ("（以上这条已废止，不要照做）"). Those three passed
+  // when this checked only that the sentence was present (third pre-tag
+  // review). A contradicting sentence elsewhere is still invisible here.
   const collapse = (t) => t.replace(/\s+/g, ' ');
+  // Same length as collapse(t), so indexes carry over, but a whitespace run
+  // with a line break in it stays a break: a paragraph end is a clause end.
+  const lineBreaks = (t) => t.replace(/\s+/g, (w) => (w.includes('\n') ? '\n' : ' '));
+  const WORD = /[\p{Script=Han}A-Za-z]/u;
+  const CLAUSE_END = /[。！？；：，、.!?;:,]$/;
+  const REVOKED = /废止|作废|不要照做|不必照做|忽略|不再适用|ignore|obsolete|no longer appl/i;
   const INSTRUCTIONS = [
     ['commands/doctor.md', 'Read `package.json` in the current project root for a source version only when its `name` is `gsd-lite`'],
     ['commands/doctor.md', "If the `health` response carries `warning` (the server's own version-drift check): record it as WARN"],
@@ -597,7 +616,7 @@ describe('prompt layer — the instruction sentences', () => {
     ['workflows/execution-flow.md', '这一步不写任何文件、也不调用 `orchestrator-handle-researcher-result`'],
     ['workflows/execution-flow.md', '`state-init` 成功后，把 STEP 5 保留的三项原样传给 `orchestrator-handle-researcher-result({ result, decision_index, artifacts })`'],
     ['workflows/execution-flow.md', '不要自己写这些文件。返回错误时把错误展示给用户并停下，修正后重新调用，也不要改为自己写文件'],
-    ['workflows/execution-flow.md', 'STEP 5 保留的 `artifacts["PITFALLS.md"]` 中的每个陷阱'],
+    ['workflows/execution-flow.md', 'STEP 5 保留的 `artifacts["PITFALLS.md"]` 中的每个陷阱是否都有对应的防御 task 或验证条件？'],
     ['workflows/review-cycle.md', 'reviewer 不重新判定，按每个审查对象带的 `level` 审查'],
     ['references/review-classification.md', '`review_required: false` 的 L1/L2 task 同样走此路径；L3 不受它影响'],
     ['agents/reviewer.md', '一直漏掉就一直绕圈，到不了人工确认'],
@@ -614,7 +633,21 @@ describe('prompt layer — the instruction sentences', () => {
   ];
   for (const [file, sentence] of INSTRUCTIONS) {
     it(`${file} says: ${sentence.slice(0, 40)}…`, () => {
-      assert.ok(collapse(read(file)).includes(collapse(sentence)), `${file} no longer carries the instruction:\n  ${sentence}`);
+      const raw = read(file);
+      const text = collapse(raw);
+      const s = collapse(sentence);
+      const at = text.indexOf(s);
+      assert.ok(at !== -1, `${file} no longer carries the instruction:\n  ${sentence}`);
+      const lines = lineBreaks(raw);
+      const before = lines.slice(Math.max(0, at - 60), at).replace(/ $/, '');
+      const after = lines.slice(at + s.length, at + s.length + 60).replace(/^ /, '');
+      const context = `…${before.slice(-20)}[${s.slice(0, 20)}…]${after.slice(0, 20)}…`;
+      assert.ok(!WORD.test(before.at(-1) ?? ''), `${file}: a word joined before the instruction changes it: ${context}`);
+      assert.ok(CLAUSE_END.test(s) || !WORD.test(after[0] ?? ''), `${file}: a word joined after the instruction changes it: ${context}`);
+      const clauseBefore = before.slice(Math.max(before.lastIndexOf('。'), before.lastIndexOf('\n')) + 1);
+      const ends = [after.indexOf('。'), after.indexOf('\n')].filter((i) => i !== -1);
+      const clauseAfter = after.slice(0, ends.length ? Math.min(...ends) : after.length);
+      assert.doesNotMatch(`${clauseBefore} ${clauseAfter}`, REVOKED, `${file}: the clause around the instruction revokes it: ${context}`);
     });
   }
 
