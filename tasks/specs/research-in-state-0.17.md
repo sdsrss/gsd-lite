@@ -37,18 +37,18 @@
 
 ## 验收标准
 
-- [ ] AC1：规划研究在 STEP 10 `state-init` 之后经 `orchestrator-handle-researcher-result` 存入 state；executor 上下文里的 `research_decisions` 解析到摘要 — 验证：端到端测试
-- [ ] AC2：刷新是整体替换：存完后的 `decision_index` 等于新结果；摘要变了或 id 消失的决策让引用它的 task 失效 — 验证：单元测试
-- [ ] AC3：入口拒收早于现在的 `expires_at`（整体和每条决策），什么都不写 — 验证：单元测试
-- [ ] AC4：`storeResearch` 要么成功，要么磁盘上的文档、state 和提交标记都不变 — 验证：强制校验失败的测试
-- [ ] AC5：失效 task 所在的已验收 / 审查中 phase 重新打开，与 `propagateCrossPhaseInvalidation` 共用一个函数 — 验证：第四次复审的复现脚本走到 `dispatch_executor`
-- [ ] AC6：内容不变的刷新让流程回到刷新前的同一个动作，覆盖每个会跑 preflight 的 (workflow_mode, stage) 组合；`awaiting_user` 期间不因研究过期打断 — 验证：对照性质测试
-- [ ] AC7：同一份研究存两次，第二次不让任何 task 失效 — 验证：单元测试
-- [ ] AC8：阶段审查漏掉 checkpointed task 时计入 `retry_count`、不记 accepted，到上限转 `awaiting_user` — 验证：先红的测试
-- [ ] AC9：服务端自己数修复方向；三个方向都失败后 debugger 的结果按文档让 phase 失败 — 验证：先红的测试
-- [ ] AC10：`npm audit --omit=dev` 无告警
-- [ ] AC11：start.md:19、execution-loop.md 的级别说明、review-cycle.md 38 与 53–54、reviewer.md:59 与代码一致
-- [ ] AC12：`scripts/sync-versions.js` 遇到任何参数都报错退出，不写任何文件
+- [x] AC1：规划研究在 STEP 10 `state-init` 之后经 `orchestrator-handle-researcher-result` 存入 state；executor 上下文里的 `research_decisions` 解析到摘要 — 验证：端到端测试
+- [x] AC2：刷新是整体替换：存完后的 `decision_index` 等于新结果；摘要变了或 id 消失的决策让引用它的 task 失效 — 验证：单元测试
+- [x] AC3：入口拒收早于现在的 `expires_at`（整体和每条决策），什么都不写 — 验证：单元测试
+- [x] AC4：`storeResearch` 要么成功，要么磁盘上的文档、state 和提交标记都不变 — 验证：强制校验失败的测试
+- [x] AC5：失效 task 所在的已验收 / 审查中 phase 重新打开，与 `propagateCrossPhaseInvalidation` 共用一个函数 — 验证：第四次复审的复现脚本走到 `dispatch_executor`
+- [x] AC6：内容不变的刷新让流程回到刷新前的同一个动作，覆盖每个会跑 preflight 的 (workflow_mode, stage) 组合；`awaiting_user` 期间不因研究过期打断 — 验证：对照性质测试
+- [x] AC7：同一份研究存两次，第二次不让任何 task 失效 — 验证：单元测试
+- [x] AC8：阶段审查漏掉 checkpointed task 时计入 `retry_count`、不记 accepted，到上限转 `awaiting_user` — 验证：先红的测试
+- [x] AC9：服务端自己数修复方向；三个方向都失败后 debugger 的结果按文档让 phase 失败 — 验证：先红的测试
+- [x] AC10：`npm audit --omit=dev` 无告警
+- [x] AC11：start.md:19、execution-loop.md 的级别说明、review-cycle.md 38 与 53–54、reviewer.md:59 与代码一致
+- [x] AC12：`scripts/sync-versions.js` 遇到任何参数都报错退出，不写任何文件
 - [x] AC13：e2e Layer B 超时时杀掉整个进程组
 - [ ] AC14：`npm test`、`npm run lint` 全绿；有源码改动的 PR 里改动的测试文件经 gate-replay 判 DISCRIMINATIVE
 - [ ] AC15：独立复审（克隆仓库，禁止运行 `scripts/sync-versions.js`）后发版，按 ship runbook 核对产物
@@ -99,9 +99,10 @@
 
 - [x] PR1 `test/0.17-gates`（纯测试）：本 spec；门禁 LOW（描述门禁放过 "Triggered…"、带语言标记的围栏、"不读取…"/"不要忽略…" 误判）；
   补回 `storeResearch` 无项目检查的测试；e2e Layer B 进程组。
-- [ ] PR2 `fix/deps-hono`：override `hono` `^4.13.11`。
-- [ ] PR3 `fix/0.17-loops-and-docs`：两个死循环；文档与代码对不上的几处；`sync-versions.js`。
-- [ ] PR4 `feat/research-in-state`：研究存储重设计 + A12。
+- [x] PR2 `fix/deps-hono`：override `hono` `^4.13.11`。
+- [x] PR3 `fix/0.17-loops-and-docs`：两个死循环；文档与代码对不上的几处；`sync-versions.js`。
+- [x] PR4 `test/layer-b-budget`（纯测试）：Layer B 时间预算按实测放宽。
+- [ ] PR5 `feat/research-in-state`：研究存储重设计 + A12。
 - [ ] 独立复审（全范围 v0.16.0..HEAD）→ 修复 → 发版分支（CHANGELOG + `npm version minor`，临时 `CLAUDE_CONFIG_DIR`）→ tag → 核对产物。
 
 ## 决策与进展
@@ -114,8 +115,24 @@
 - e2e Layer B：第一次用 2 秒超时跑真实 npx 没复现孤儿（2 秒时 npm 还没派生子进程，SIGTERM 直接打在 npx 上），这个对照说明不了什么；
   改用会派生两个子进程的 shell 命令替换安装命令再超时：execSync 留下 2 个，进程组留下 0 个。
 
+- PR1–PR4 已合并（#35 #36 #37 #38）。PR3 的四个提交各自在 `git stash --keep-index` 隔离下过 pre-commit 全套测试。
+- 新发现并修复（研究进入 state 后被唤醒的读者）：
+  - `phaseComplete` 推进 current_phase 只是 +1：回滚到更早的脏 phase、重做完后会落到一个已验收的 phase，`complete_phase` 无出口。改为推进到下一个未验收的 phase。
+  - `paused_by_user` 时研究过期会被刷新接管，刷新后项目直接继续执行（对照性质测试发现）。与 `awaiting_user` 一并加入 `USER_HOLD_MODES`，preflight 不在这两种状态下刷新。
+  - `tests/orchestrator.test.js` 的脏 phase 回滚测试注释写"phase 仍为 accepted，与 applyResearchRefresh 一致"，实际 setup 从未让 phase 进入 accepted（active → accepted 被拒，返回值未检查）。注释修正放在单独的纯测试 PR（只改注释的测试文件在混合范围里必然 VACUOUS）。
+- 写新测试文件时用 Write 覆盖了已有的 `tests/research-refresh.test.js`（6 个 applyResearchRefresh 单元测试），提交前发现，已从 origin/main 恢复原文件，新测试改名为 `tests/research-in-state.test.js`。
+- e2e Layer B 的 90 秒超时在负载 ~1.3 时也会触发：8 次运行 13 秒到 90 秒以上、两次超时，属于网络耗时分布的尾部，不只是负载。PR4 按实测放宽预算。
+- 研究文档里"package.json 主依赖大版本变更 → 立即过期"、"用户说重新研究 → 强制过期"（workflows/research.md）没有对应代码，早于本次，未改，列为遗留。
+
 ## 验证记录
 
 - 基线 `gh run list --branch main --limit 1` → success（run 39477719256，53e5476）
 - 基线 `npm test`（main 53e5476，load 1.4）→ 通过（1567/1567，exit 0，103 秒）；`npm run lint` → 通过（111 files）
 - PR1：`node --test --test-name-pattern="Layer B" tests/e2e-install.test.js` → 通过（11/11，真实网络）；三个提交的 pre-commit 全套测试 → 通过（fail 0）
+- PR2：`npm audit --omit=dev` → 1 moderate → 0；锁文件 hono 4.13.8 → 4.13.13，integrity 与 `npm view` 一致
+- PR3：`bash scripts/gate-replay-changed.sh origin/main HEAD` → 4 个测试文件均 DISCRIMINATIVE；动作表门禁在父提交上无缺口（构造上为绿），删掉 `review_incomplete` 行即变红；
+  审查漏审测试在修复前 4/4 红（第 1 轮即被记为通过）；调试计数测试修复前 6 轮全是 `dispatch_executor`
+- PR5：`tests/research-in-state.test.js` 17 个用例在父提交的 src 上 17/17 红；16 个变异各至少让 1 个用例变红（`mutate-research.py`，在仓库副本上逐个应用）；
+  0.16.0 的三个复现脚本（accepted-phase、livelock、livelock-rule1）第 2 轮即回到 `rollback_to_dirty_phase` / `dispatch_executor`（修复前各 3 轮 `dispatch_researcher`）；
+  `npm test` → 通过（1612/1612，exit 0，load 3.3）；`npm run lint` → 通过（112 files）；
+  `bash scripts/gate-replay-changed.sh origin/main HEAD` → 5 个测试文件均 DISCRIMINATIVE
