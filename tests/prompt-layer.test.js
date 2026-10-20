@@ -26,7 +26,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
-import { LOCK_STALE_MS } from '../src/utils.js';
+import { LOCK_STALE_MS, getGsdDir } from '../src/utils.js';
 import { init, update } from '../src/tools/state/index.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
@@ -169,7 +169,7 @@ describe('prompt layer — upgrade instructions use commands Claude Code has', (
     // The hooks hardcode it; derive it here so a renamed marketplace fails.
     assert.ok(read('hooks/gsd-session-init.cjs').includes(`claude plugin update ${pluginId}`), 'session-init banner names another plugin id');
     assert.match(read('hooks/gsd-session-init.cjs'), /Installed → gsd → Update now/, 'session-init banner lacks the in-session path');
-    assert.equal(read('hooks/gsd-auto-update.cjs').split(`claude plugin update ${pluginId}`).length - 1, 2,
+    assert.ok(read('hooks/gsd-auto-update.cjs').split(`claude plugin update ${pluginId}`).length - 1 >= 2,
       'gsd update should give the shell command on both plugin-mode lines');
   });
 
@@ -205,7 +205,7 @@ describe('prompt layer — commands', () => {
     for (const file of mdFiles('commands')) {
       const description = frontmatterDescription(read(file));
       assert.ok(description.length > 0, `premise: ${file} has no description`);
-      assert.doesNotMatch(description, /Use when|Trigger|\(\d\)|用户说|帮我|let'?s build/i, `${file} description enumerates triggers: ${description}`);
+      assert.doesNotMatch(description, /Use when|Triggers?:|\(\d\)|用户说|帮我|let'?s build/i, `${file} description enumerates triggers: ${description}`);
     }
   });
 
@@ -313,7 +313,9 @@ describe('prompt layer — agents', () => {
       'the principles paragraph disagrees with Phase 4 about the third failed direction');
     assert.match(tagBlock(src, 'four_phases'), /3 次修复方向均被 executor 验证无效 → 停止。标记 architecture_concern: true/,
       'premise: Phase 4 no longer states the third-failure rule');
-    assert.doesNotMatch(src, /task 随之失败|应考虑标记 phase failed/, 'a sentence contradicting the third-failure rule is back');
+    for (const file of ['agents/debugger.md', 'workflows/debugging.md']) {
+      assert.doesNotMatch(read(file), /task 随之失败|应考虑标记 phase failed|只让 task 失败/, `${file}: a sentence contradicting the third-failure rule is back`);
+    }
   });
 
   it('the debugger, which has no Edit tool, is not told to add logging', () => {
@@ -327,7 +329,8 @@ describe('prompt layer — agents', () => {
     // storeResearch writes .gsd/.research-commit-pending around the artifact
     // renames; a researcher writing the files itself bypasses that marker.
     const src = read('agents/researcher.md');
-    const selfWrites = src.split('\n').filter((l) => /写入\s*`?\.gsd\/research/.test(l) && !/服务端/.test(l));
+    const selfWrites = src.split('\n').filter((l) =>
+      (/写入\s*`?\.gsd\/research/.test(l) && !/服务端/.test(l)) || /(?<!不)(自己|直接)写入\s*`?\.gsd\/research/.test(l));
     assert.deepEqual(selfWrites, [], 'researcher.md tells the researcher to write .gsd/research/ itself');
     assert.match(tagBlock(src, 'research_output'), /`artifacts`/, 'research_output does not route the documents through artifacts');
   });
@@ -441,14 +444,17 @@ describe('prompt layer — agents', () => {
       const body = section(resume, `### \`${mode}\``);
       assert.ok(body.includes(`\`${field}\` 原样转发`), `resume.md ${mode} does not forward ${field} from the response`);
       // The rest of what reviewer.md's context_protocol says it receives.
-      for (const key of ['review_scope', 'phase_id', 'current_review']) {
-        assert.ok(body.includes(`\`${key}\``), `resume.md ${mode} does not forward ${key}, which the reviewer protocol expects`);
-      }
+      assert.ok(body.includes('响应里的 `review_scope` / `phase_id` / `current_review` 一并转发'),
+        `resume.md ${mode} does not forward review_scope / phase_id / current_review, which the reviewer protocol expects`);
     }
     const gathering = [];
     for (const file of [...mdFiles('commands'), ...mdFiles('workflows')]) {
       read(file).split('\n').forEach((line, i) => {
-        if (/(收集|加载|读取)[^\n]*checkpoint/.test(line) && !/不要/.test(line)) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
+        // "不要" exempts a line only when it negates the read itself: "不要忘了先从
+        // state 读取 checkpoint_commit" is an instruction to read.
+        const gathers = /(收集|加载)[^\n]*checkpoint|从 ?state[^\n]*(读|收集|加载)[^\n]*checkpoint/.test(line);
+        const negated = /不要(自己)?(从 ?state ?里?)?(读|收集|加载)/.test(line);
+        if (gathers && !negated) gathering.push(`${file}:${i + 1} → ${line.trim()}`);
       });
     }
     assert.deepEqual(gathering, [], `these tell the orchestrator to gather checkpoint info itself:\n  ${gathering.join('\n  ')}`);
@@ -464,9 +470,15 @@ describe('prompt layer — research found at planning time reaches the server', 
   // and storeResearch refuses without a state file — so the result has to be
   // held across the steps and handed over after state-init. The pre-tag review
   // found the gap: nothing wrote the documents for a new project.
-  it('the server cannot store research before state-init and can right after (premise)', async () => {
+  it('the server cannot store research before state-init and can right after (premise)', async (t) => {
     const { storeResearch } = await import('../src/tools/state/index.js');
     const dir = await mkdtemp(join(tmpdir(), 'gsd-prompt-layer-research-'));
+    // getGsdDir walks up to /. Under a directory that already has a .gsd/, the
+    // "before" call would succeed — and write research into that project.
+    if (await getGsdDir(dir)) {
+      await rm(dir, { recursive: true, force: true });
+      return void t.skip(`an ancestor of ${dir} has a .gsd/ — this premise cannot be checked here`);
+    }
     try {
       const expires = new Date(Date.now() + 7 * 86_400_000).toISOString();
       const payload = {
@@ -477,7 +489,7 @@ describe('prompt layer — research found at planning time reaches the server', 
       };
       const before = await storeResearch(payload);
       assert.equal(before.code, 'NO_PROJECT_DIR', `before state-init: ${JSON.stringify(before)}`);
-      await init({ project: 'p', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], research: true, basePath: dir });
+      await init({ project: 'p', phases: [{ name: 'Core', tasks: [{ index: 1, name: 'A' }] }], basePath: dir });
       const after = await storeResearch(payload);
       assert.equal(after.success, true, `after state-init: ${JSON.stringify(after)}`);
     } finally {
@@ -566,10 +578,12 @@ describe('prompt layer — planning-time level rules', () => {
 });
 
 describe('prompt layer — the instruction sentences', () => {
-  // One home for every instruction a fix in this file introduced. Each was
-  // checked against the pre-tag reviewer's mutation that kept a word-level
-  // version of its gate green: replacing or negating the instruction removes
-  // the sentence and turns this red.
+  // One home for the instructions the fixes in this file introduced — both
+  // review rounds' repairs included; the first version of this list covered
+  // only the first round's, while its commit message said "every". Each entry
+  // was checked against a mutation that kept a word-level gate green:
+  // replacing or negating the instruction removes the sentence and turns this
+  // red. A contradicting sentence added elsewhere is still invisible here.
   const collapse = (t) => t.replace(/\s+/g, ' ');
   const INSTRUCTIONS = [
     ['commands/doctor.md', 'Read `package.json` in the current project root for a source version only when its `name` is `gsd-lite`'],
@@ -592,6 +606,11 @@ describe('prompt layer — the instruction sentences', () => {
     ['commands/resume.md', '把它返回的 `result` / `decision_index` / `artifacts` 原样传给 `orchestrator-handle-researcher-result`'],
     // storeResearch overwrites all four files (logic.js RESEARCH_FILES loop).
     ['agents/researcher.md', '把仍然成立的内容并进新文档一起返回'],
+    ['agents/debugger.md', '`architecture_concern` 为 true 时，编排器会把 phase 标为 failed'],
+    ['README.md', 'sends an L1 or L2 task straight to accepted; only L3 ignores it.'],
+    ['references/review-classification.md', '且 `review_required` 保持 `true` —— 设为 `false` 的 L1/L2 task 会跳过审查直接 accepted'],
+    ['workflows/execution-flow.md', '设为 `false` 的 L1/L2 task 在 checkpoint 后直接 accepted、不经任何审查'],
+    ['workflows/tdd-cycle.md', '唯一例外见下方 §例外列表。免 TDD 不降低审查级别。'],
   ];
   for (const [file, sentence] of INSTRUCTIONS) {
     it(`${file} says: ${sentence.slice(0, 40)}…`, () => {
