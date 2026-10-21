@@ -463,5 +463,7 @@ describe('every update notification kind is read where the file is read', () => 
     assert.match(writer, /checkFailure/, 'premise: the updater records checkFailure');
     const doctor = readFileSync(join(import.meta.dirname, '..', 'commands', 'doctor.md'), 'utf8');
     assert.match(doctor, /update-state\.json` has `checkFailure`/);
+    // From the same count SessionStart announces it at, not from one 403.
+    assert.match(doctor, /with a `count` of 3 or more/);
   });
 });
