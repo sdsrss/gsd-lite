@@ -605,12 +605,13 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
       };
     }
     if (patches.length > 0) {
-      // Unblocking answers the blocked-task hold (awaiting_user): release it
-      // to what it interrupted. In execution it continues as before; anywhere
-      // else only the tasks change, and a pause still waits for its own
-      // confirmation. It wrote executing_task from any mode.
+      // Unblocking answers the blocked-task hold (awaiting_user with no
+      // stage): release it to what it interrupted. In execution it continues
+      // as before; anywhere else only the tasks change — a pause still waits
+      // for its own confirmation, and a decision held at a stage (an L3
+      // confirmation) for its own answer. It wrote executing_task from any mode.
       let modeUpdates = {};
-      if (state.workflow_mode === 'awaiting_user') {
+      if (state.workflow_mode === 'awaiting_user' && !state.current_review?.stage) {
         const back = resumeTarget(state);
         const reviewing = back === 'reviewing_task' || back === 'reviewing_phase';
         modeUpdates = { workflow_mode: back, current_task: null, current_review: reviewing ? state.current_review : null };

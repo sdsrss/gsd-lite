@@ -8,13 +8,18 @@ import {
   computePlanHashes,
 } from '../state/index.js';
 import { getGitHead, getGsdDir } from '../../utils.js';
+import { MAX_SUSPENDED_MODES } from '../../schema.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 
 const MAX_DEBUG_RETRY = 3;
 // Fix directions a debugger may hand out for one task before the next failure
 // fails the phase (agents/debugger.md, "修复方向最多试 3 次").
 const MAX_FIX_DIRECTIONS = 3;
-const MAX_RESUME_DEPTH = 3;
+// Resume recurses once per hold the server releases itself (a /clear, a
+// blocked-task hold, a given-up refresh), each popping suspended_modes, plus
+// the few one-off re-resumes after a decision or an unblock. Three levels ran
+// out under a stack of two holds after the write had landed.
+const MAX_RESUME_DEPTH = MAX_SUSPENDED_MODES + 3;
 const CONTEXT_RESUME_THRESHOLD = 40;
 const MAX_PHASE_REVIEW_RETRY = 5;
 // The modes a research refresh may interrupt: the ones that are executing or

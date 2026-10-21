@@ -824,7 +824,7 @@ describe('prompt layer — the instruction sentences', () => {
     ['commands/resume.md', '已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户'],
     ['agents/researcher.md', '已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；已记录的研究本身就是受阻结果 (`blocked: true`) 时，它照常存下。'],
     // The way out of a refused refresh, and the offline project that is not stopped.
-    ['commands/resume.md', '`state-update({updates: {research: null, workflow_mode: <响应里的 resume_to>}})`'],
+    ['commands/resume.md', '`state-update({updates: {research: null, workflow_mode: <拒收消息里给出的 workflow_mode>}})`'],
     ['commands/resume.md', '已记录的研究本身就是受阻结果 (`blocked: true`，例如规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行'],
     ['commands/resume.md', '受阻结果被拒收的情况见下一条，直接停下'],
     // getReviewTargets includes every checkpointed task (a level lowered to L0 after checkpoint).

@@ -238,8 +238,8 @@ stateDiagram-v2
 进入 hold (`awaiting_clear`、`awaiting_user`、`paused_by_user`、`reconcile_workspace`、`replan_required`、`research_refresh_needed`) 时，服务端把离开的模式压进 `suspended_modes` (只读，`state-update` 不能写)；释放 hold 回到栈顶时出栈，去了别的工作模式或结束时清空。hold 可以叠 hold (例如暂停后又 /clear)，各自回到自己打断的那个模式。回到栈顶的转移总是允许的。
 - /clear: `awaiting_clear` 恢复时直接写栈顶。
 - 暂停、`reconcile_workspace`、`replan_required`: resume 响应带 `resume_to` (栈顶)，确认后写入。
-- 研究刷新: `storeResearch()` 中，如果 `workflow_mode === 'research_refresh_needed'`，回到栈顶；只有刷新让 task 失效、栈顶又是审查时，改回 `executing_task` 并清掉被打断的审查。放弃研究时写 `resume_to`。
-- 阻塞的 task 自动解除 (`awaiting_user`，没有 stage): 回到栈顶。
+- 研究刷新: `storeResearch()` 中，如果 `workflow_mode === 'research_refresh_needed'`，回到栈顶；只有刷新让 task 失效、栈顶又是审查时，改回 `executing_task` 并清掉被打断的审查。放弃研究时写拒收消息给出的模式 (在刷新状态里是栈顶；刷新上叠着别的 hold 时是当前模式)。`research` 为 `null` 的刷新状态在 resume 时直接回到栈顶，不再派发 researcher。
+- 阻塞的 task 解除 (`awaiting_user`，没有 stage): 自动解除或 `unblock_tasks` 都回到栈顶。`unblock_tasks` 在 `executing_task` 里照旧继续执行；在其他模式 (含带 stage 的 `awaiting_user`，例如 L3 人工确认) 只改 task，模式不动。
 - 栈顶是审查模式、但 `current_review` 已不是那次审查 (hold 期间被清掉) 时，回程按 `current_review` 推断 (下一条)，否则写回去也通不过校验。
 - 栈满 (`MAX_SUSPENDED_MODES`) 时丢掉最旧的 hold，栈底被打断的工作模式保留。
 - 0.18.0 之前写下、没有 `suspended_modes` 的 state，以及上一条的情况：退回只凭 `current_review` 推断 (`workflowModeForReview()`)：没有审查或调试中 → `executing_task`；`spec` / `quality` 以外的 stage → `awaiting_user`；其余按 scope 回到 `reviewing_phase` / `reviewing_task`。

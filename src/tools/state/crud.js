@@ -386,11 +386,15 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     const merged = { ...state, ...updates };
     settleSuspendedModes(state, merged);
 
-    // A non-boolean flag is left to validation, which names it.
-    if (isPlainObject(updates.research) && (!('blocked' in updates.research) || typeof updates.research.blocked === 'boolean')) {
-      const flag = handWrittenResearchBlocked(updates.research, state.research);
+    // A non-boolean flag, or a decision_index that is not an object, is left
+    // to validation, which names it.
+    const research = updates.research;
+    if (isPlainObject(research)
+        && (!('blocked' in research) || typeof research.blocked === 'boolean')
+        && (!('decision_index' in research) || isPlainObject(research.decision_index))) {
+      const flag = handWrittenResearchBlocked(research, state.research);
       if (flag.error) return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: flag.error };
-      merged.research = { ...updates.research, blocked: flag.blocked };
+      merged.research = { ...research, blocked: flag.blocked };
     }
 
     // Deep merge context by key (preserves plan_hashes, last_session, etc.)
