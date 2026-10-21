@@ -560,9 +560,7 @@ describe('repo gates — no npm install the package runs asks for an audit', () 
   // Comments after code, messages that name an install and arrays that merely
   // start with 'i' are counted: that fails loudly rather than passing wrongly,
   // and a mention reviewed as not running anything goes in NOT_CALLS.
-  const NOT_CALLS = new Set([
-    "hooks/gsd-auto-update.cjs: '  npm install failed in cache dir, aborting cache sync'",
-  ]);
+  const NOT_CALLS = new Set([]);
   const SUB = '(?:ci|clean-install|install|i|add)';
   function npmInstallCalls(src) {
     const code = src.replace(/^\s*\/\*[\s\S]*?\*\//gm, '').replace(/^\s*\/\/.*$/gm, '');
@@ -608,7 +606,9 @@ describe('repo gates — no npm install the package runs asks for an audit', () 
     const found = files.flatMap((rel) => npmInstallCalls(readFileSync(join(repoRoot, rel), 'utf8')).map((call) => `${rel}: ${call}`));
     assert.deepEqual([...NOT_CALLS].filter((c) => !found.includes(c)), [], 'NOT_CALLS lists a mention the scan no longer finds; remove it');
     const commands = found.filter((c) => !NOT_CALLS.has(c));
-    assert.ok(commands.length >= 4, `premise: the scan finds the package's npm installs, found ${JSON.stringify(commands)} in ${files.length} files`);
+    // Three since the updater stopped installing into the plugin cache:
+    // install.js's npm ci and npm install, and launcher.js's npm install.
+    assert.ok(commands.length >= 3, `premise: the scan finds the package's npm installs, found ${JSON.stringify(commands)} in ${files.length} files`);
     assert.deepEqual(commands.filter((c) => !c.includes('--no-audit') || !c.includes('--no-fund')), []);
   });
 });
