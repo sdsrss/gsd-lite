@@ -731,6 +731,23 @@ describe('update() never writes a state that validateState refuses', () => {
     });
   }
 
+  // update() merges these two into the phase's own object, so a string was
+  // spread into it as single-character keys — {"0":"o","1":"k",status,…} —
+  // and the result is an object, which is all validation asks of it. null
+  // merged as nothing and reported success.
+  for (const field of ['phase_review', 'phase_handoff']) {
+    for (const value of ['ok', 1, true, [], null]) {
+      it(`refuses ${field}: ${JSON.stringify(value)}, naming it and writing nothing`, async () => {
+        const statePath = join(dir, '.gsd', 'state.json');
+        await writeFile(statePath, original);
+        const res = await update({ updates: { phases: [{ id: 1, [field]: value }] }, basePath: dir });
+        assert.equal(res.code, 'INVALID_INPUT', JSON.stringify(res));
+        assert.equal(res.message, `phases[0].${field} must be an object`);
+        assert.equal(await readFile(statePath, 'utf8'), original);
+      });
+    }
+  }
+
   // A research record already invalid on file fails every write that is
   // validated in full, whatever it writes, and resume reported only the
   // error, every time.
