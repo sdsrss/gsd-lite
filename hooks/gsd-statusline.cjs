@@ -21,6 +21,14 @@ process.stdin.on('end', () => {
     const cwd = data.workspace?.current_dir || process.cwd();
     const session = String(data.session_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
     if (!session) process.exit(0); // Reject empty session ID to avoid bridge file collision
+    // An npx install registered this in settings.json, which /plugin disable
+    // does not reach: with gsd switched off it prints nothing and writes no
+    // bridge or .context-health (pluginDisabled in lib/hook-registry.cjs).
+    // Guarded: a missing helper renders, as before.
+    try {
+      const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(require('node:os').homedir(), '.claude');
+      if (require('./lib/hook-registry.cjs').pluginDisabled(claudeDir, cwd)) process.exit(0);
+    } catch { /* helper absent — render */ }
     // Must resolve to a real number: a non-numeric value propagates through the
     // arithmetic below as NaN, which renders an empty bar labelled "NaN%" and —
     // because every `used < N` comparison is false for NaN — dresses it in the

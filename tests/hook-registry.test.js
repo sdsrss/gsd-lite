@@ -276,10 +276,12 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
   for (const [label, setup, shouldRun] of [
     ['plugin installed and enabled', async (d) => { await markPluginInstalled(d); }, false],
     ['no plugin installed', async () => {}, true],
+    // `/plugin disable` turns gsd off, this copy included (0.18.0). It used to
+    // run here as the only registration left, which kept gsd on.
     ['plugin installed but disabled', async (d) => {
       await markPluginInstalled(d);
       await writeFile(join(d, 'settings.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
-    }, true],
+    }, false],
     ['plugin registry unreadable', async (d) => {
       await mkdir(join(d, 'plugins'), { recursive: true });
       await writeFile(join(d, 'plugins', 'installed_plugins.json'), '{ not json');
@@ -293,17 +295,18 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
         assert.equal(existsSync(ranMarker(claudeDir)), shouldRun,
           shouldRun
             ? 'this copy is the only registration there is — it must run'
-            : "the plugin's copy is live; running here would fire the hook twice");
+            : "the plugin's copy is live, or the user switched gsd off — this copy must not run");
       } finally {
         await rm(home, { recursive: true, force: true });
       }
     });
   }
 
-  it('runs when the project disables the plugin, not just the user config', async () => {
-    // enabledPlugins can live in the project's settings as well as the user's.
-    // Reading only ~/.claude/settings.json would stand this copy down while the
-    // disabled plugin serves nothing — zero hooks, from one `/plugin disable`.
+  it('stands down when the project disables the plugin, not just the user config', async () => {
+    // enabledPlugins can live in the project's settings as well as the user's,
+    // and a disable there turns gsd off in that project (0.18.0; this copy used
+    // to run on as the only registration left). Reading only
+    // ~/.claude/settings.json would leave it running there.
     for (const file of ['settings.json', 'settings.local.json']) {
       const { home, claudeDir } = await makeClaudeHome('gsd-standdown-proj-disable-');
       const project = await mkdtemp(join(tmpdir(), 'gsd-standdown-projdir-'));
@@ -313,8 +316,8 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
         await writeFile(join(project, '.claude', file),
           JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
         await runHook('gsd-session-init.cjs', userHooks(claudeDir), claudeDir, { project });
-        assert.equal(existsSync(ranMarker(claudeDir)), true,
-          `project ${file} disabled the plugin, so this copy is the only one left`);
+        assert.equal(existsSync(ranMarker(claudeDir)), false,
+          `project ${file} disabled the plugin, which turns this copy off too`);
       } finally {
         await rm(project, { recursive: true, force: true });
         await rm(home, { recursive: true, force: true });
@@ -397,13 +400,15 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
 
   for (const [value, shouldRun, label] of [
     [true, false, 'boolean true'],
-    ['false', true, 'the string "false"'],
-    [0, true, 'the number 0'],
+    ['false', false, 'the string "false"'],
+    [0, false, 'the number 0'],
   ]) {
     it(`treats enabledPlugins ${label} the way Claude Code does`, async () => {
       // Claude Code reports a plugin with the string "false" as disabled, and a
-      // disabled plugin loads no hooks. `=== false` is the one comparison that
-      // lets a wrong-typed value through as enabled — straight to zero hooks.
+      // disabled plugin loads no hooks — and turns gsd off (0.18.0), so this
+      // copy stands down for every value but `true` as well: serving when true,
+      // switched off otherwise. `=== false` is the one comparison that would let
+      // a wrong-typed disable through as "still on".
       const { home, claudeDir } = await makeClaudeHome('gsd-standdown-enabled-');
       try {
         await markPluginInstalled(claudeDir);

@@ -26,15 +26,17 @@ const { bridgePaths } = require('./lib/ctx-bridge.cjs');
 
 const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
-// Stand down when the plugin's own copy of this hook is the live registration —
+// Stand down when the user has disabled the plugin (/plugin disable turns gsd
+// off, this copy included), or when the plugin's own copy of this hook is the
+// live registration —
 // which means installed, enabled, AND actually declaring PostToolUse in its
 // hooks/hooks.json. Both copies are registered on purpose; see pluginServesHooks
 // in lib/hook-registry.cjs for why removing one is the wrong fix. Guarded: if
 // the helper is missing we run, because running twice is visible and running
 // never is not.
 try {
-  const { pluginServesHooks } = require('./lib/hook-registry.cjs');
-  if (pluginServesHooks(claudeDir, __dirname, 'PostToolUse')) process.exit(0);
+  const { hookStandsDown } = require('./lib/hook-registry.cjs');
+  if (hookStandsDown(claudeDir, __dirname, 'PostToolUse')) process.exit(0);
 } catch { /* helper absent — carry on */ }
 
 const WARNING_THRESHOLD = 35;

@@ -164,6 +164,69 @@ function declaresHook(manifestPath, hookType) {
   }
 }
 
+/**
+ * Has the user switched gsd off with `/plugin disable`?
+ *
+ * True when a gsd plugin record applies here — `gsd@gsd` or a fork's
+ * `gsd@<marketplace>`, at user scope, or at project or local scope for this
+ * directory — and every such record is explicitly not enabled: the
+ * highest-precedence settings file that names its id (the project's
+ * settings.local.json, then its settings.json, then the user's; Claude Code's
+ * own order) holds a value other than `true`.
+ *
+ * Installed-but-disabled used to read as "the plugin is not serving, so the
+ * npx registrations run" (pluginServesHooks), and gsd stayed on after the
+ * user turned it off. Nothing here is a guess: no registry, an unreadable
+ * one, no record for this directory, or no file naming the id is not a
+ * disable — the npx install is then the user's only gsd and keeps running.
+ *
+ * @param {string} claudeDir  resolved CLAUDE_CONFIG_DIR / ~/.claude
+ * @param {string} cwd        the project directory the session runs in
+ */
+function pluginDisabled(claudeDir, cwd = process.cwd()) {
+  let plugins;
+  try {
+    plugins = JSON.parse(fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8')).plugins;
+  } catch {
+    return false;
+  }
+  if (!plugins || typeof plugins !== 'object') return false;
+  const here = realish(cwd);
+  const ids = Object.keys(plugins)
+    .filter((id) => id === 'gsd@gsd' || id.startsWith('gsd@'))
+    .filter((id) => (Array.isArray(plugins[id]) ? plugins[id] : [plugins[id]]).some((record) => record
+      && (!record.scope || record.scope === 'user' || (record.projectPath && realish(record.projectPath) === here))));
+  if (ids.length === 0) return false;
+  const byPrecedence = [
+    path.join(cwd, '.claude', 'settings.local.json'),
+    path.join(cwd, '.claude', 'settings.json'),
+    path.join(claudeDir, 'settings.json'),
+  ].map((file) => {
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'))?.enabledPlugins;
+    } catch {
+      return undefined;
+    }
+  });
+  return ids.every((id) => {
+    const deciding = byPrecedence.find((enabled) => enabled && typeof enabled === 'object' && Object.hasOwn(enabled, id));
+    return deciding !== undefined && deciding[id] !== true;
+  });
+}
+
+/**
+ * Should this hook stand down? When the plugin serves it (pluginServesHooks),
+ * and — for the copy an npx install registered in settings.json, the only one
+ * Claude Code still runs while the plugin is disabled — when the user has
+ * switched gsd off (pluginDisabled). The plugin's own copy is not loaded while
+ * it is disabled, so it never gets here to ask.
+ */
+function hookStandsDown(claudeDir, scriptDir, hookType) {
+  if (pluginServesHooks(claudeDir, scriptDir, hookType)) return true;
+  const settingsCopy = Boolean(scriptDir) && realish(scriptDir) === realish(path.join(claudeDir, 'hooks'));
+  return settingsCopy && pluginDisabled(claudeDir);
+}
+
 /** realpath when it resolves, the path as given when it does not. */
 function realish(p) {
   try {
@@ -252,4 +315,4 @@ function upsertHookEntry(hooks, { hookType, identifier, matcher, command, timeou
   return true;
 }
 
-module.exports = { GSD_HOOK_IDENTIFIERS, pluginServesHooks, removeHookEntry, upsertHookEntry };
+module.exports = { GSD_HOOK_IDENTIFIERS, hookStandsDown, pluginDisabled, pluginServesHooks, removeHookEntry, upsertHookEntry };

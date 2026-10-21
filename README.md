@@ -136,6 +136,12 @@ which is safe to run alongside the plugin: it detects the plugin and skips
 everything the plugin already serves, registering only the StatusLine and the
 hook scripts it needs.
 
+To switch gsd off, disable the plugin (`/plugin` → **Installed** → gsd →
+**Disable**, or `enabledPlugins` in a project's settings to turn it off there).
+That covers everything `npx gsd-lite install` added beside it too: its hooks,
+the StatusLine and its MCP server stand down while the plugin is disabled, and
+come back when you enable it.
+
 To remove just the StatusLine afterwards, delete the `statusLine` key from
 `~/.claude/settings.json`. Do not reach for `npx gsd-lite uninstall` for that —
 it removes everything GSD installed, the plugin cache, the marketplace entry and
