@@ -110,13 +110,13 @@ task:3.1   -> phase 3, task 1
 
 ```
 if (Object.keys(state.evidence).length > MAX_EVIDENCE_ENTRIES) {
-  -> 调用 _pruneEvidenceFromState(state, currentPhase, gsdDir)
+  -> 调用 _pruneEvidenceFromState(state, currentPhase)
 }
 ```
 
 ### 裁剪逻辑
 
-`_pruneEvidenceFromState(state, currentPhase, gsdDir)`:
+`_pruneEvidenceFromState(state, currentPhase)` (只在内存中计算，不写文件):
 
 1. 遍历所有 evidence 条目
 2. 对每条 evidence 调用 `parseScopePhase(entry.scope)` 提取 phase 编号
@@ -134,17 +134,23 @@ if (Object.keys(state.evidence).length > MAX_EVIDENCE_ENTRIES) {
 ### 归档流程
 
 ```
-_pruneEvidenceFromState()
+_pruneEvidenceFromState(state, currentPhase)
   -> 分离 toArchive / toKeep
+  -> state.evidence = toKeep 更新内存中的 state
+  -> 返回 toArchive
+(调用方校验通过后)
+_writeEvidenceArchive(gsdDir, toArchive)
   -> 读取现有 evidence-archive.json (不存在则 {})
   -> Object.assign(archive, toArchive) 合并
   -> writeJson(archivePath, archive) 写入归档文件
-  -> state.evidence = toKeep 更新内存中的 state
+  -> 紧接着写 state.json
 ```
+
+被拒的调用 (校验失败) 不写归档文件：归档只在 state.json 即将写入前写。
 
 ### 触发时机
 
-1. `addEvidence()` — 当 evidence 数量超过 MAX_EVIDENCE_ENTRIES 时自动触发
+1. `addEvidence()` / `update()` — 当 evidence 数量超过 MAX_EVIDENCE_ENTRIES 时自动触发
 2. `phaseComplete()` — phase 完成后主动触发 (在 phase lifecycle 转换为 accepted 之后)
 3. `pruneEvidence()` — 显式调用的外部接口
 
