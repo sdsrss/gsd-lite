@@ -265,13 +265,13 @@ const TOOLS = [
   },
   {
     name: 'orchestrator-handle-researcher-result',
-    description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration. The decision_index replaces the one on record: a task citing a decision whose summary changed or that is missing is sent back for revalidation. Every expires_at must be at least an hour in the future, and a [BLOCKED] result, or one with no decisions, is refused while real research is on record (the way out is state-update with research: null and workflow_mode: "executing_task"); nothing is written if the result is refused.',
+    description: 'Persist a researcher result, write .gsd/research artifacts, and continue orchestration. The decision_index replaces the one on record: a task citing a decision whose summary changed or that is missing is sent back for revalidation. result.blocked is required: true when the research could not be completed. Every expires_at must be at least an hour in the future, and a blocked result, or one with no decisions, is refused while real research is on record (the refusal names the way out: state-update with research: null and the workflow_mode it gives); a decision summary written as the [BLOCKED] placeholder under blocked: false is refused too. Nothing is written if the result is refused.',
     inputSchema: {
       type: 'object',
       properties: {
         result: {
           type: 'object',
-          description: 'Researcher result: {decision_ids: string[], volatility: "low"|"medium"|"high", expires_at: ISO8601 string, sources: [{id: string, type: string, ref: string}]}',
+          description: 'Researcher result: {decision_ids: string[], blocked: boolean, volatility: "low"|"medium"|"high", expires_at: ISO8601 string, sources: [{id: string, type: string, ref: string}]}',
         },
         decision_index: { type: 'object', description: 'Decision index keyed by decision id, each value: {summary: string, source?: string, expires_at?: ISO8601}' },
         artifacts: { type: 'object', description: 'Markdown contents keyed by filename: {STACK.md, ARCHITECTURE.md, PITFALLS.md, SUMMARY.md}' },

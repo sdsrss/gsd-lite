@@ -575,6 +575,23 @@ describe('prompt layer — research found at planning time reaches the server', 
     assert.deepEqual(unmarked, [], `storeResearch recognises a blocked result by ${BLOCKED_DECISION_PREFIX}`);
   });
 
+  // The server reads only `blocked` (0.18.0): the result contract's two
+  // examples must carry it, each the right way round, and the tool
+  // description must say it is required.
+  it('the researcher contract shows blocked on both examples, the right way round', () => {
+    const researcher = read('agents/researcher.md');
+    const contract = tagBlock(researcher, 'result_contract');
+    const fallback = tagBlock(researcher, 'uncertainty_handling');
+    assert.match(contract, /"blocked": false/);
+    assert.doesNotMatch(contract, /"blocked": true/);
+    assert.match(fallback, /"blocked": true/);
+    assert.doesNotMatch(fallback, /"blocked": false/);
+    const server = read('src/server.js');
+    const tool = server.slice(server.indexOf("name: 'orchestrator-handle-researcher-result'"), server.indexOf("name: 'orchestrator-handle-reviewer-result'"));
+    assert.match(tool, /result\.blocked is required/);
+    assert.match(tool, /blocked: boolean/);
+  });
+
   it('the state diagram draws a refresh only out of the modes the server refreshes in', () => {
     assert.ok(REFRESH_MODES.length > 0, 'premise: orchestrator/helpers.js exports REFRESH_MODES');
     const diagram = read('references/state-diagram.md');

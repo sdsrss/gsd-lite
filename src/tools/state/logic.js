@@ -8,6 +8,7 @@ import {
   DEP_GATES,
   TASK_LIFECYCLE,
   isDepGateAllowed,
+  BLOCKED_TAG,
   nextSuspendedModes,
   resumeTarget,
   validateResearchArtifacts,
@@ -543,14 +544,8 @@ export function applyResearchRefresh(state, newResearch) {
 const MIN_RESEARCH_TTL_MS = 60 * 60 * 1000;
 
 // The summary prefix of the researcher's blocked fallback (agents/researcher.md,
-// uncertainty_handling): every source failed, or the scope would not converge.
+// uncertainty_handling), which also sets `blocked: true` on the result.
 export const BLOCKED_DECISION_PREFIX = '[BLOCKED]';
-// The prefix as a model may drift from it: behind whitespace, zero-width
-// characters or markdown emphasis, in full-width or lenticular brackets, with
-// spaces inside them, in any case. A variant not recognised stores "could not
-// research" over the research on record, silently; one recognised too many is
-// a refusal that says why, so the match leans wide.
-const BLOCKED_SUMMARY = /^[\s\u200B-\u200D\u2060*_`]*[[\uFF3B\u3010]\s*blocked\s*[\]\uFF3D\u3011]/i;
 
 /**
  * The expiry dates a researcher result carries, refused when any is not a
@@ -626,23 +621,34 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // it replaced every decision on record, sent every task citing them back
     // for revalidation, reopened accepted phases and overwrote the four
     // documents with placeholders, so it is refused and the record stays.
-    // Over nothing, or over a record that is itself only blocked decisions (a
-    // project planned with no sources), there is nothing to protect and it is
-    // stored: refusing it there left that project dispatching the researcher
-    // on every resume once its 24-hour placeholder expired.
-    // Recognised on either side by BLOCKED_SUMMARY: " [BLOCKED] …" and
-    // "[blocked] …" were read as real research.
-    const isBlocked = (entry) => typeof entry?.summary === 'string' && BLOCKED_SUMMARY.test(entry.summary);
-    const blocked = Object.keys(decision_index).filter((id) => isBlocked(decision_index[id]));
-    const recordHasResearch = Object.values(previousIndex).some((entry) => !isBlocked(entry));
-    // The way out names the mode the refresh interrupted (suspended_modes);
-    // executing_task, which it used to name, dropped a review in progress.
-    const giveUp = `give up the expired research with state-update (research: null, workflow_mode: "${resumeTarget(state)}"), after which tasks' research_basis no longer resolves`;
-    if (recordHasResearch && blocked.length > 0) {
+    // Over nothing, or over a record that was itself blocked (a project planned
+    // with no sources), there is nothing to protect and it is stored: refusing
+    // it there left that project dispatching the researcher on every resume
+    // once its 24-hour placeholder expired.
+    // The result says which it is (`blocked`), and the record says what it
+    // was stored as; neither is guessed from a summary any more. A summary
+    // written as the placeholder under `blocked: false` contradicts itself
+    // and is refused, so the next dispatch says which it is.
+    const blocked = result.blocked === true;
+    const recordHasResearch = isPlainObject(state.research) && state.research.blocked !== true
+      && Object.keys(previousIndex).length > 0;
+    const tagged = blocked ? [] : Object.keys(decision_index)
+      .filter((id) => typeof decision_index[id]?.summary === 'string' && BLOCKED_TAG.test(decision_index[id].summary));
+    if (tagged.length > 0) {
       return {
         error: true,
         code: ERROR_CODES.VALIDATION_FAILED,
-        message: `A blocked research result (${blocked.join(', ')}) would replace the research on record, so it is kept. Retry the refresh once the researcher can complete it, or ${giveUp}.`,
+        message: `Decision(s) ${tagged.join(', ')} are written as the [BLOCKED] placeholder, but the result says blocked: false. A result that could not be completed sets blocked: true; one that was completed does not use the placeholder.`,
+      };
+    }
+    // The way out names the mode the refresh interrupted (suspended_modes);
+    // executing_task, which it used to name, dropped a review in progress.
+    const giveUp = `give up the expired research with state-update (research: null, workflow_mode: "${resumeTarget(state)}"), after which tasks' research_basis no longer resolves`;
+    if (recordHasResearch && blocked) {
+      return {
+        error: true,
+        code: ERROR_CODES.VALIDATION_FAILED,
+        message: `A blocked research result (${Object.keys(decision_index).join(', ') || 'no decisions'}) would replace the research on record, so it is kept. Retry the refresh once the researcher can complete it, or ${giveUp}.`,
       };
     }
     // A result with no decisions is not a research that found none: a refresh
@@ -660,6 +666,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     const { warnings, invalidated } = applyResearchRefresh(state, { decision_index });
     state.research = {
       ...state.research,
+      blocked,
       volatility: result.volatility,
       expires_at: result.expires_at,
       sources: result.sources,

@@ -343,6 +343,9 @@ function researchErrors(research) {
   if ('sources' in research) {
     validateResearchSourcesArray(research.sources, errors, 'research.sources');
   }
+  if ('blocked' in research && typeof research.blocked !== 'boolean') {
+    errors.push('research.blocked must be a boolean');
+  }
   if ('decision_index' in research) {
     const decisionIndexValidation = validateResearchDecisionIndex(research.decision_index);
     errors.push(...decisionIndexValidation.errors.map((error) => `research.${error}`));
@@ -951,9 +954,21 @@ function evidenceFieldErrors(entry, label) {
   return errors;
 }
 
+// The leading tag of the researcher's blocked fallback as it was written
+// before results said so themselves (agents/researcher.md, uncertainty_handling):
+// behind whitespace, zero-width characters or markdown emphasis, in full-width
+// or lenticular brackets, with spaces inside them, in any case. Since 0.18.0
+// a result says whether it is blocked (`blocked`); this pattern only reads
+// research stored before that (migrateState) and refuses a result that writes
+// the tag while saying `blocked: false` (storeResearch).
+export const BLOCKED_TAG = /^[\s\u200B-\u200D\u2060*_`]*[[\uFF3B\u3010]\s*blocked\s*[\]\uFF3D\u3011]/i;
+
 export function validateResearcherResult(r) {
   const errors = [];
   if (!Array.isArray(r.decision_ids)) errors.push('decision_ids must be array');
+  // Required, so a researcher has to say it: guessing it from the summary
+  // took three rounds of widening a pattern and still missed forms.
+  if (typeof r.blocked !== 'boolean') errors.push('blocked must be true (the research could not be completed) or false');
   if (!['low', 'medium', 'high'].includes(r.volatility)) errors.push('invalid volatility');
   if (typeof r.expires_at !== 'string' || r.expires_at.length === 0) errors.push('missing expires_at');
   validateResearchSourcesArray(r.sources, errors, 'sources');
@@ -1023,6 +1038,16 @@ export function migrateState(state) {
 
   // Future migrations go here:
   // if (version < 2) { migrateV1toV2(state); state.schema_version = 2; }
+
+  // Research stored before results said whether they were blocked carries no
+  // flag: read it once by the tag those results used. A record whose every
+  // decision is a placeholder was blocked; one holding a real decision was
+  // research, and is kept from a blocked refresh.
+  if (isPlainObject(state.research) && !('blocked' in state.research)) {
+    const entries = isPlainObject(state.research.decision_index) ? Object.values(state.research.decision_index) : [];
+    state.research.blocked = entries.length > 0
+      && entries.every((entry) => typeof entry?.summary === 'string' && BLOCKED_TAG.test(entry.summary));
+  }
 
   // Not a version step: a state from before suspended_modes has none, and a
   // stack outside a hold holds nothing (validateState). Cleared on load so a
