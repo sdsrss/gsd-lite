@@ -11,7 +11,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 if (!existsSync(join(__dirname, 'node_modules', '@modelcontextprotocol'))) {
   try {
-    execSync('npm install --omit=dev --ignore-scripts', {
+    // --no-audit --no-fund: the output is piped, and the audit is a registry
+    // request that can stall past the timeout below with the server unstarted.
+    execSync('npm install --omit=dev --no-fund --no-audit --ignore-scripts', {
       cwd: __dirname,
       stdio: 'pipe',
       timeout: 60000,

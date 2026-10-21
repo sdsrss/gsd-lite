@@ -730,7 +730,9 @@ function syncPluginCache(extractedDir, verbose = false) {
 
     // Install dependencies in cache dir
     if (!fs.existsSync(path.join(newCachePath, 'node_modules', '@modelcontextprotocol'))) {
-      const npmResult = spawnSync('npm', ['install', '--omit=dev', '--ignore-scripts'], {
+      // --no-audit --no-fund: the output is piped, and the audit is a registry
+      // request that can stall past the timeout below.
+      const npmResult = spawnSync('npm', ['install', '--omit=dev', '--no-fund', '--no-audit', '--ignore-scripts'], {
         cwd: newCachePath,
         stdio: 'pipe',
         timeout: 60000,

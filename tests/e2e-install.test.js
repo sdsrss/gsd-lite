@@ -315,10 +315,11 @@ describe('Layer A: manual/npm install E2E', () => {
 });
 
 describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () => {
-  let home, claudeDir, npxSimDir;
+  let home, claudeDir, npxSimDir, npmLogs;
 
   before(async () => {
     ({ home, claudeDir } = await makeClaudeHome('gsd-e2e-npx-'));
+    npmLogs = await mkdtemp(join(tmpdir(), 'gsd-e2e-npx-logs-'));
 
     // Create a copy of the project without node_modules to simulate npx
     npxSimDir = await mkdtemp(join(tmpdir(), 'gsd-npx-sim-'));
@@ -347,10 +348,11 @@ describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () =>
       }
     }
 
-    // Run install.js from the npx-sim dir (no node_modules present)
+    // Run install.js from the npx-sim dir (no node_modules present). npm's
+    // debug logs go to npmLogs, where the test below reads what it requested.
     execFileSync('node', [join(npxSimDir, 'install.js')], {
       cwd: npxSimDir,
-      env: { ...process.env, ...NPM_FETCH_ENV, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
+      env: { ...process.env, ...NPM_FETCH_ENV, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), npm_config_logs_dir: npmLogs },
       encoding: 'utf-8',
       timeout: 55000,
     });
@@ -359,6 +361,17 @@ describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () =>
   after(async () => {
     await rm(home, { recursive: true, force: true });
     await rm(npxSimDir, { recursive: true, force: true });
+    await rm(npmLogs, { recursive: true, force: true });
+  });
+
+  it('sends no audit request', async () => {
+    // With the lockfile and a warm cache the audit was npm ci's only registry
+    // request, and a stalled proxy held it past this suite's 55 s: the
+    // pre-commit failure of 2026-10-21, named once the hook printed it.
+    const texts = await Promise.all((await readdir(npmLogs)).map((name) => readFile(join(npmLogs, name), 'utf8')));
+    const ci = texts.filter((text) => /verbose argv "ci"/.test(text));
+    assert.equal(ci.length, 1, `premise: one npm ci debug log, found ${texts.length} logs`);
+    assert.doesNotMatch(ci[0], /security\/advisories/);
   });
 
   it('installs runtime dependencies via npm ci when node_modules absent', async () => {

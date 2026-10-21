@@ -526,3 +526,38 @@ describe('repo gates — scripts/sync-versions.js has no dry-run to mistake', ()
     assert.deepEqual(mentions.filter((id) => id !== pluginId), [], `claude plugin update takes ${pluginId}`);
   });
 });
+
+// install.js ran `npm ci` without --no-audit while its `npm install` branch
+// had it. The audit is a registry request whose answer nobody reads (each of
+// these pipes its output), and with a lockfile and a warm cache it was npm
+// ci's only request: a stalled proxy held it past the caller's timeout
+// (2026-10-21). Asked of every npm install the package runs, not of the one
+// that failed.
+describe('repo gates — no npm install the package runs asks for an audit', () => {
+  it('every npm install or ci in the published code passes --no-audit and --no-fund', () => {
+    const files = [];
+    const walk = (rel) => {
+      const full = join(repoRoot, rel);
+      if (!existsSync(full)) return;
+      if (!/\.[cm]?js$/.test(rel) && rel.includes('.')) return;
+      if (/\.[cm]?js$/.test(rel)) { files.push(rel); return; }
+      for (const entry of readdirSync(full, { withFileTypes: true })) {
+        const child = `${rel}/${entry.name}`;
+        if (entry.isDirectory()) walk(child);
+        else if (/\.[cm]?js$/.test(entry.name)) files.push(child);
+      }
+    };
+    for (const entry of JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).files) walk(entry.replace(/\/$/, ''));
+    const commands = [];
+    for (const rel of files) {
+      // Comments name these commands too, so they go first.
+      const code = readFileSync(join(repoRoot, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      for (const m of code.matchAll(/['"]npm (?:ci|install)\b[^'"]*['"]/g)) commands.push(`${rel}: ${m[0]}`);
+      for (const m of code.matchAll(/\(\s*['"]npm['"]\s*,\s*\[([^\]]*)\]/g)) {
+        if (/['"](?:ci|install)['"]/.test(m[1])) commands.push(`${rel}: ${m[0]}`);
+      }
+    }
+    assert.ok(commands.length >= 4, `premise: the scan finds the package's npm installs, found ${JSON.stringify(commands)} in ${files.length} files`);
+    assert.deepEqual(commands.filter((c) => !c.includes('--no-audit') || !c.includes('--no-fund')), []);
+  });
+});

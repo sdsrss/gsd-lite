@@ -404,8 +404,12 @@ export function main() {
     // --ignore-scripts: the runtime install only needs node_modules. Skipping
     // lifecycle scripts avoids running the dev-only POSIX `prepare` git-hook
     // setup, which fails under cmd.exe on Windows (issue #2).
+    // --no-audit --no-fund on both: the output is piped and nobody reads it,
+    // and the audit is a registry request. With a lockfile and a warm cache it
+    // was `npm ci`'s only one, and a stalled proxy held it past the caller's
+    // timeout (measured 2026-10-21).
     const installCmd = hasLockFile
-      ? 'npm ci --omit=dev --ignore-scripts'
+      ? 'npm ci --omit=dev --no-fund --no-audit --ignore-scripts'
       : 'npm install --omit=dev --no-fund --no-audit --ignore-scripts';
     try {
       execSync(installCmd, { cwd: STAGING_DIR, stdio: 'pipe' });
