@@ -468,9 +468,20 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     const needsFullValidation = updates.phases
       || (_append_decisions?.length > 0)
       || (_propagation_tasks?.length > 0);
-    const validation = needsFullValidation
+    let validation = needsFullValidation
       ? validateState(merged)
       : validateStateUpdate(state, updates);
+    // The fast path checks the fields it was taught to, and each one it was
+    // not taught let state-update write a state the full validator refuses,
+    // after which every full validation of it failed: research entries,
+    // evidence fields, total_phases, current_phase under a task review. So
+    // its answer is checked against the full one. Errors the state on disk
+    // already had are not this update's and do not block it.
+    if (validation.valid && !needsFullValidation) {
+      const before = new Set(validateState(state).errors);
+      const introduced = validateState(merged).errors.filter((error) => !before.has(error));
+      if (introduced.length > 0) validation = { valid: false, errors: introduced };
+    }
     if (!validation.valid) {
       return {
         error: true,
