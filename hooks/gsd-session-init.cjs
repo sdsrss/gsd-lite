@@ -302,7 +302,9 @@ setTimeout(() => process.exit(0), 4000).unref();
     const notifPath = path.join(claudeDir, 'gsd', 'runtime', 'update-notification.json');
     if (fs.existsSync(notifPath)) {
       const notif = JSON.parse(fs.readFileSync(notifPath, 'utf8'));
-      const safeSemver = (s) => /^\d+\.\d+\.\d+/.test(String(s || '')) ? String(s) : '?.?.?';
+      // Whole-string: a value that merely started like a version carried the
+      // rest — a newline and markup included — into the session's context.
+      const safeSemver = (s) => /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(String(s || '')) ? String(s) : '?.?.?';
       if (notif.kind === 'updated') {
         console.log(`✅ GSD-Lite auto-updated: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}`);
       } else if (notif.kind === 'available' && notif.action === 'plugin_update') {
