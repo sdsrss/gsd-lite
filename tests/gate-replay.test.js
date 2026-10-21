@@ -82,7 +82,7 @@ describe('needs the fix to set up', () => {
     const { code, out } = repo.replay('tests/setup.test.js');
     assert.doesNotMatch(out, /VACUOUS/, out);
     assert.equal(code, 2, `INCONCLUSIVE exits 2:\n${out}`);
-    assert.match(out, /INCONCLUSIVE — 2 of 2 tests were cancelled/);
+    assert.match(out, /INCONCLUSIVE — 2 of 2 tests never ran/);
     assert.match(out, /needs the fix to set up/, 'and it names the suite whose hook failed');
   });
 
@@ -103,6 +103,48 @@ describe('needs the fix to set up', () => {
     assert.match(out, /DISCRIMINATIVE — 1\/2 failed/);
     assert.match(out, /✖ fixed value/);
     assert.doesNotMatch(out, /✖ a$/m, 'a cancelled test is not listed as a failure');
+  });
+
+  // Node counts a test that timed out under `# cancelled`, next to the ones
+  // that never ran — and a hang is a red, the shape of the bug half the
+  // fixes here are about.
+  it('counts a test that timed out on the base tree as a failure', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({
+      'src.cjs': 'module.exports = 2;\n',
+      'tests/hang.test.js': `${HEADER}
+it('answers', { timeout: 300 }, () => (require('../src.cjs') === 2 ? undefined : new Promise(() => {})));
+`,
+    });
+    const { code, out } = repo.replay('tests/hang.test.js');
+    assert.equal(code, 0, out);
+    assert.match(out, /DISCRIMINATIVE — 1\/1 failed/);
+  });
+
+  // A failing top-level before() makes Node report every test as failed
+  // (hookFailed), though none of them ran.
+  it('does not credit tests whose top-level setup failed', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({
+      'src.cjs': 'module.exports = 2;\n',
+      'tests/toplevel.test.js': `${HEADER}
+before(() => { if (require('../src.cjs') !== 2) throw new Error('setup needs the fix'); });
+it('a', () => {});
+it('b', () => {});
+`,
+    });
+    const { code, out } = repo.replay('tests/toplevel.test.js');
+    assert.equal(code, 2, out);
+    assert.match(out, /INCONCLUSIVE — 2 of 2 tests never ran/);
+    assert.match(out, /setup needs the fix/);
+  });
+
+  it('does not call a file whose every test was skipped vacuous', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/skipped.test.js': `${HEADER}\nit.skip('later', () => {});\n` });
+    const { code, out } = repo.replay('tests/skipped.test.js');
+    assert.equal(code, 2, out);
+    assert.match(out, /INCONCLUSIVE — every test in the file was skipped/);
   });
 
   it('gives the replay tree a node_modules that install.js can copy', (t) => {
