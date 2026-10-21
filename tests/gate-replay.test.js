@@ -107,13 +107,15 @@ describe('needs the fix to set up', () => {
 
   // Node counts a test that timed out under `# cancelled`, next to the ones
   // that never ran — and a hang is a red, the shape of the bug half the
-  // fixes here are about.
+  // fixes here are about. The hang holds a live timer: a promise with nothing
+  // pending lets the event loop drain first, which Node 20 and 22 report as
+  // cancelled (not run) rather than as a timeout.
   it('counts a test that timed out on the base tree as a failure', (t) => {
     const repo = fixtureRepo(t);
     repo.commit({
       'src.cjs': 'module.exports = 2;\n',
       'tests/hang.test.js': `${HEADER}
-it('answers', { timeout: 300 }, () => (require('../src.cjs') === 2 ? undefined : new Promise(() => {})));
+it('answers', { timeout: 300 }, () => (require('../src.cjs') === 2 ? undefined : new Promise((resolve) => setTimeout(resolve, 2000))));
 `,
     });
     const { code, out } = repo.replay('tests/hang.test.js');
