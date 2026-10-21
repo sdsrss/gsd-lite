@@ -89,6 +89,39 @@ describe('auto update install modes', () => {
     }
   });
 
+  // install.js prunes plugins/cache/gsd and clears .orphaned_at whenever it
+  // finds a gsd@gsd record, and the updater runs install.js only when it has
+  // decided there is no plugin. The two must decide that the same way. They
+  // did not: a git checkout was "dev" before the registry was read, so
+  // `gsd update --force` there ran install.js against an installed plugin's
+  // cache, and a record install.js counts (an empty list) the updater did not.
+  for (const [label, layout, record, dev] of [
+    ['a git checkout with the plugin installed', 'plugin', [{ scope: 'user', installPath: '/x', version: '0.3.0' }], true],
+    ['a plugin record in the shape install.js counts', 'manual', [], false],
+  ]) {
+    it(`treats ${label} as a plugin install`, async () => {
+      const ctx = await loadAutoUpdate(layout);
+      let installCalled = false;
+      try {
+        if (dev) await mkdir(join(ctx.claudeDir, '..', '..', 'plugin-root', '.git'), { recursive: true });
+        await mkdir(join(ctx.claudeDir, 'plugins'), { recursive: true });
+        await writeFile(join(ctx.claudeDir, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'gsd@gsd': record } }));
+        if (dev) assert.equal(ctx.mod.isDevMode(), true, 'premise: the module runs from a git checkout');
+        const result = await ctx.mod.checkForUpdate({
+          force: true,
+          install: true,
+          fetchLatestRelease: async () => ({ version: '0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+          downloadAndInstall: async () => { installCalled = true; return true; },
+        });
+        assert.equal(ctx.mod.getInstallMode(), 'plugin');
+        assert.equal(installCalled, false, 'install.js is not run against a plugin install');
+        assert.equal(result.action, 'plugin_update');
+      } finally {
+        await ctx.cleanup();
+      }
+    });
+  }
+
   it('manual mode reports a failed install instead of saying nothing', async () => {
     // writeNotification only ever fired on success, so a background update that
     // failed was completely silent — and because the old installer wrote the new
