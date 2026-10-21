@@ -9,6 +9,7 @@ import {
   TASK_LIFECYCLE,
   isDepGateAllowed,
   nextSuspendedModes,
+  resumeTarget,
   validateResearchArtifacts,
   validateResearchDecisionIndex,
   validateResearcherResult,
@@ -634,7 +635,9 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     const isBlocked = (entry) => typeof entry?.summary === 'string' && BLOCKED_SUMMARY.test(entry.summary);
     const blocked = Object.keys(decision_index).filter((id) => isBlocked(decision_index[id]));
     const recordHasResearch = Object.values(previousIndex).some((entry) => !isBlocked(entry));
-    const giveUp = 'give up the expired research with state-update (research: null, workflow_mode: "executing_task"), after which tasks\' research_basis no longer resolves';
+    // The way out names the mode the refresh interrupted (suspended_modes);
+    // executing_task, which it used to name, dropped a review in progress.
+    const giveUp = `give up the expired research with state-update (research: null, workflow_mode: "${resumeTarget(state)}"), after which tasks' research_basis no longer resolves`;
     if (recordHasResearch && blocked.length > 0) {
       return {
         error: true,

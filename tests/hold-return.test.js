@@ -301,3 +301,51 @@ describe('the direct writers keep the stack', () => {
     assert.deepEqual((await read({ basePath: dir })).suspended_modes, []);
   });
 });
+
+// A refresh the server refuses (a blocked result over research on record)
+// leaves the project in research_refresh_needed, and the refusal names the
+// way out. It named executing_task, which dropped the review the refresh had
+// interrupted.
+describe('giving up a refused research refresh', () => {
+  it('returns to the mode the refresh interrupted', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    await checkpointTask(dir, 1, '1.1');
+    const day = 86_400_000;
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    const review = { scope: 'task', scope_id: '1.1', stage: 'quality' };
+    Object.assign(raw, {
+      workflow_mode: 'reviewing_task',
+      current_review: review,
+      research: {
+        volatility: 'medium',
+        expires_at: new Date(Date.now() - day).toISOString(),
+        sources: [],
+        files: ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md'],
+        updated_at: new Date(Date.now() - 30 * day).toISOString(),
+        decision_index: { 'decision:a': { summary: 'Use A', source: 'docs', expires_at: new Date(Date.now() - day).toISOString() } },
+      },
+    });
+    await writeFile(statePath, JSON.stringify(raw));
+    assert.ok((await update({ updates: { workflow_mode: 'research_refresh_needed' }, basePath: dir })).success);
+
+    const soon = new Date(Date.now() + day).toISOString();
+    const refused = await stateApi.storeResearch({
+      result: { decision_ids: ['decision:blocked-no-sources'], volatility: 'high', expires_at: soon, sources: [], blocked: true },
+      decision_index: { 'decision:blocked-no-sources': { summary: '[BLOCKED] no sources', source: 'none', expires_at: soon } },
+      artifacts: { 'STACK.md': 'x', 'ARCHITECTURE.md': 'x', 'PITFALLS.md': 'x', 'SUMMARY.md': 'x' },
+      basePath: dir,
+    });
+    assert.equal(refused.code, 'VALIDATION_FAILED', JSON.stringify(refused));
+    assert.match(refused.message, /state-update \(research: null, workflow_mode: "reviewing_task"\)/);
+
+    const gaveUp = await update({ updates: { research: null, workflow_mode: 'reviewing_task' }, basePath: dir });
+    assert.ok(gaveUp.success, JSON.stringify(gaveUp));
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'reviewing_task');
+    assert.deepEqual(after.current_review, review);
+    assert.deepEqual(after.suspended_modes, []);
+  });
+});

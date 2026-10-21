@@ -183,6 +183,10 @@ stateDiagram-v2
     awaiting_clear --> reviewing_task : /clear 前在审查，恢复审查
     awaiting_clear --> reviewing_phase : /clear 前在审查，恢复审查
     awaiting_clear --> awaiting_user : /clear 前在等用户决定
+    awaiting_clear --> paused_by_user : /clear 前已暂停
+    awaiting_clear --> planning : /clear 前在规划
+    planning --> awaiting_clear : 上下文 < 35%
+    planning --> paused_by_user : 暂停
     awaiting_user --> executing_task : 用户解除阻塞 / 自动匹配 decision
     awaiting_user --> executing_task : phase-complete(direction_ok: true) 解决方向漂移 (非最终 phase)
 
@@ -202,6 +206,9 @@ stateDiagram-v2
     paused_by_user --> reviewing_task : resume 恢复审查状态
     paused_by_user --> reviewing_phase : resume 恢复审查状态
     paused_by_user --> awaiting_user : 暂停前在等用户决定
+    paused_by_user --> planning : 暂停前在规划
+    reconcile_workspace --> executing_task : 用户确认，回到 resume_to
+    replan_required --> executing_task : 用户确认，回到 resume_to
 
     completed --> [*]
     failed --> [*]
@@ -220,17 +227,19 @@ stateDiagram-v2
 `executing_task -> awaiting_clear -> executing_task` (需要 /clear + /resume)
 
 **Preflight 覆盖 (resume 时检测)**:
-`resumeWorkflow()` 执行 `evaluatePreflight()` 检测以下条件 (按优先级)。L3 人工确认 hold (`current_review.stage === 'human_confirmation'`) 在 `awaiting_user`、`awaiting_clear`、`paused_by_user` 中时整段跳过，任何覆盖都不能清掉它:
+`resumeWorkflow()` 执行 `evaluatePreflight()` 检测以下条件 (按优先级)。只在即将执行或审查的模式 (`executing_task`、`reviewing_task`、`reviewing_phase`) 和三个会再跑一次检测的 hold (`reconcile_workspace`、`replan_required`、`research_refresh_needed`) 里执行 (`PREFLIGHT_MODES`)；暂停、规划中、等用户决定 (含 L3 人工确认)、等 /clear 时整段跳过，回到工作模式后的下一次 resume 再检测:
 1. git HEAD 不匹配 -> `reconcile_workspace`
 2. 计划文件被外部修改 -> `replan_required`
 3. 方向漂移 -> `awaiting_user`
 4. `current_phase` 之前的 phase 有 `needs_revalidation` task -> `rollback_to_dirty_phase`
 5. 研究缓存过期 -> `research_refresh_needed` (只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时检测，见 `REFRESH_MODES`；其他状态先回到执行)
 
-**离开再回来 (/clear、暂停、研究刷新)**:
-三条路径都只凭 `current_review` 决定回到哪个模式，共用 `workflowModeForReview()`：没有审查或调试中 (`stage === 'debugging'`) → `executing_task`；带审查阶段 (`spec` / `quality`) 以外的 stage (如 `human_confirmation`、`review_retry_exhausted`、`direction_drift`) → `awaiting_user`；其余按 `current_review.scope` 回到 `reviewing_phase` / `reviewing_task`。
-- /clear: `awaiting_clear` 恢复时直接写这个模式。
-- 暂停: `paused_by_user` 的 resume 把它报告为 `resume_to`，用户确认后写入。
-- 研究刷新: `storeResearch()` 中，如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()`，结果同上；只有一处不同：刷新让 task 失效时回到 `executing_task` 并清掉被打断的审查。
+**离开再回来 (hold 与它打断的模式)**:
+进入 hold (`awaiting_clear`、`awaiting_user`、`paused_by_user`、`reconcile_workspace`、`replan_required`、`research_refresh_needed`) 时，服务端把离开的模式压进 `suspended_modes` (只读，`state-update` 不能写)；释放 hold 回到栈顶时出栈，去了别的工作模式或结束时清空。hold 可以叠 hold (例如暂停后又 /clear)，各自回到自己打断的那个模式。回到栈顶的转移总是允许的。
+- /clear: `awaiting_clear` 恢复时直接写栈顶。
+- 暂停、`reconcile_workspace`、`replan_required`: resume 响应带 `resume_to` (栈顶)，确认后写入。
+- 研究刷新: `storeResearch()` 中，如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()` 决定去处：刷新让 task 失效时回到 `executing_task` 并清掉被打断的审查，否则回到原来的执行或审查；放弃研究时写 `resume_to`。
+- 0.18.0 之前写下、没有 `suspended_modes` 的 state：退回只凭 `current_review` 推断 (`workflowModeForReview()`)：没有审查或调试中 → `executing_task`；`spec` / `quality` 以外的 stage → `awaiting_user`；其余按 scope 回到 `reviewing_phase` / `reviewing_task`。
+- 离开 `planning` 去 `executing_task` 时刷新计划哈希，规划期间改过的计划文件不会在下一次 resume 被报成漂移。
 
 来源: `WORKFLOW_MODES` in `src/schema.js`, `resumeWorkflow()` in `src/tools/orchestrator/resume.js`, `evaluatePreflight()` in `src/tools/orchestrator/helpers.js`, `storeResearch()` in `src/tools/state/`
