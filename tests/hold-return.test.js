@@ -454,6 +454,77 @@ describe('the holds the server releases itself', () => {
     });
   }
 
+  async function blockFirstTask(dir) {
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    Object.assign(raw.phases[0].todo[0], { lifecycle: 'blocked', blocked_reason: 'needs a key' });
+    await writeFile(statePath, JSON.stringify(raw));
+    return raw.phases[0].todo[0].id;
+  }
+
+  // Each hold the server releases itself takes one level of resume's
+  // recursion; a stack of them ran out of levels after the write had landed
+  // (delta review of the pre-ship repairs).
+  it('unblocking by hand under a /clear over a blocked-task hold finishes', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    for (const m of ['awaiting_user', 'awaiting_clear']) await update({ updates: { workflow_mode: m }, basePath: dir });
+    const id = await blockFirstTask(dir);
+    const res = await resumeWorkflow({ basePath: dir, unblock_tasks: [id] });
+    assert.ok(res.success, JSON.stringify(res));
+    assert.deepEqual(res.unblocked, [id]);
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'executing_task');
+  });
+
+  it('unblocking by hand returns to the review the blocked-task hold interrupted, review and all', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    // A phase review need carry no stage, so awaiting_user over one is the
+    // blocked-task hold (a stage would make it a decision held at it).
+    await checkpointTask(dir, 1, '1.1');
+    const review = { scope: 'phase', scope_id: 1 };
+    await update({ updates: { workflow_mode: 'reviewing_phase', current_review: review }, basePath: dir });
+    await update({ updates: { workflow_mode: 'awaiting_user' }, basePath: dir });
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    Object.assign(raw.phases[0].todo[1], { lifecycle: 'blocked', blocked_reason: 'needs a key' });
+    await writeFile(statePath, JSON.stringify(raw));
+    const res = await resumeWorkflow({ basePath: dir, unblock_tasks: [raw.phases[0].todo[1].id] });
+    assert.ok(res.success, JSON.stringify(res));
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'reviewing_phase');
+    assert.deepEqual(after.current_review, review);
+  });
+
+  it('unblocking by hand leaves a decision held at a stage alone', async (t) => {
+    // An L3 confirmation is not the blocked-task hold: unblocking an
+    // unrelated task released it, and the confirmation was never asked.
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    const id = await blockFirstTask(dir);
+    const review = { scope: 'task', scope_id: '1.2', stage: 'human_confirmation', pending_tasks: ['1.2'] };
+    await update({ updates: { workflow_mode: 'awaiting_user', current_review: review }, basePath: dir });
+    const res = await resumeWorkflow({ basePath: dir, unblock_tasks: [id] });
+    assert.ok(res.success, JSON.stringify(res));
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'awaiting_user');
+    assert.deepEqual(after.current_review, review);
+    assert.equal(after.phases[0].todo[0].lifecycle, 'pending');
+  });
+
+  it('a refresh hold whose research was given up returns to a plan revision under it', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    for (const m of ['planning', 'research_refresh_needed']) await update({ updates: { workflow_mode: m }, basePath: dir });
+    assert.equal((await read({ basePath: dir })).research, null, 'premise: no research on record');
+    await resumeWorkflow({ basePath: dir });
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'planning');
+  });
+
   it('blocked tasks that unblock return to the review they interrupted, review and all', async (t) => {
     // A phase review need carry no stage, so awaiting_user over one is the
     // blocked-task hold, not a decision held at a stage.

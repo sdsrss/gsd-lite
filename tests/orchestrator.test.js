@@ -17,6 +17,7 @@ function corruptStateOnDisk(dir, mutate) {
   writeFileSync(p, `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
 }
 import { init, read, update } from '../src/tools/state/index.js';
+import { MAX_RESUME_DEPTH } from '../src/tools/orchestrator/helpers.js';
 import {
   handleDebuggerResult,
   handleExecutorResult,
@@ -1581,8 +1582,8 @@ describe('orchestrator skeleton', () => {
       basePath: tempDir,
     });
 
-    // Call with _depth at the limit (3) — should be rejected immediately
-    const result = await resumeWorkflow({ basePath: tempDir, _depth: 3 });
+    // Call with _depth at the limit — should be rejected immediately
+    const result = await resumeWorkflow({ basePath: tempDir, _depth: MAX_RESUME_DEPTH });
     assert.equal(result.error, true);
     assert.ok(result.message.includes('depth'), `Expected depth-related error, got: ${result.message}`);
   });
@@ -1594,8 +1595,8 @@ describe('orchestrator skeleton', () => {
       basePath: tempDir,
     });
 
-    // Call with _depth=2 (below limit of 3) — should succeed normally
-    const result = await resumeWorkflow({ basePath: tempDir, _depth: 2 });
+    // One below the limit — should succeed normally
+    const result = await resumeWorkflow({ basePath: tempDir, _depth: MAX_RESUME_DEPTH - 1 });
     assert.equal(result.success, true);
     assert.equal(result.action, 'dispatch_executor');
   });

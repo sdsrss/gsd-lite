@@ -376,6 +376,15 @@ describe('a store lands whole or changes nothing', () => {
       assert.equal((await read({ basePath: dir })).research.blocked, true);
     });
 
+    it('leaves a decision_index that is not an object to validation, which names it', async () => {
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+      await handleResearcherResult({ ...payload(REAL), basePath: dir });
+      const { research } = await read({ basePath: dir });
+      const res = await update({ updates: { research: { ...research, decision_index: 'x', blocked: true } }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.match(res.message, /decision_index must be an object/);
+    });
+
     it('says a record with no decisions holds none', async () => {
       await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
       await handleResearcherResult({ ...payload(REAL), basePath: dir });
