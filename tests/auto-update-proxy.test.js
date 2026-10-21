@@ -85,6 +85,45 @@ describe('which way the updater reaches the network', () => {
     }
   });
 
+  // A probe that does not finish says nothing about the value: Node refuses
+  // one only after its preloads have run (checked on 26.8.1), so a slow start
+  // and a refusal look alike until the exit status arrives. Read as a
+  // refusal, a working proxy was skipped and the reason blamed it (pre-tag
+  // review 3). Unknown leaves the environment as it was: the updater then
+  // takes its own route, and never one that stops it at startup.
+  it('leaves the environment alone when Node does not answer in time', () => {
+    const calls = [];
+    const out = mod.updaterEnv({ ...PROXY }, { version: '26.8.1', due: () => true, probe: (env) => { calls.push(env); return null; } });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(out, { ...PROXY });
+  });
+
+  describe('nodeAcceptsProxyEnv asks this Node', () => {
+    const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(https?|all|no)_proxy$/i.test(k) && k !== 'NODE_USE_ENV_PROXY' && k !== 'NODE_OPTIONS'));
+    const reads = mod.nodeReadsProxyEnvAtStartup(process.versions.node);
+
+    it('premise: it is exported', () => assert.equal(typeof mod.nodeAcceptsProxyEnv, 'function'));
+
+    it('true for a value Node starts with', { skip: !reads && 'this Node does not read NODE_USE_ENV_PROXY' }, () => {
+      assert.equal(mod.nodeAcceptsProxyEnv({ ...base, HTTPS_PROXY: 'http://127.0.0.1:9' }), true);
+    });
+
+    it('false for a value Node refuses', { skip: !reads && 'this Node does not read NODE_USE_ENV_PROXY' }, () => {
+      assert.equal(mod.nodeAcceptsProxyEnv({ ...base, HTTPS_PROXY: 'proxy.corp:3128' }), false);
+    });
+
+    it('null, not false, when Node has not finished starting in time', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'gsd-slow-node-'));
+      try {
+        const slow = join(dir, 'slow.cjs');
+        await writeFile(slow, 'const end = Date.now() + 1500; while (Date.now() < end) {}\n');
+        assert.equal(mod.nodeAcceptsProxyEnv({ ...base, HTTPS_PROXY: 'http://127.0.0.1:9', NODE_OPTIONS: `--require=${slow}` }, { timeout: 300 }), null);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
   for (const [version, reads] of [['20.19.0', false], ['22.20.0', false], ['22.21.0', true], ['23.11.0', false], ['24.0.0', true], ['26.8.1', true], ['v24.0.0', true]]) {
     it(`Node ${version} ${reads ? 'reads' : 'does not read'} NODE_USE_ENV_PROXY at startup`, () => {
       assert.equal(mod.nodeReadsProxyEnvAtStartup(version), reads);
