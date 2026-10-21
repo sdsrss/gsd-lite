@@ -355,7 +355,8 @@ describe('repo gates — the test-count parsers read the reporter this repo actu
     ].join('\n'),
     tap: [
       'ok 1 - parses tests 7',
-      'not ok 2 - counts the tests 99 it was given',
+      // Indented as real TAP prints a test inside a describe.
+      '    not ok 2 - counts the tests 99 it was given',
       '1..2',
       '# tests 1439',
       '# suites 313',
@@ -545,31 +546,49 @@ describe('repo gates — scripts/sync-versions.js has no dry-run to mistake', ()
 // (2026-10-21). Asked of every npm install the package runs, not of the one
 // that failed.
 describe('repo gates — no npm install the package runs asks for an audit', () => {
-  // The npm installs in a source text: a quoted command string (any quote, so
-  // template literals count), or an argument array that starts with the
-  // subcommand, whatever the command was called through. Comments name these
+  // The npm installs in a source text, found by pattern, so a heuristic: a
+  // quoted command (any quote, so template literals count) with npm anywhere in
+  // it and the subcommand after any flags; an argument array passed to a
+  // literal 'npm', the subcommand anywhere in it; or an argument array that
+  // starts with the subcommand, whatever it is passed to. Comments name these
   // commands too, so whole-line comments go first; a block comment is stripped
   // only from the start of a line, since a string like 'phases/*.md' would
   // otherwise open one and swallow the code after it (pre-tag review).
+  //
+  // Not seen (second review): arguments built elsewhere and passed by name,
+  // a command named through a variable inside a string (`${npm} ci`), npm.cmd.
+  // Comments after code, messages that name an install and arrays that merely
+  // start with 'i' are counted: that fails loudly rather than passing wrongly,
+  // and a mention reviewed as not running anything goes in NOT_CALLS.
+  const NOT_CALLS = new Set([
+    "hooks/gsd-auto-update.cjs: '  npm install failed in cache dir, aborting cache sync'",
+  ]);
+  const SUB = '(?:ci|clean-install|install|i|add)';
   function npmInstallCalls(src) {
     const code = src.replace(/^\s*\/\*[\s\S]*?\*\//gm, '').replace(/^\s*\/\/.*$/gm, '');
     return [
-      ...[...code.matchAll(/['"`]npm (?:ci|install|i)\b[^'"`]*['"`]/g)].map((m) => m[0]),
-      ...[...code.matchAll(/\[\s*['"`](?:ci|install|i)['"`][^\]]*\]/g)].map((m) => m[0]),
+      ...[...code.matchAll(new RegExp(String.raw`(['"\x60])[^'"\x60\n]*\bnpm\s+(?:\S+\s+)*?${SUB}\b[^\n]*?\1`, 'g'))].map((m) => m[0]),
+      ...[...code.matchAll(new RegExp(String.raw`\(\s*['"\x60]npm['"\x60]\s*,\s*\[[^\]]*['"\x60]${SUB}['"\x60][^\]]*\]`, 'g'))].map((m) => m[0]),
+      ...[...code.matchAll(new RegExp(String.raw`(?<!\(\s*['"\x60]npm['"\x60]\s*,\s*)\[\s*['"\x60]${SUB}['"\x60][^\]]*\]`, 'g'))].map((m) => m[0]),
     ];
   }
 
-  it('finds each form an npm install can be written in', () => {
+  it('finds each form of npm install it claims to', () => {
     for (const [label, src] of [
       ['a command string', "execSync('npm ci --omit=dev')"],
       ['npm i', 'execSync("npm i --omit=dev")'],
       ['a template literal', 'execSync(`npm install --omit=dev`)'],
+      ['a command after another', "execSync('cd x && npm ci')"],
+      ['a flag before the subcommand', "execSync('npm --prefix d install')"],
+      ['an argument array with a flag first', "spawnSync('npm', ['--prefix', dir, 'install', '--omit=dev'])"],
       ['a command held in a variable', "spawnSync(npmBin, ['install', '--omit=dev'])"],
+      ['an alias', "execSync('npm clean-install')"],
       ['code after a string holding /*', "const glob = 'phases/*.md';\nexecSync('npm install')\n// */"],
     ]) {
       assert.equal(npmInstallCalls(src).length, 1, `${label}: ${JSON.stringify(npmInstallCalls(src))}`);
     }
     assert.deepEqual(npmInstallCalls("// a later manual 'npm install' in ~/.claude/gsd\n/**\n * 'npm ci' here\n */"), [], 'comments are not calls');
+    assert.deepEqual(npmInstallCalls("execSync('npm view gsd-lite version')"), [], 'other npm commands are not installs');
   });
 
   it('every npm install or ci in the published code passes --no-audit and --no-fund', () => {
@@ -586,7 +605,9 @@ describe('repo gates — no npm install the package runs asks for an audit', () 
       }
     };
     for (const entry of JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).files) walk(entry.replace(/\/$/, ''));
-    const commands = files.flatMap((rel) => npmInstallCalls(readFileSync(join(repoRoot, rel), 'utf8')).map((call) => `${rel}: ${call}`));
+    const found = files.flatMap((rel) => npmInstallCalls(readFileSync(join(repoRoot, rel), 'utf8')).map((call) => `${rel}: ${call}`));
+    assert.deepEqual([...NOT_CALLS].filter((c) => !found.includes(c)), [], 'NOT_CALLS lists a mention the scan no longer finds; remove it');
+    const commands = found.filter((c) => !NOT_CALLS.has(c));
     assert.ok(commands.length >= 4, `premise: the scan finds the package's npm installs, found ${JSON.stringify(commands)} in ${files.length} files`);
     assert.deepEqual(commands.filter((c) => !c.includes('--no-audit') || !c.includes('--no-fund')), []);
   });
