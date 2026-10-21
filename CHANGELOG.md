@@ -6,46 +6,60 @@ All notable changes to this project are documented here.
 
 Patch: the update check works behind a proxy and says why when it fails,
 auto-update stops writing Claude Code's plugin cache, and a refused state
-write leaves nothing behind. One call that used to be accepted is now refused;
-it is listed under **Now refused** at the end.
+write no longer leaves an evidence archive behind. One call that used to be
+accepted is now refused; it is listed under **Now refused** at the end.
 
 - **The update check goes through the proxy set in the environment.** Node's
   `fetch` ignores `HTTPS_PROXY` / `HTTP_PROXY` unless it is told to use them,
-  so behind a mandatory proxy every check timed out after 3 seconds and
-  recorded nothing: an install could stay on an old version for weeks without
-  a word. The check started at SessionStart now runs with
-  `NODE_USE_ENV_PROXY=1` when a proxy variable is set, you have not set
-  `NODE_USE_ENV_PROXY` yourself, and this Node accepts the value (it is asked
-  by starting Node with it; a value Node refuses, such as `host:port` without
-  a scheme or `socks5h://`, is not passed on, since Node would exit before
-  the check ran). `gsd update` turns the proxy on in-process on Node 24.14+ /
-  25.4+. Node 20, and Node 22 before 22.21, have no way for `fetch` to use a
-  proxy; there the failure reason says so.
+  so behind a mandatory proxy every check failed, typically after 3 seconds,
+  and recorded only the time of the check, which held the next one off for a
+  day: an install could stay on an old version for weeks without a word. The
+  check started at SessionStart now runs with `NODE_USE_ENV_PROXY=1` when a
+  proxy variable is set, you have not set `NODE_USE_ENV_PROXY` yourself, a
+  check is due, and this Node accepts the value. Node is asked by starting it
+  once with the value, which SessionStart waits for, at most once a day; a
+  value Node refuses, such as `host:port` without a scheme or `socks5h://`, is
+  not passed on, since Node would exit before the check ran. `gsd update`
+  turns the proxy on in-process on Node 24.14+ / 25.4+; on Node 22.21+,
+  24.0–24.13 and 25.0–25.3 run `NODE_USE_ENV_PROXY=1 gsd update`, and the
+  failure reason says so. Node 20, 21, 23, and 22 before 22.21 have no way for
+  `fetch` to use a proxy; there the failure reason says that. To keep checking
+  directly while a proxy variable is set, set `NODE_USE_ENV_PROXY=0` (Node
+  24.0–24.4 read any value as on). One known limit: a Node that takes more
+  than 3 seconds to start is read as refusing the value, and that day's check
+  goes direct.
 
 - **A failing update check says why.** `update-state.json` keeps the failure
   streak: when it started, how many checks in a row failed, and the reason,
   built only from an error code, an HTTP status, a timeout or the proxy route
   (never the raw error, which can carry a proxy password). From the third
-  failure in a row SessionStart shows one line with the reason, then every
-  seventh failure after that; a successful check clears it. A throttled
+  failure in a row the background check leaves a notice that the next
+  SessionStart shows as one line with the reason, then again every seventh
+  failure after that; a successful check ends the streak. A throttled
   `gsd update` names the last failure, and `/gsd:doctor` reads the streak
   from the third failure on.
 
 - **Auto-update no longer writes Claude Code's plugin cache.** On a plugin
   install it says to run `claude plugin update`, as it already did on most
-  paths; the one path that still ran `npm install` into
-  `plugins/cache/gsd/` and rewrote `installed_plugins.json` (`gsd update
-  --force` from a git checkout with the plugin installed) is gone. In that
-  same case the updater took the checkout for a dev install and ran
-  `install.js`, which deleted older cache versions and cleared `.orphaned_at`;
-  it reads the plugin registry first now, the way `install.js` does.
+  paths. The one path that still copied the release into
+  `plugins/cache/gsd/gsd/<version>`, ran `npm install` there, rewrote
+  `installed_plugins.json` and the StatusLine path in `settings.json`, and
+  pruned the cache to three versions (`gsd update --force` from a git
+  checkout with the plugin installed) is gone. In that same case the updater
+  took the checkout for a dev install and ran `install.js`, which deleted
+  older cache versions and cleared `.orphaned_at`, as did an automatic update
+  when the registry entry for gsd was an empty list. The updater now reads
+  the plugin registry first, and counts a plugin install the way
+  `install.js` does.
 
-- **A refused state write leaves no evidence archive behind.** When the
-  evidence store was full, `state-update` and `phase-complete` moved old
-  entries to `evidence-archive.json` before validating the write, so a write
-  that was then refused still wrote the archive, and repeating it pushed
-  entries that had really been archived out of the capped file. The archive
-  is written only after the write validates, just before `state.json`.
+- **A refused state write leaves no evidence archive behind.** `state-update`
+  (once the evidence store held more than 200 entries) and `phase-complete`
+  (on every call, for evidence from earlier phases) moved entries to
+  `evidence-archive.json` before validating the write, so a write that was
+  then refused still wrote the archive, and once the archive was at its
+  1000-entry cap, those copies pushed out entries that had really been
+  archived. The archive is written only after the write validates, just
+  before `state.json`.
 
 - **A SessionStart notice prints a version only if it is one.** The update
   notices matched their version fields by prefix, so a value that only began
@@ -59,15 +73,17 @@ it is listed under **Now refused** at the end.
   the summary counts. A test cancelled because a hook failed, a test behind a
   failing top-level `before`, and a todo or skipped test are no result; a
   test or suite that timed out is a failure; a `describe` that threw
-  registered no tests. It used to call replays with cancelled tests VACUOUS,
-  and one with a failing todo DISCRIMINATIVE. The replay tree's
-  `node_modules` is a real directory, so `install.js`'s copy into it works.
+  registered no tests. It used to call replays with cancelled, timed-out,
+  never-declared or skipped tests VACUOUS, and ones whose setup or teardown
+  hook failed DISCRIMINATIVE. The replay tree's `node_modules` is a real
+  directory, so `install.js`'s copy into it works.
 
 - **Now refused.** Accepted by 0.17.1:
-  - A phase patch whose `phase_review` or `phase_handoff` is not an object
-    (`null` included): `INVALID_INPUT` naming the field. 0.17.1 accepted
-    `null`, and spread a string into the field (`"ok"` became
-    `{"0":"o","1":"k",…}`).
+  - A phase patch whose `phase_review` or `phase_handoff` is not an object:
+    `INVALID_INPUT` naming the field, and nothing is written. 0.17.1 accepted
+    all of them: `null`, a number, a boolean or `[]` changed nothing and
+    reported success; a string or a non-empty array was spread into the field
+    (`"ok"` became `{"0":"o","1":"k",…}`).
 
 ## [0.17.1] - 2026-10-21
 
