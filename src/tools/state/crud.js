@@ -152,6 +152,19 @@ export async function init({ project, phases, research, force = false, basePath 
 }
 
 /**
+ * The way out of a research record that is already invalid on file (0.17.0's
+ * state-update could write one), for a validation failure to end with. Every
+ * write validated in full fails on it from then on, whatever it writes, and
+ * resume reported the same error each time with nothing pointing out. Not
+ * offered to a call that writes research itself: there the write is what is
+ * wrong, and dropping the record is not the fix.
+ */
+function researchEscape(errors, { writesResearch = false } = {}) {
+  if (writesResearch || !errors.some((error) => error.startsWith('research'))) return '';
+  return '. The research record on file is invalid: state-update (research: null) discards it, after which tasks\' research_basis no longer resolves';
+}
+
+/**
  * Read state.json, optionally filtering to specific fields.
  */
 export async function read({ fields, basePath = process.cwd(), validate = false } = {}) {
@@ -174,7 +187,7 @@ export async function read({ fields, basePath = process.cwd(), validate = false 
   if (validate) {
     const validation = validateState(state);
     if (!validation.valid) {
-      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}` };
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `State validation failed: ${validation.errors.join('; ')}${researchEscape(validation.errors)}` };
     }
   }
 
@@ -502,7 +515,7 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       return {
         error: true,
         code: ERROR_CODES.VALIDATION_FAILED,
-        message: `Validation failed: ${validation.errors.join('; ')}`,
+        message: `Validation failed: ${validation.errors.join('; ')}${researchEscape(validation.errors, { writesResearch: 'research' in updates })}`,
       };
     }
 
@@ -679,7 +692,7 @@ export async function phaseComplete({
       phase.phase_handoff.direction_ok = false;
       const driftValidation = validateState(state);
       if (!driftValidation.valid) {
-        return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${driftValidation.errors.join('; ')}` };
+        return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${driftValidation.errors.join('; ')}${researchEscape(driftValidation.errors)}` };
       }
       state._version = (state._version ?? 0) + 1;
       await writeJson(statePath, state);
@@ -750,7 +763,7 @@ export async function phaseComplete({
     // Validate final state before persisting (match direction_ok=false branch)
     const finalValidation = validateState(state);
     if (!finalValidation.valid) {
-      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${finalValidation.errors.join('; ')}` };
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${finalValidation.errors.join('; ')}${researchEscape(finalValidation.errors)}` };
     }
     state._version = (state._version ?? 0) + 1;
     await writeJson(statePath, state);
@@ -964,7 +977,7 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
     // Full validation
     const validation = validateState(state);
     if (!validation.valid) {
-      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${validation.errors.join('; ')}` };
+      return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${validation.errors.join('; ')}${researchEscape(validation.errors)}` };
     }
 
     state._version = (state._version ?? 0) + 1;

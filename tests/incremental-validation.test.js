@@ -11,7 +11,11 @@ import {
   CANONICAL_FIELDS,
   WORKFLOW_MODES,
 } from '../src/schema.js';
-import { init, storeResearch, update } from '../src/tools/state/index.js';
+import { init, patchPlan, phaseComplete, read, storeResearch, update } from '../src/tools/state/index.js';
+import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
+import { acceptTask, createTempDir, initProject, removeTempDir } from './e2e-helpers.js';
+
+const PASSED = { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } };
 
 describe('validateStateUpdate', () => {
   const baseState = () => createInitialState({ project: 'test', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }] });
@@ -684,4 +688,69 @@ describe('update() never writes a state that validateState refuses', () => {
     });
   }
 
+  // A research record already invalid on file fails every write that is
+  // validated in full, whatever it writes, and resume reported only the
+  // error, every time.
+  describe('a research record that is already invalid on file', () => {
+    const plant = async () => {
+      const raw = JSON.parse(original);
+      raw.research = { decision_index: { 'decision:a': null } };
+      await writeFile(join(dir, '.gsd', 'state.json'), JSON.stringify(raw));
+    };
+
+    it('says how to get out of it when a write fails on it', async () => {
+      await plant();
+      const res = await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.match(res.message, /research\.decision_index\.decision:a must be an object/);
+      assert.ok(res.message.includes('state-update (research: null)'), res.message);
+      const escaped = await update({ updates: { research: null }, basePath: dir });
+      assert.ok(escaped.success, JSON.stringify(escaped));
+      const retried = await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: dir });
+      assert.ok(retried.success, JSON.stringify(retried));
+    });
+
+    it('does not offer it to an update that writes research itself', async () => {
+      // There the update is what is wrong, and dropping the record is not the fix.
+      await writeFile(join(dir, '.gsd', 'state.json'), original);
+      const res = await update({ updates: { research: { decision_index: { 'decision:a': null } } }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.ok(!res.message.includes('research: null'), res.message);
+    });
+
+    it('resume reports the way out too', async () => {
+      await plant();
+      const res = await resumeWorkflow({ basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.ok(res.message.includes('state-update (research: null)'), res.message);
+    });
+
+    // Every other path that answers with validateState's errors.
+    for (const [label, call] of [
+      ['a validating read', (base) => read({ basePath: base, validate: true })],
+      ['a plan patch', (base) => patchPlan({ operations: [{ op: 'add_task', phase_id: 1, task: { name: 'X' } }], basePath: base })],
+      ['phase-complete', (base) => phaseComplete({ phase_id: 1, basePath: base, direction_ok: true, verification: PASSED })],
+      ['phase-complete finding drift', (base) => phaseComplete({ phase_id: 1, basePath: base, direction_ok: false, verification: PASSED })],
+    ]) {
+      it(`${label} says it as well`, async () => {
+        const base = await createTempDir();
+        try {
+          await initProject(base);
+          for (const id of ['1.1', '1.2']) await acceptTask(base, 1, id);
+          await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: base });
+          await update({ updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] }, basePath: base });
+          const statePath = join(base, '.gsd', 'state.json');
+          const raw = JSON.parse(await readFile(statePath, 'utf8'));
+          assert.ok(validateState(raw).valid, 'premise: the phase is ready before the research is broken');
+          raw.research = { decision_index: { 'decision:a': null } };
+          await writeFile(statePath, JSON.stringify(raw));
+          const res = await call(base);
+          assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+          assert.ok(res.message.includes('state-update (research: null)'), res.message);
+        } finally {
+          await removeTempDir(base);
+        }
+      });
+    }
+  });
 });
