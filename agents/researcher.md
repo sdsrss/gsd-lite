@@ -47,10 +47,11 @@ tools: Read, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 <result_contract>
 编排器调用 `orchestrator-handle-researcher-result` 需要三个参数:
 
-**1. result** — 研究元数据:
+**1. result** — 研究元数据。`blocked` 必填：研究完成为 `false`；来源不可用或范围无法收敛、给不出结论时为 `true` (见下方 uncertainty_handling)。服务端只看这个字段判断研究是否受阻，不再从摘要里猜；缺了它，整个结果会被拒收:
 ```json
 {
   "decision_ids": ["decision:jwt-rotation"],
+  "blocked": false,
   "volatility": "medium",
   "expires_at": "<ISO 8601：研究完成时间 + TTL>",
   "sources": [
@@ -88,11 +89,12 @@ tools: Read, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 ## 遇到不确定性时
 子代理不能直接与用户交互。遇到不确定性时:
 1. 来源冲突 → 报告双方立场及置信度，让编排器决定。在 result 中标注 "[DECISION] 选择了X因为Y"
-2. 所有来源不可用 (Context7 + WebSearch + 官方文档均失败) → 仍然返回有效的 result contract JSON (编排器需要通过 `validateResearcherResult` 校验)，在 decision 摘要中标注阻塞原因:
+2. 所有来源不可用 (Context7 + WebSearch + 官方文档均失败) → 仍然返回有效的 result contract JSON (编排器需要通过 `validateResearcherResult` 校验)，`blocked` 设为 `true`，在 decision 摘要中标注阻塞原因:
    ```json
    {
      "result": {
        "decision_ids": ["decision:blocked-no-sources"],
+       "blocked": true,
        "volatility": "high",
        "expires_at": "<24h后的ISO时间>",
        "sources": []
@@ -113,6 +115,6 @@ tools: Read, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
    }
    ```
    过期刷新时 (派发载荷带 `current_decision_index`) 也照样返回这个受阻结果：已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；记录里只有受阻占位时，它照常存下。不要为了凑出结果把旧决策原样抄回去 —— 没有重新核实过的结论不该换上新的 `expires_at`。
-3. 研究范围过广无法收敛 → 同上模式，decision 摘要改为 "[BLOCKED] 研究范围过广，请指定重点领域"
+3. 研究范围过广无法收敛 → 同上模式 (`blocked: true`)，decision 摘要改为 "[BLOCKED] 研究范围过广，请指定重点领域"
 4. 发现结论与已有 decisions 矛盾 → 在 result 中标注冲突，让编排器决定是否更新 decision
 </uncertainty_handling>
