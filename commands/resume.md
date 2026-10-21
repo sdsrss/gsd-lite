@@ -120,7 +120,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 - 展示当前进度摘要 (从 canonical fields 推导)
 - 询问用户: "项目已暂停。是否继续执行？"
-- 用户确认 → `state-update` 把 `workflow_mode` 设为响应里的 `resume_to` (由暂停时的 `current_review` 推出；一律写 `executing_task` 会丢掉暂停时进行中的审查) → 恢复调度
+- 用户确认 → `state-update` 把 `workflow_mode` 设为响应里的 `resume_to` (服务端记下的、被这次暂停打断的模式：可能是规划、某个审查，或等你决定的 hold；一律写 `executing_task` 会把它丢掉) → 恢复调度
 - 用户拒绝 → 保持暂停状态
 
 ---
@@ -136,7 +136,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - a) 接受当前状态，更新 `git_head` 继续
   - b) 回退到记录的 HEAD
   - c) 手动 reconcile 后再 /gsd:resume
-- 用户决策后 → 更新 state.json → 切换到对应的恢复模式
+- 用户决策后 → `state-update` 写入 `git_head`，`workflow_mode` 写响应里的 `resume_to` (被这次核对打断的模式，例如进行中的审查或规划；写 `executing_task` 会把它丢掉)
 
 ---
 
@@ -150,6 +150,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - a) 确认变更兼容，继续执行 (更新 plan_version)
   - b) 重新规划 (回到 /gsd:start 或 /gsd:prd 的计划阶段)
   - c) 回退文件变更
+- 选 a) 时 `workflow_mode` 写响应里的 `resume_to` (被这次核对打断的模式)
 
 ---
 
@@ -167,7 +168,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - 被标记的 task 所在的已验收 phase 重新打开，之后的 resume 会回滚到它
 - 返回 `research_stored` 后恢复执行；`research_warnings` 里的警告和 `invalidated_tasks` 先转达给用户
 - 返回校验错误时什么都没有写入 (例如某个 `expires_at` 早于现在)。受阻结果被拒收的情况见下一条，直接停下；其他校验错误把错误原文交给 researcher 重新派发一次；第二次仍然报错就停下，把错误展示给用户。不要自己改 state 或写研究文件
-- researcher 返回 `[BLOCKED]` 结果 (来源不可用，或范围过广无法收敛) 时，已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户。用户可以补充信息、缩小范围、等来源恢复后再 `/gsd:resume`，或者放弃这份过期研究：`state-update({updates: {research: null, workflow_mode: "executing_task"}})`，之后 task 的 `research_basis` 不再解析。已记录的只有受阻占位 (规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行
+- researcher 返回 `[BLOCKED]` 结果 (来源不可用，或范围过广无法收敛) 时，已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户。用户可以补充信息、缩小范围、等来源恢复后再 `/gsd:resume`，或者放弃这份过期研究：`state-update({updates: {research: null, workflow_mode: <响应里的 resume_to>}})`，之后 task 的 `research_basis` 不再解析。已记录的只有受阻占位 (规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行
 - 研究过期只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时走到这里；其他状态 (等用户、暂停、规划中、等 /clear、核对工作区或计划) 先按各自的处理回到执行 —— 有时就在同一次 resume 里 —— 回到执行后再刷新
 
 ---
@@ -184,7 +185,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 ### `planning` — 计划中断
 
-- 计划编制过程中被中断
+- 计划编制过程中被中断 (暂停、/clear 或核对之后回到规划，也停在这里)
 - 告知用户: "项目仍在计划阶段。请运行 /gsd:start 或 /gsd:prd 重新启动计划流程"
 - 不自动执行
 

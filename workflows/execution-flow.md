@@ -160,8 +160,8 @@
 | `review_accepted` | 审查通过 → 继续循环 |
 | `review_incomplete` | 阶段审查没有对 `unreviewed_tasks` 里的 task 给出结论，这一轮不算通过 (计入重试次数)。继续循环：resume 会重新触发阶段审查 |
 | `continue_execution` | L0/auto-accept 后 → 继续循环 |
-| `replan_required` | 计划文件被修改。**自动处理:** 确认计划无误后，调用 `state-update({updates: {workflow_mode: "executing_task"}})` → 继续循环 |
-| `reconcile_workspace` | Git HEAD 不一致。检查变更，调用 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: "executing_task"}})` → 继续循环 |
+| `replan_required` | 计划文件被修改。**自动处理:** 确认计划无误后，调用 `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 (`resume_to` 是被这次核对打断的模式；写 `executing_task` 会丢掉进行中的审查或规划) |
+| `reconcile_workspace` | Git HEAD 不一致。检查变更，调用 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: <响应里的 resume_to>}})` → 继续循环 (同上，`resume_to` 是被打断的模式) |
 | `rollback_to_dirty_phase` | 早期 phase 有失效 task。**自动处理:** 继续循环 (resume 已回滚 current_phase) |
 | `trigger_review` | 所有 task 已 checkpointed，触发 phase review → 继续循环 (resume 会自动 dispatch_reviewer) |
 | `phase_failed` | debugger 报告架构问题，phase 标记 failed。向用户展示失败信息 |
@@ -182,10 +182,10 @@
 
 | `workflow_mode` | 操作 |
 |--------|------|
-| `reconcile_workspace` | 同上表 `reconcile_workspace` 行：核对 `changed_files`，确认无误后 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: "executing_task"}})` → 继续循环 |
-| `replan_required` | 同上表 `replan_required` 行：核对 `drift_phase` 指出的计划改动，确认无误后 `state-update({updates: {workflow_mode: "executing_task"}})` → 继续循环 |
+| `reconcile_workspace` | 同上表 `reconcile_workspace` 行：核对 `changed_files`，确认无误后 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: <响应里的 resume_to>}})` → 继续循环 |
+| `replan_required` | 同上表 `replan_required` 行：核对 `drift_phase` 指出的计划改动，确认无误后 `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 |
 | `awaiting_clear` | 上下文不足。执行 /clear 后重新 /gsd:resume |
-| `paused_by_user` | 项目已暂停。向用户确认是否恢复;确认 → `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 (`resume_to` 由暂停时的 `current_review` 推出：审查中回到审查，调试中回到执行，等你决定的回到等待，其余回到执行) |
+| `paused_by_user` | 项目已暂停。向用户确认是否恢复;确认 → `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 (`resume_to` 是服务端记下的、被暂停打断的模式：规划中回到规划，审查中回到审查，等你决定的回到等待，其余回到执行) |
 | `planning` | 计划尚未落地。完成计划并调用 `state-init` |
 | `awaiting_user` | 有 `current_review.stage` 的 hold（如 `review_retry_exhausted`）。展示 `current_review` 与 `recovery_options`，等待用户选择;用户决定后 `orchestrator-resume recovery:'retry_failed'\|'skip_failed'\|'replan'` |
 | 其他 | 展示信息并停止 |

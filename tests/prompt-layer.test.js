@@ -219,6 +219,19 @@ describe('prompt layer — commands', () => {
     }
   });
 
+  // reconcile_workspace and replan_required are released by the orchestrator
+  // itself, by the action table; they wrote executing_task, which dropped the
+  // review or the plan revision they had interrupted.
+  it('releasing a reconcile or replan hold writes the resume_to the server reports', () => {
+    const rows = read('workflows/execution-flow.md').split('\n')
+      .filter((l) => /^\| `(reconcile_workspace|replan_required)` \|/.test(l));
+    assert.equal(rows.length, 4, `premise: two rows each in the action and dispatch tables, found ${rows.length}`);
+    for (const row of rows) {
+      assert.match(row, /workflow_mode: <响应里的 resume_to>/, row);
+      assert.doesNotMatch(row, /workflow_mode: "executing_task"/, row);
+    }
+  });
+
   it('resuming a paused project writes the resume_to the server reports', () => {
     // Both texts said to write executing_task, which dropped a review that was
     // in progress when the project was paused; resume_to is the mode the
@@ -753,7 +766,7 @@ describe('prompt layer — the instruction sentences', () => {
     ['commands/resume.md', '已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户'],
     ['agents/researcher.md', '已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；记录里只有受阻占位时，它照常存下。'],
     // The way out of a refused refresh, and the offline project that is not stopped.
-    ['commands/resume.md', '`state-update({updates: {research: null, workflow_mode: "executing_task"}})`'],
+    ['commands/resume.md', '`state-update({updates: {research: null, workflow_mode: <响应里的 resume_to>}})`'],
     ['commands/resume.md', '已记录的只有受阻占位 (规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行'],
     ['commands/resume.md', '受阻结果被拒收的情况见下一条，直接停下'],
     // getReviewTargets includes every checkpointed task (a level lowered to L0 after checkpoint).
