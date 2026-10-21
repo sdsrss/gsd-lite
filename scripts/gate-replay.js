@@ -37,10 +37,11 @@
  * `at`. Both used to produce a verdict — one a confident VACUOUS, the other a
  * stack trace at exit 1, which is the code VACUOUS uses.
  *
- * A test that never ran its body — cancelled by its parent, or behind a hook
- * that failed — was never evaluated. It is neither a pass nor a failure, so a
- * file with such tests and no failure is INCONCLUSIVE, never VACUOUS. A test
- * that timed out is a failure.
+ * A test without a result of its own — cancelled by its parent, behind a hook
+ * that failed, or never declared because its describe threw — is neither a
+ * pass nor a failure, so a file with such tests and no failure is
+ * INCONCLUSIVE, never VACUOUS. A timeout, a test's or a suite's, is a failure;
+ * a TODO or SKIP test is no result.
  *
  * Nothing is written inside the repo: the base tree is a detached worktree in a
  * temp dir, removed on exit, and its node_modules holds a symlink to each of
@@ -187,22 +188,36 @@ try {
     const skipped = / # (SKIP|TODO)\b/.test(m[3]);
     results.push({ ok: m[2] === 'ok', name: m[3].replace(/ # (SKIP|TODO)\b.*$/, '').trim(), type, failureType, error, skipped });
   }
-  // The verdict is read from each leaf's failureType, not from the summary
-  // counts, because Node's counts do not say what ran: a test cancelled by
-  // its parent, and one that timed out, are both under `# cancelled`, and a
-  // test whose top-level before/beforeEach failed is under `# fail`. A test
-  // that never ran its body — cancelledByParent, hookFailed — is neither a
-  // pass nor a failure; one that timed out is a red. `type` is absent on a
-  // bare result line; keep those rather than dropping a real failure over a
-  // missing diagnostic.
-  const NOT_RUN = ['cancelledByParent', 'hookFailed'];
-  const leafResults = results.filter((r) => r.type !== 'suite');
-  const failing = leafResults.filter((r) => !r.ok && !NOT_RUN.includes(r.failureType)).map((r) => r.name);
-  const notRun = leafResults.filter((r) => !r.ok && NOT_RUN.includes(r.failureType)).map((r) => r.name);
-  const passing = leafResults.filter((r) => r.ok && !r.skipped).map((r) => r.name);
+  // The verdict is read from each result's failureType, not from the summary
+  // counts, because Node's counts do not say what ran: a test that timed out
+  // is counted under `# cancelled` beside the ones that never ran, a test
+  // behind a failing hook under `# fail`, and a failing `todo` is a `not ok`
+  // counted nowhere. So:
+  //   - a TODO or SKIP test is no result (a todo is expected to fail);
+  //   - cancelledByParent never ran, and hookFailed is the hook's result
+  //     (before or after the body — TAP does not say which), not the test's;
+  //   - a timeout is a red, a test's or a whole suite's (its tests are then
+  //     reported as cancelled);
+  //   - a describe whose callback threw registered none of its tests.
+  // `type` is absent on a bare result line, and on every test result under
+  // Node 20; keep those rather than dropping a real failure over a missing
+  // diagnostic.
+  const NO_RESULT = ['cancelledByParent', 'hookFailed'];
+  const leafResults = results.filter((r) => r.type !== 'suite' && !r.skipped);
+  const suiteResults = results.filter((r) => r.type === 'suite');
+  const failing = [
+    ...leafResults.filter((r) => !r.ok && !NO_RESULT.includes(r.failureType)).map((r) => r.name),
+    ...suiteResults.filter((r) => r.failureType === 'testTimeoutFailure').map((r) => r.name),
+  ];
+  const noResult = leafResults.filter((r) => !r.ok && NO_RESULT.includes(r.failureType));
+  const brokenSuites = suiteResults.filter((r) => r.failureType === 'testCodeFailure');
+  const passing = leafResults.filter((r) => r.ok).map((r) => r.name);
   const hookFailures = results.filter((r) => !r.ok && r.failureType === 'hookFailed');
-  const printHookFailures = () => {
-    for (const r of hookFailures) console.log(`  a hook failed${r.type === 'suite' ? ` in "${r.name}"` : ` before "${r.name}"`}: ${(r.error ?? '').slice(0, 200)}`);
+  const printWhy = () => {
+    for (const r of hookFailures) {
+      console.log(`  a hook failed${r.type === 'suite' ? ` in "${r.name}"` : ` before or after "${r.name}"`}: ${(r.error ?? '').slice(0, 200)}`);
+    }
+    for (const r of brokenSuites) console.log(`  "${r.name}" threw while declaring its tests: ${(r.error ?? '').slice(0, 200)}`);
   };
 
   // Node names a FILE as the test when the file contributed no test of its own,
@@ -243,19 +258,19 @@ try {
   } else if (failing.length > 0) {
     console.log(`DISCRIMINATIVE — ${failing.length}/${tests} failed on ${baseSha}:\n`);
     for (const name of [...new Set(failing)]) console.log(`  ✖ ${name}`);
-    if (notRun.length > 0) {
-      console.log(`\n  (${notRun.length} more never ran: a hook or an enclosing suite failed)`);
-      printHookFailures();
+    if (noResult.length > 0 || brokenSuites.length > 0) {
+      console.log(`\n  (${noResult.length} more have no result of their own: a hook, an enclosing suite or its declaration failed)`);
+      printWhy();
     }
     console.log('\nRead the failures before believing them. A test that goes red on the base tree');
     console.log('for an unrelated reason — a missing import, a helper added by the same commit —');
     console.log('is indistinguishable from one that earns its place, except by reading it.');
-  } else if (notRun.length > 0) {
-    console.log(`INCONCLUSIVE — ${notRun.length} of ${tests} tests never ran on ${baseSha}: a hook or an enclosing suite failed.`);
-    printHookFailures();
-    console.log('\nA test whose setup failed was neither passed nor failed. The rest passing says');
-    console.log('nothing about these. Replay against a base where the setup succeeds, or read');
-    console.log('why it failed above.');
+  } else if (noResult.length > 0 || brokenSuites.length > 0) {
+    console.log(`INCONCLUSIVE — ${noResult.length} of ${tests} tests have no result of their own on ${baseSha}: a hook, an enclosing suite or a suite's declaration failed.`);
+    printWhy();
+    console.log('\nA test whose setup or teardown failed, or that was never declared, was neither');
+    console.log('passed nor failed. The rest passing says nothing about these. Replay against a');
+    console.log('base where the setup succeeds, or read why it failed above.');
     exitCode = 2;
   } else if (passing.length === 0) {
     console.log(`INCONCLUSIVE — every test in the file was skipped on ${baseSha}; nothing was evaluated.`);
