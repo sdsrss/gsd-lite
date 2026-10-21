@@ -167,23 +167,33 @@ function declaresHook(manifestPath, hookType) {
 /**
  * Has the user switched gsd off with `/plugin disable`?
  *
- * True when a gsd plugin record applies here — `gsd@gsd` or a fork's
- * `gsd@<marketplace>`, at user scope, or at project or local scope for this
- * directory — and every such record is explicitly not enabled: the
- * highest-precedence settings file that names its id (the project's
- * settings.local.json, then its settings.json, then the user's; Claude Code's
- * own order) holds a value other than `true`.
+ * Claude Code decides whether a plugin is enabled from settings this can only
+ * partly see: managed settings that may come from a server or MDM, the
+ * session's `--settings`, the project files of the directory the session
+ * started in (or moved to with /cd), the local file at the git root or the
+ * main checkout. So it answers yes only when every reading it can make says
+ * off, and anything else is "not disabled": the npx registrations then run,
+ * which is visible, where a wrong yes silences them — and with them the
+ * StatusLine that feeds the plugin's own context monitor — with nothing
+ * printed (hook-registry's rule: running twice is an annoyance, zero times
+ * is silent).
  *
- * Installed-but-disabled used to read as "the plugin is not serving, so the
- * npx registrations run" (pluginServesHooks), and gsd stayed on after the
- * user turned it off. Nothing here is a guess: no registry, an unreadable
- * one, no record for this directory, or no file naming the id is not a
- * disable — the npx install is then the user's only gsd and keeps running.
+ * Yes requires all of:
+ * - a plugin record that is gsd-lite (its package.json says so; a record
+ *   named `gsd@…` can be another plugin) and applies here: user scope, or
+ *   project or local scope for this project;
+ * - for every such record, a deciding value of exactly `false`, taken in
+ *   Claude Code's order: the project's settings.local.json (at the main
+ *   checkout's root or the git root first, then in the project directory),
+ *   its settings.json, the user's settings.json;
+ * - every one of those files that exists parses.
  *
- * @param {string} claudeDir  resolved CLAUDE_CONFIG_DIR / ~/.claude
- * @param {string} cwd        the project directory the session runs in
+ * @param {string} claudeDir   resolved CLAUDE_CONFIG_DIR / ~/.claude
+ * @param {string} projectDir  the directory the session started in
+ *   (CLAUDE_PROJECT_DIR, a StatusLine's workspace.project_dir); not the
+ *   current directory, which follows Claude's cd
  */
-function pluginDisabled(claudeDir, cwd = process.cwd()) {
+function pluginDisabled(claudeDir, projectDir = process.cwd()) {
   let plugins;
   try {
     plugins = JSON.parse(fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8')).plugins;
@@ -191,27 +201,75 @@ function pluginDisabled(claudeDir, cwd = process.cwd()) {
     return false;
   }
   if (!plugins || typeof plugins !== 'object') return false;
-  const here = realish(cwd);
+  const here = realish(projectDir);
   const ids = Object.keys(plugins)
-    .filter((id) => id === 'gsd@gsd' || id.startsWith('gsd@'))
+    .filter((id) => id.startsWith('gsd@'))
     .filter((id) => (Array.isArray(plugins[id]) ? plugins[id] : [plugins[id]]).some((record) => record
+      && isGsdLite(record.installPath)
       && (!record.scope || record.scope === 'user' || (record.projectPath && realish(record.projectPath) === here))));
   if (ids.length === 0) return false;
-  const byPrecedence = [
-    path.join(cwd, '.claude', 'settings.local.json'),
-    path.join(cwd, '.claude', 'settings.json'),
+  const roots = gitRoots(projectDir);
+  const files = [
+    ...[...roots, projectDir].map((dir) => path.join(dir, '.claude', 'settings.local.json')),
+    path.join(projectDir, '.claude', 'settings.json'),
     path.join(claudeDir, 'settings.json'),
-  ].map((file) => {
+  ];
+  const enabled = [];
+  for (const file of new Set(files)) {
+    let text;
     try {
-      return JSON.parse(fs.readFileSync(file, 'utf8'))?.enabledPlugins;
+      text = fs.readFileSync(file, 'utf8');
     } catch {
-      return undefined;
+      continue;
     }
-  });
+    try {
+      enabled.push(JSON.parse(text)?.enabledPlugins);
+    } catch {
+      return false;
+    }
+  }
   return ids.every((id) => {
-    const deciding = byPrecedence.find((enabled) => enabled && typeof enabled === 'object' && Object.hasOwn(enabled, id));
-    return deciding !== undefined && deciding[id] !== true;
+    const deciding = enabled.find((map) => map && typeof map === 'object' && Object.hasOwn(map, id));
+    return deciding !== undefined && deciding[id] === false;
   });
+}
+
+/** Whether an install path holds gsd-lite. */
+function isGsdLite(installPath) {
+  if (typeof installPath !== 'string' || !installPath) return false;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(installPath, 'package.json'), 'utf8')).name === 'gsd-lite';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where Claude Code keeps the local settings file for a session started in
+ * `dir`, besides `dir` itself: the main checkout's root in a worktree, else
+ * the git root — not when that root is the home directory, where the file
+ * stays put.
+ */
+function gitRoots(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    const dotGit = path.join(d, '.git');
+    let stat;
+    try {
+      stat = fs.statSync(dotGit);
+    } catch {
+      if (path.dirname(d) === d) return [];
+      continue;
+    }
+    if (d === path.resolve(require('node:os').homedir())) return [];
+    if (stat.isDirectory()) return [d];
+    try {
+      const gitDir = path.resolve(d, fs.readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+?)\s*$/m)[1]);
+      const common = path.resolve(gitDir, fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim());
+      return [path.dirname(common)];
+    } catch {
+      return [d];
+    }
+  }
 }
 
 /**
@@ -224,7 +282,7 @@ function pluginDisabled(claudeDir, cwd = process.cwd()) {
 function hookStandsDown(claudeDir, scriptDir, hookType) {
   if (pluginServesHooks(claudeDir, scriptDir, hookType)) return true;
   const settingsCopy = Boolean(scriptDir) && realish(scriptDir) === realish(path.join(claudeDir, 'hooks'));
-  return settingsCopy && pluginDisabled(claudeDir);
+  return settingsCopy && pluginDisabled(claudeDir, process.env.CLAUDE_PROJECT_DIR || process.cwd());
 }
 
 /** realpath when it resolves, the path as given when it does not. */

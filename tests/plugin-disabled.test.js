@@ -9,7 +9,7 @@
 // each of them stands down; the plugin's own copies are not loaded by Claude
 // Code while it is disabled. Each case that stands down is paired with one
 // that must still run, so a hook that stops doing anything cannot pass.
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -40,7 +40,18 @@ function machine(t, { records = null, user, project, local } = {}) {
   return { root, home, claudeDir, project: proj };
 }
 
-const USER_RECORD = (installPath = '/nowhere') => [{ scope: 'user', installPath, version: '0.18.0' }];
+// What Claude Code's plugin cache holds for gsd-lite: a record counts only
+// when its install path is gsd-lite, since `gsd@…` can name another plugin.
+function pluginInstall(name) {
+  const dir = mkdtempSync(join(tmpdir(), 'gsd-disabled-plugin-'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name }));
+  return dir;
+}
+const GSD_LITE = pluginInstall('gsd-lite');
+const ANOTHER_GSD = pluginInstall('acme-gsd');
+after(() => { for (const dir of [GSD_LITE, ANOTHER_GSD]) rmSync(dir, { recursive: true, force: true }); });
+
+const USER_RECORD = (installPath = GSD_LITE) => [{ scope: 'user', installPath, version: '0.18.0' }];
 
 describe('pluginDisabled: an explicit disable is the user switching gsd off', () => {
   it('premise: the helper is exported', () => {
@@ -52,13 +63,19 @@ describe('pluginDisabled: an explicit disable is the user switching gsd off', ()
     ['a registry without gsd', { records: { 'other@x': USER_RECORD() }, user: { 'gsd@gsd': false } }, true, false],
     ['gsd installed and enabled', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': true } }, true, false],
     ['gsd installed and disabled', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': false } }, true, true],
-    ['disabled with the string "false"', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': 'false' } }, true, true],
+    // Only a plain false is read as off: what Claude Code makes of another
+    // value is not known here, and a wrong "off" is silent.
+    ['disabled with the string "false"', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': 'false' } }, true, false],
+    ['a null over a user false', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': false }, local: { 'gsd@gsd': null } }, true, false],
     ['installed with no enabledPlugins entry anywhere', { records: { 'gsd@gsd': USER_RECORD() }, user: {} }, true, false],
     ['enabled for the user, disabled in this project', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': true }, project: { 'gsd@gsd': false } }, true, true],
     ['disabled in the project, enabled again locally', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': true }, project: { 'gsd@gsd': false }, local: { 'gsd@gsd': true } }, true, false],
     ['disabled for the user, enabled in this project', { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': false }, project: { 'gsd@gsd': true } }, true, false],
     ['a fork installed and disabled', { records: { 'gsd@fork': USER_RECORD() }, user: { 'gsd@fork': false } }, true, true],
     ['two installs, one still enabled', { records: { 'gsd@gsd': USER_RECORD(), 'gsd@fork': USER_RECORD() }, user: { 'gsd@gsd': false, 'gsd@fork': true } }, true, false],
+    // A plugin named gsd that is not gsd-lite says nothing about gsd-lite.
+    ['another plugin named gsd, disabled', { records: { 'gsd@acme-tools': USER_RECORD(ANOTHER_GSD) }, user: { 'gsd@acme-tools': false } }, true, false],
+    ['a gsd record whose install is gone', { records: { 'gsd@gsd': USER_RECORD('/nowhere') }, user: { 'gsd@gsd': false } }, true, false],
   ]) {
     it(`${label} → ${expected ? 'off' : 'not off'}`, (t) => {
       const m = machine(t, setup);
@@ -67,14 +84,14 @@ describe('pluginDisabled: an explicit disable is the user switching gsd off', ()
   }
 
   it('a project-scope install for another project does not turn gsd off here', (t) => {
-    const m = machine(t, { records: { 'gsd@gsd': [{ scope: 'project', projectPath: '/some/other/project', installPath: '/nowhere' }] }, user: {} });
+    const m = machine(t, { records: { 'gsd@gsd': [{ scope: 'project', projectPath: '/some/other/project', installPath: GSD_LITE }] }, user: {} });
     writeFileSync(join(m.project, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
     assert.equal(registry.pluginDisabled(m.claudeDir, m.project), false);
   });
 
   it('a project-scope install for this project, disabled here, does', (t) => {
     const m = machine(t, { user: {} });
-    writeFileSync(join(m.claudeDir, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'gsd@gsd': [{ scope: 'project', projectPath: m.project, installPath: '/nowhere' }] } }));
+    writeFileSync(join(m.claudeDir, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'gsd@gsd': [{ scope: 'project', projectPath: m.project, installPath: GSD_LITE }] } }));
     writeFileSync(join(m.project, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
     assert.equal(registry.pluginDisabled(m.claudeDir, m.project), true);
   });
@@ -83,6 +100,52 @@ describe('pluginDisabled: an explicit disable is the user switching gsd off', ()
     const m = machine(t, { user: { 'gsd@gsd': false } });
     writeFileSync(join(m.claudeDir, 'plugins', 'installed_plugins.json'), '{ torn');
     assert.equal(registry.pluginDisabled(m.claudeDir, m.project), false);
+  });
+
+  it('a settings file caught mid-write is not a disable, even when a file below it says off', (t) => {
+    const m = machine(t, { records: { 'gsd@gsd': USER_RECORD() }, project: { 'gsd@gsd': false } });
+    writeFileSync(join(m.project, '.claude', 'settings.local.json'), '{"enabledPlugins": {"gsd@g');
+    assert.equal(registry.pluginDisabled(m.claudeDir, m.project), false);
+  });
+
+  // Claude Code keeps the local file at the git root when a session starts
+  // in a subdirectory, and at the main checkout's root in a worktree
+  // (code.claude.com/docs/en/settings, "Where Claude Code keeps the local
+  // file in a git repository").
+  it('reads the local file at the git root for a session started in a subdirectory', (t) => {
+    const m = machine(t, { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': true } });
+    mkdirSync(join(m.project, '.git'));
+    writeFileSync(join(m.project, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
+    const sub = join(m.project, 'pkg');
+    mkdirSync(sub);
+    assert.equal(registry.pluginDisabled(m.claudeDir, sub), true);
+  });
+
+  it("reads the main checkout's local file for a session in a worktree", (t) => {
+    const m = machine(t, { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': true } });
+    const gitDir = join(m.project, '.git', 'worktrees', 'wt');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(join(gitDir, 'commondir'), '../..\n');
+    writeFileSync(join(m.project, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
+    const worktree = join(m.root, 'wt');
+    mkdirSync(worktree);
+    writeFileSync(join(worktree, '.git'), `gitdir: ${gitDir}\n`);
+    assert.equal(registry.pluginDisabled(m.claudeDir, worktree), true);
+  });
+
+  it('does not read a local file at a git root that is the home directory', (t) => {
+    const m = machine(t, { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': true } });
+    mkdirSync(join(m.home, '.git'));
+    writeFileSync(join(m.home, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': false } }));
+    const sub = join(m.home, 'work');
+    mkdirSync(sub);
+    const home = process.env.HOME;
+    process.env.HOME = m.home;
+    try {
+      assert.equal(registry.pluginDisabled(m.claudeDir, sub), false);
+    } finally {
+      process.env.HOME = home;
+    }
   });
 });
 
@@ -103,8 +166,8 @@ function npxInstall(m) {
   }));
 }
 
-const runHook = (m, file, { input = '', env = {} } = {}) => execFileSync(process.execPath, [join(m.claudeDir, 'hooks', file)], {
-  cwd: m.project,
+const runHook = (m, file, { input = '', env = {}, cwd = m.project } = {}) => execFileSync(process.execPath, [join(m.claudeDir, 'hooks', file)], {
+  cwd,
   input,
   encoding: 'utf8',
   timeout: 8000,
@@ -181,6 +244,52 @@ describe('the npx install stands down when the plugin is disabled', () => {
     });
   }
 
+  // Claude Code reads project settings from the directory the session started
+  // in (CLAUDE_PROJECT_DIR); a hook runs wherever Claude has cd'd to. The
+  // project's value overrides the user's each way round, so reading the
+  // subdirectory (no project file there) gets the other answer.
+  for (const off of [true, false]) {
+    it(`a hook run in a subdirectory reads the project the session started in (${off ? 'off there' : 'on there'})`, (t) => {
+      const m = machine(t, { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': off }, project: { 'gsd@gsd': !off } });
+      npxInstall(m);
+      const sub = join(m.project, 'src');
+      mkdirSync(sub);
+      runHook(m, 'gsd-session-stop.cjs', { cwd: sub, env: { CLAUDE_PROJECT_DIR: m.project } });
+      assert.equal(existsSync(join(m.project, '.gsd', '.session-end')), !off, 'the session-end marker');
+    });
+  }
+
+  it("the statusline reads the session's project directory, not the one Claude moved to", (t) => {
+    // Disabled for the user, enabled in the project: on. Read from the
+    // subdirectory it was off, and the plugin's context monitor lost the
+    // bridge file it reads, with nothing printed (pre-tag review).
+    const m = machine(t, { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': false }, project: { 'gsd@gsd': true } });
+    npxInstall(m);
+    const sub = join(m.project, 'src');
+    mkdirSync(sub);
+    const sid = `disabled-sl-sub-${process.pid}`;
+    try {
+      const out = runHook(m, 'gsd-statusline.cjs', {
+        cwd: sub,
+        input: JSON.stringify({ session_id: sid, model: { display_name: 'Opus' }, workspace: { current_dir: sub, project_dir: m.project }, context_window: { remaining_percentage: 50 } }),
+      });
+      assert.notEqual(out.trim(), '', 'statusline output');
+      assert.ok(existsSync(bridgePaths(sid).metrics), 'the context bridge');
+    } finally {
+      for (const p of [bridgePaths(sid).metrics, bridgePaths(sid).warned]) rmSync(p, { force: true });
+    }
+  });
+
+  it('the MCP server asks on every request, so turning gsd back on needs no restart', async (t) => {
+    const m = machine(t, STATES.disabled);
+    npxInstall(m);
+    const { tools, toolsAfter } = await mcpSession(join(m.claudeDir, 'gsd', 'src', 'server.js'), m, {
+      between: () => writeFileSync(join(m.claudeDir, 'settings.json'), JSON.stringify({ enabledPlugins: { 'gsd@gsd': true } })),
+    });
+    assert.deepEqual(tools, []);
+    assert.ok(toolsAfter.length > 5, `tools after enabling: ${toolsAfter.length}`);
+  });
+
   // Only the copies the npx install registered: the repository's own server
   // (or the plugin's) is never the one that stands down.
   it('a server that is not the npx runtime copy keeps its tools', async (t) => {
@@ -208,7 +317,7 @@ describe('the npx install stands down when the plugin is disabled', () => {
   });
 });
 
-async function mcpSession(serverPath, m) {
+async function mcpSession(serverPath, m, { between } = {}) {
   const proc = spawn(process.execPath, [serverPath], {
     cwd: m.project,
     env: { ...process.env, HOME: m.home, CLAUDE_CONFIG_DIR: m.claudeDir, CLAUDE_PLUGIN_ROOT: '' },
@@ -235,7 +344,10 @@ async function mcpSession(serverPath, m) {
     await request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'disabled-test', version: '0' } });
     const list = await request('tools/list', {});
     const call = await request('tools/call', { name: 'health', arguments: {} });
-    return { tools: list.result?.tools ?? [], call: call.result };
+    if (!between) return { tools: list.result?.tools ?? [], call: call.result };
+    between();
+    const again = await request('tools/list', {});
+    return { tools: list.result?.tools ?? [], toolsAfter: again.result?.tools ?? [] };
   } finally {
     proc.stdin.end();
     proc.kill();
