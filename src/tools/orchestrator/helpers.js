@@ -24,6 +24,9 @@ const MAX_PHASE_REVIEW_RETRY = 5;
 // which then resumed execution. Any mode not listed waits until the project is
 // back to executing, and a mode added later is left alone by default.
 const REFRESH_MODES = ['executing_task', 'reviewing_task', 'reviewing_phase', 'research_refresh_needed'];
+// The modes an awaiting_user hold can be carried in: itself, and the two that
+// set the workflow aside and restore it from current_review.
+const HOLD_CARRIER_MODES = ['awaiting_user', 'awaiting_clear', 'paused_by_user'];
 
 // R-17: the former RESULT_CONTRACTS reference block was embedded in dispatch
 // responses as `result_contract` and then unconditionally stripped by the server
@@ -137,7 +140,10 @@ async function evaluatePreflight(state, basePath) {
   // reconcile) may override it — an override persists current_review: null,
   // silently clearing the hold and leaving the L3 task re-sweepable into a
   // later phase review with no gate. Mirrors the skipDirectionDrift guard below.
-  if (state.workflow_mode === 'awaiting_user'
+  // The hold is as active while a /clear or a pause has set it aside, and
+  // either one restores it (workflowModeForReview); looking only at
+  // awaiting_user let a drift or HEAD check replace it there.
+  if (HOLD_CARRIER_MODES.includes(state.workflow_mode)
       && state.current_review?.stage === 'human_confirmation') {
     return { override: null };
   }
