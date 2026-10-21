@@ -15,6 +15,7 @@ import {
   validateTransition,
   createInitialState,
   detectCycles,
+  handWrittenResearchBlocked,
   settleSuspendedModes,
 } from '../../schema.js';
 import {
@@ -384,6 +385,13 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     // Deep merge phases by ID instead of shallow replace [I-1]
     const merged = { ...state, ...updates };
     settleSuspendedModes(state, merged);
+
+    // A non-boolean flag is left to validation, which names it.
+    if (isPlainObject(updates.research) && (!('blocked' in updates.research) || typeof updates.research.blocked === 'boolean')) {
+      const flag = handWrittenResearchBlocked(updates.research, state.research);
+      if (flag.error) return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: flag.error };
+      merged.research = { ...updates.research, blocked: flag.blocked };
+    }
 
     // Deep merge context by key (preserves plan_hashes, last_session, etc.)
     if (updates.context && isPlainObject(updates.context)) {

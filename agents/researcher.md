@@ -47,7 +47,7 @@ tools: Read, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
 <result_contract>
 编排器调用 `orchestrator-handle-researcher-result` 需要三个参数:
 
-**1. result** — 研究元数据。`blocked` 必填：研究完成为 `false`；来源不可用或范围无法收敛、给不出结论时为 `true` (见下方 uncertainty_handling)。服务端只看这个字段判断研究是否受阻，不再从摘要里猜；缺了它，整个结果会被拒收:
+**1. result** — 研究元数据。`blocked` 必填：研究完成为 `false`；来源不可用或范围无法收敛、给不出结论时为 `true` (见下方 uncertainty_handling)。服务端只看这个字段判断研究是否受阻，不再从摘要里猜；缺了它，整个结果会被拒收。受阻占位的写法 (摘要以 `[BLOCKED]` 开头) 只用在 `blocked: true` 的结果里，`blocked: false` 的结果里出现它会被当作自相矛盾而拒收:
 ```json
 {
   "decision_ids": ["decision:jwt-rotation"],
@@ -114,7 +114,7 @@ tools: Read, Bash, WebSearch, WebFetch, mcp__plugin_context7_context7__*
      }
    }
    ```
-   过期刷新时 (派发载荷带 `current_decision_index`) 也照样返回这个受阻结果：已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；记录里只有受阻占位时，它照常存下。不要为了凑出结果把旧决策原样抄回去 —— 没有重新核实过的结论不该换上新的 `expires_at`。
+   过期刷新时 (派发载荷带 `current_decision_index`) 也照样返回这个受阻结果：已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；已记录的研究本身就是受阻结果 (`blocked: true`) 时，它照常存下。不要为了凑出结果把旧决策原样抄回去 —— 没有重新核实过的结论不该换上新的 `expires_at`。
 3. 研究范围过广无法收敛 → 同上模式 (`blocked: true`)，decision 摘要改为 "[BLOCKED] 研究范围过广，请指定重点领域"
 4. 发现结论与已有 decisions 矛盾 → 在 result 中标注冲突，让编排器决定是否更新 decision
 </uncertainty_handling>

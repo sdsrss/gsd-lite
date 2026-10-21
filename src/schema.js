@@ -1,5 +1,6 @@
 // State schema + lifecycle validation
 
+import { isDeepStrictEqual } from 'node:util';
 import { isPlainObject } from './utils.js';
 import { commitRefIsInert } from './agent-payload.js';
 
@@ -959,9 +960,42 @@ function evidenceFieldErrors(entry, label) {
 // behind whitespace, zero-width characters or markdown emphasis, in full-width
 // or lenticular brackets, with spaces inside them, in any case. Since 0.18.0
 // a result says whether it is blocked (`blocked`); this pattern only reads
-// research stored before that (migrateState) and refuses a result that writes
-// the tag while saying `blocked: false` (storeResearch).
+// records no result vouches for (researchBlockedByTag) and refuses a result
+// that writes the tag while saying `blocked: false` (storeResearch).
 export const BLOCKED_TAG = /^[\s\u200B-\u200D\u2060*_`]*[[\uFF3B\u3010]\s*blocked\s*[\]\uFF3D\u3011]/i;
+
+/**
+ * Whether a research record reads as the blocked placeholder by its decisions
+ * alone: every one written with the tag. How a record no researcher result
+ * vouches for is flagged — one stored before results carried `blocked`
+ * (migrateState), or one written through state-update.
+ */
+export function researchBlockedByTag(research) {
+  const entries = isPlainObject(research?.decision_index) ? Object.values(research.decision_index) : [];
+  return entries.length > 0
+    && entries.every((entry) => typeof entry?.summary === 'string' && BLOCKED_TAG.test(entry.summary));
+}
+
+/**
+ * The flag of a research record written through state-update. With no result
+ * behind it, it is read from its decisions, except that the record on file,
+ * written back with its decisions and flag unchanged, keeps the flag
+ * storeResearch gave it. storeResearch decides by the flag alone, so one out
+ * of step with the decisions let a blocked refresh replace real research, or
+ * refused the one an offline project needs: a flag given that disagrees is
+ * refused, not overridden. Returns { blocked } or { error }.
+ */
+export function handWrittenResearchBlocked(next, previous) {
+  const tagged = researchBlockedByTag(next);
+  if (!('blocked' in next) || next.blocked === tagged) return { blocked: tagged };
+  if (isPlainObject(previous) && previous.blocked === next.blocked
+      && isDeepStrictEqual(next.decision_index, previous.decision_index)) {
+    return { blocked: next.blocked };
+  }
+  return {
+    error: `research.blocked is ${next.blocked}, but ${tagged ? 'every decision is written as the [BLOCKED] placeholder' : 'it holds a decision that is not the [BLOCKED] placeholder'}. Leave blocked out to have it read from the decisions; the record on file keeps its own flag only while its decisions are unchanged`,
+  };
+}
 
 export function validateResearcherResult(r) {
   const errors = [];
@@ -1042,11 +1076,11 @@ export function migrateState(state) {
   // Research stored before results said whether they were blocked carries no
   // flag: read it once by the tag those results used. A record whose every
   // decision is a placeholder was blocked; one holding a real decision was
-  // research, and is kept from a blocked refresh.
-  if (isPlainObject(state.research) && !('blocked' in state.research)) {
-    const entries = isPlainObject(state.research.decision_index) ? Object.values(state.research.decision_index) : [];
-    state.research.blocked = entries.length > 0
-      && entries.every((entry) => typeof entry?.summary === 'string' && BLOCKED_TAG.test(entry.summary));
+  // research, and is kept from a blocked refresh. A flag that is not a
+  // boolean is read the same way: validateState refuses it, and left as it
+  // was, every later write failed on it.
+  if (isPlainObject(state.research) && typeof state.research.blocked !== 'boolean') {
+    state.research.blocked = researchBlockedByTag(state.research);
   }
 
   // Not a version step: a state from before suspended_modes has none, and a

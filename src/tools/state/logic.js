@@ -543,10 +543,6 @@ export function applyResearchRefresh(state, newResearch) {
 // computation gone wrong, and stored it expires before the next resume.
 const MIN_RESEARCH_TTL_MS = 60 * 60 * 1000;
 
-// The summary prefix of the researcher's blocked fallback (agents/researcher.md,
-// uncertainty_handling), which also sets `blocked: true` on the result.
-export const BLOCKED_DECISION_PREFIX = '[BLOCKED]';
-
 /**
  * The expiry dates a researcher result carries, refused when any is not a
  * date at least MIN_RESEARCH_TTL_MS away. Stored as-is, an expired date made

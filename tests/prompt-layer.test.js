@@ -32,13 +32,13 @@ import { TASK_LEVELS, WORKFLOW_MODES } from '../src/schema.js';
 // the file loads on a tree without them and its other cases still run there
 // (gate-replay reads a load error as nothing evaluated).
 import * as orchestratorHelpers from '../src/tools/orchestrator/helpers.js';
-import * as stateLogic from '../src/tools/state/logic.js';
+import * as schemaNs from '../src/schema.js';
 import { init, update } from '../src/tools/state/index.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { REFRESH_MODES = [] } = orchestratorHelpers;
-const { BLOCKED_DECISION_PREFIX } = stateLogic;
+const { BLOCKED_TAG } = schemaNs;
 const read = (rel) => readFileSync(join(repoRoot, rel), 'utf8');
 
 // Walk the directories rather than asking git: an untracked prompt file is
@@ -563,16 +563,16 @@ describe('prompt layer — research found at planning time reaches the server', 
     assert.doesNotMatch(ttl, /立即过期|强制过期/, 'research.md promises an expiry trigger the server does not implement');
   });
 
-  it("the researcher's blocked fallback carries the prefix the server refuses on a refresh", () => {
-    // storeResearch keeps the research on record when a refresh comes back
-    // [BLOCKED]; it recognises the result only by this prefix.
-    assert.equal(typeof BLOCKED_DECISION_PREFIX, 'string', 'premise: logic.js exports BLOCKED_DECISION_PREFIX');
+  it("the researcher's blocked fallback is written as the placeholder the server knows", () => {
+    // The server decides by `blocked`; the tag is what lets it refuse a
+    // fallback copied without its flag (storeResearch's contradiction check)
+    // and flag a record no result vouches for (researchBlockedByTag).
+    assert.ok(BLOCKED_TAG instanceof RegExp, 'premise: schema.js exports BLOCKED_TAG');
     const fallback = tagBlock(read('agents/researcher.md'), 'uncertainty_handling');
     const summaries = [...fallback.matchAll(/"summary": "([^"]*)"/g)].map((m) => m[1]);
     const items = [...fallback.matchAll(/decision 摘要改为 "([^"]*)"/g)].map((m) => m[1]);
     assert.ok(summaries.length >= 1 && items.length >= 1, 'premise: the blocked fallback examples are gone');
-    const unmarked = [...summaries, ...items].filter((s) => !s.startsWith(BLOCKED_DECISION_PREFIX));
-    assert.deepEqual(unmarked, [], `storeResearch recognises a blocked result by ${BLOCKED_DECISION_PREFIX}`);
+    assert.deepEqual([...summaries, ...items].filter((s) => !BLOCKED_TAG.test(s)), []);
   });
 
   // The server reads only `blocked` (0.18.0): the result contract's two
@@ -586,6 +586,13 @@ describe('prompt layer — research found at planning time reaches the server', 
     assert.doesNotMatch(contract, /"blocked": true/);
     assert.match(fallback, /"blocked": true/);
     assert.doesNotMatch(fallback, /"blocked": false/);
+    // The server refuses the placeholder under blocked: false; the researcher
+    // is told before it is refused.
+    assert.match(contract, /\[BLOCKED\][^\n]*`blocked: false`[^\n]*拒收/);
+    // workflows/research.md repeats the result contract and calls itself
+    // consistent with the researcher's.
+    const workflowContract = section(read('workflows/research.md'), '## 结果契约');
+    assert.match(workflowContract, /"blocked": false/);
     const server = read('src/server.js');
     const tool = server.slice(server.indexOf("name: 'orchestrator-handle-researcher-result'"), server.indexOf("name: 'orchestrator-handle-reviewer-result'"));
     assert.match(tool, /result\.blocked is required/);
@@ -779,12 +786,12 @@ describe('prompt layer — the instruction sentences', () => {
     ['commands/resume.md', '把响应里的 `expired_research` 和 `current_decision_index` (已记录的决策) 一并交给它'],
     // REFRESH_MODES; a refresh over planning or a reconcile hold resumed execution.
     ['commands/resume.md', '研究过期只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时走到这里'],
-    // storeResearch refuses a [BLOCKED] result while research is on record.
+    // storeResearch refuses a blocked result while research is on record.
     ['commands/resume.md', '已记录的研究里有真实结论就会被服务端拒收并保留：停下告诉用户'],
-    ['agents/researcher.md', '已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；记录里只有受阻占位时，它照常存下。'],
+    ['agents/researcher.md', '已记录的研究里有真实结论时，服务端不会用它替换，编排器会停下来告诉用户；已记录的研究本身就是受阻结果 (`blocked: true`) 时，它照常存下。'],
     // The way out of a refused refresh, and the offline project that is not stopped.
     ['commands/resume.md', '`state-update({updates: {research: null, workflow_mode: <响应里的 resume_to>}})`'],
-    ['commands/resume.md', '已记录的只有受阻占位 (规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行'],
+    ['commands/resume.md', '已记录的研究本身就是受阻结果 (`blocked: true`，例如规划时就没有来源) 时，新的受阻结果照常存下，项目继续执行'],
     ['commands/resume.md', '受阻结果被拒收的情况见下一条，直接停下'],
     // getReviewTargets includes every checkpointed task (a level lowered to L0 after checkpoint).
     ['agents/reviewer.md', 'checkpoint 之后才被改成 L0 的 task 会出现在阶段批量里，按 L1 审查它。'],
