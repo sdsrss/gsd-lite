@@ -164,12 +164,17 @@ function describeFetchFailure({ status, err } = {}, { route = proxyRoute ?? 'dir
 function recordCheckFailure(previous, reason, now) {
   const count = Number.isInteger(previous?.count) && previous.count > 0 ? previous.count + 1 : 1;
   const since = count > 1 && typeof previous?.since === 'string' ? previous.since : now;
-  return { since, count, reason };
+  const failure = { since, count, reason };
+  if (count > 1 && Number.isInteger(previous?.announced)) failure.announced = previous.announced;
+  return failure;
 }
 
-function shouldAnnounceCheckFailure(count) {
-  return count >= CHECK_FAILURES_BEFORE_NOTICE
-    && (count - CHECK_FAILURES_BEFORE_NOTICE) % CHECK_FAILURE_NOTICE_EVERY === 0;
+// Counted from the last notice actually shown (`announced`), not from the
+// count alone: only the SessionStart child notifies, and a `gsd update
+// --force` failure landing on count 3 used to push the first notice to 10.
+function shouldAnnounceCheckFailure(failure) {
+  if (failure.count < CHECK_FAILURES_BEFORE_NOTICE) return false;
+  return !Number.isInteger(failure.announced) || failure.count - failure.announced >= CHECK_FAILURE_NOTICE_EVERY;
 }
 
 // ── Orphan Detection ───────────────────────────────────────
@@ -238,7 +243,13 @@ async function checkForUpdate(options = {}) {
             installMode,
           };
         }
-        if (verbose) console.log('Throttled — last check:', state.lastCheck);
+        if (verbose) {
+          console.log('Throttled — last check:', state.lastCheck);
+          const failure = state.checkFailure;
+          if (Number.isInteger(failure?.count) && typeof failure.reason === 'string') {
+            console.log(`The last check failed (${failure.count} in a row): ${failure.reason}`);
+          }
+        }
         return null;
       }
 
@@ -254,8 +265,10 @@ async function checkForUpdate(options = {}) {
         // the next check was throttled a day out and nothing said why.
         const now = new Date().toISOString();
         const checkFailure = recordCheckFailure(state.checkFailure, reason, now);
+        const announce = notify && shouldAnnounceCheckFailure(checkFailure);
+        if (announce) checkFailure.announced = checkFailure.count;
         saveState({ ...state, lastCheck: now, checkFailure });
-        if (notify && shouldAnnounceCheckFailure(checkFailure.count)) {
+        if (announce) {
           writeNotification({ kind: 'check_failed', since: checkFailure.since, count: checkFailure.count, reason });
         }
         if (verbose) console.log(`Could not fetch latest release: ${reason}`);

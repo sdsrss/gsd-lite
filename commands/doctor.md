@@ -100,8 +100,11 @@ Check for update-related information:
   - `available` (with `from`, `to`, `action: "plugin_update"`): INFO "Update available: v{from} → v{to}" — a plugin install is updated by the plugin system, not by gsd: `/plugin` → **Installed** → gsd → **Update now**, or `claude plugin update gsd@gsd` from a shell
   - `updated` (with `from`, `to`): INFO "Auto-updated v{from} → v{to}; restart Claude Code to load it"
   - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `gsd update` (or `npx gsd-lite update`) to see why
-  - `check_failed` (with `count`, `since`, `reason`): WARN "Update checks failing: {count} in a row since {since} — {reason}". When the reason mentions a proxy, it names the fix itself (start Node with NODE_USE_ENV_PROXY=1, or a newer Node)
+  - `check_failed` (with `count`, `since`, `reason`): WARN "Update checks failing: {count} in a row since {since} — {reason}" (the reason is described below)
   - The SessionStart hook prints this file and then deletes it, so it is usually absent. Absence is normal: record nothing for it.
+- If `~/.claude/gsd/runtime/update-state.json` has `checkFailure` (`count`, `since`, `reason`), the update checks are failing now: WARN "Update checks failing: {count} in a row since {since} — {reason}". The reason ends with what happened to a proxy, when the environment sets one:
+  - `(through the proxy set in the environment)`: the proxy was used and the request still failed; the proxy or the network is the thing to check
+  - `(... only when started with NODE_USE_ENV_PROXY=1)`, `(... it needs v22.21+ or v24+)`, `(... not an http:// or https:// URL)`, `(... NODE_USE_ENV_PROXY keeps Node from using it)`: each names the setting to change
 - If cannot determine: record INFO "Update status unavailable"
 
 ## STEP 6: Output Summary
