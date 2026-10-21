@@ -189,6 +189,23 @@ describe('the npx install stands down when the plugin is disabled', () => {
     const { tools } = await mcpSession(join(REPO, 'src', 'server.js'), m);
     assert.ok(tools.length > 5, `tools: ${tools.length}`);
   });
+
+  // Claude Code does not run a disabled plugin's hooks, so the plugin's own
+  // copy running means Claude Code has it enabled. Reading enabledPlugins
+  // there could only disagree with Claude Code, and silence it.
+  it("the plugin's own copy of a hook never reads enabledPlugins", (t) => {
+    const m = machine(t, STATES.disabled);
+    npxInstall(m);
+    const pluginRoot = join(m.claudeDir, 'plugins', 'cache', 'gsd', 'gsd', '0.18.0');
+    cpSync(join(REPO, 'hooks'), join(pluginRoot, 'hooks'), { recursive: true });
+    execFileSync(process.execPath, [join(pluginRoot, 'hooks', 'gsd-session-stop.cjs')], {
+      cwd: m.project,
+      encoding: 'utf8',
+      timeout: 8000,
+      env: { ...process.env, HOME: m.home, CLAUDE_CONFIG_DIR: m.claudeDir, CLAUDE_PLUGIN_ROOT: '', PLUGIN_AUTO_UPDATE: '1', GSD_DEBUG: '' },
+    });
+    assert.ok(existsSync(join(m.project, '.gsd', '.session-end')), 'the session-end marker');
+  });
 });
 
 async function mcpSession(serverPath, m) {
