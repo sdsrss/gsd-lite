@@ -180,6 +180,8 @@ stateDiagram-v2
     executing_task --> completed : phase-complete (最终 phase)
 
     awaiting_clear --> executing_task : /clear + /resume 后恢复
+    awaiting_clear --> reviewing_task : /clear 前在审查，恢复审查
+    awaiting_clear --> reviewing_phase : /clear 前在审查，恢复审查
     awaiting_user --> executing_task : 用户解除阻塞 / 自动匹配 decision
 
     state preflight_overrides <<choice>>
@@ -222,7 +224,10 @@ stateDiagram-v2
 4. `current_phase` 之前的 phase 有 `needs_revalidation` task -> `rollback_to_dirty_phase`
 5. 研究缓存过期 -> `research_refresh_needed` (只在 `executing_task` / `reviewing_task` / `reviewing_phase` 时检测，见 `REFRESH_MODES`；其他状态先回到执行)
 
-**Research 刷新后恢复**:
-`storeResearch()` 中: 如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()`：调试中 (`current_review.stage === 'debugging'`) → `executing_task` 并保留 `current_review`；刷新让 task 失效 → `executing_task` 并清掉被打断的审查；否则按 `current_review.scope` 恢复到 `reviewing_phase` / `reviewing_task`，没有审查时 `executing_task`。
+**离开再回来 (/clear、暂停、研究刷新)**:
+三条路径都只凭 `current_review` 决定回到哪个模式，共用 `workflowModeForReview()`：没有审查或调试中 (`stage === 'debugging'`) → `executing_task`；带审查阶段 (`spec` / `quality`) 以外的 stage (如 `human_confirmation`、`review_retry_exhausted`、`direction_drift`) → `awaiting_user`；其余按 `current_review.scope` 回到 `reviewing_phase` / `reviewing_task`。
+- /clear: `awaiting_clear` 恢复时直接写这个模式。
+- 暂停: `paused_by_user` 的 resume 把它报告为 `resume_to`，用户确认后写入。
+- 研究刷新: `storeResearch()` 中，如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()`，结果同上；只有一处不同：刷新让 task 失效时回到 `executing_task` 并清掉被打断的审查。
 
 来源: `WORKFLOW_MODES` in `src/schema.js`, `resumeWorkflow()` in `src/tools/orchestrator/resume.js`, `evaluatePreflight()` in `src/tools/orchestrator/helpers.js`, `storeResearch()` in `src/tools/state/`

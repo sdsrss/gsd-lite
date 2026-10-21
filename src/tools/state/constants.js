@@ -123,23 +123,42 @@ export async function loadState(statePath) {
   return { state: migrateState(result.data) };
 }
 
+// The stages a review in progress carries (agents/reviewer.md); a phase review
+// may carry none. Any other stage is a hold the user owes a decision on
+// (human_confirmation, review_retry_exhausted, direction_drift, and whatever
+// is added later), so it is this list that is named, not the holds.
+const REVIEW_STAGES = ['spec', 'quality'];
+
 /**
- * Where a refreshed project goes back to. The refresh hold keeps the
- * current_review it interrupted, and the stage says what that was: a task
- * being debugged is `executing_task` with a task-scoped current_review, and
- * reading only the scope sent it to a task review instead. A refresh that
- * invalidated tasks drops an interrupted review — what it was reviewing may
- * have to be redone first, and a phase review is raised again once that work
- * is checkpointed. A debugging hold survives: a running task is never
+ * The workflow_mode a saved current_review belongs to. Three paths set the
+ * mode aside and come back to it from current_review alone: a /clear
+ * (awaiting_clear), a pause (paused_by_user's resume_to) and a research
+ * refresh. Each worked it out on its own: the /clear path dropped an
+ * interrupted review and dispatched the next task, a pause while debugging
+ * reported resume_to: reviewing_task, and only the refresh read the stage.
+ */
+export function workflowModeForReview(review) {
+  if (!review || review.stage === 'debugging') return 'executing_task';
+  if (review.stage != null && !REVIEW_STAGES.includes(review.stage)) return 'awaiting_user';
+  if (review.scope === 'phase') return 'reviewing_phase';
+  if (review.scope === 'task') return 'reviewing_task';
+  return 'executing_task';
+}
+
+/**
+ * Where a refreshed project goes back to (workflowModeForReview). A refresh
+ * that invalidated tasks drops an interrupted review — what it was reviewing
+ * may have to be redone first, and a phase review is raised again once that
+ * work is checkpointed. A debugging hold survives: a running task is never
  * invalidated. Only execution and review modes reach here (REFRESH_MODES in
  * orchestrator/helpers.js).
  */
 export function inferWorkflowModeAfterResearch(state, { invalidated = false } = {}) {
   const review = state.current_review;
-  if (review?.stage === 'debugging') return { workflow_mode: 'executing_task', current_review: review };
-  if (!invalidated && review?.scope === 'phase') return { workflow_mode: 'reviewing_phase', current_review: review };
-  if (!invalidated && review?.scope === 'task') return { workflow_mode: 'reviewing_task', current_review: review };
-  return { workflow_mode: 'executing_task', current_review: null };
+  const workflow_mode = workflowModeForReview(review);
+  const reviewing = workflow_mode === 'reviewing_phase' || workflow_mode === 'reviewing_task';
+  if (invalidated && reviewing) return { workflow_mode: 'executing_task', current_review: null };
+  return { workflow_mode, current_review: review ?? null };
 }
 
 export function normalizeResearchArtifacts(artifacts) {
