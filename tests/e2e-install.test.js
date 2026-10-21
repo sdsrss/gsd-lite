@@ -36,6 +36,23 @@ function runGroup(command, { timeout, ...options }) {
   });
 }
 
+// For every step below that fetches from the registry. npm holds a request
+// that was sent and never answered for fetch-timeout, 5 minutes by default,
+// before retrying it: longer than any budget in this file, so one such request
+// failed the suite instead of costing a retry. Measured on 2026-10-21 through
+// this machine's HTTP proxy, running Layer B's npx install by hand: 2 of 10
+// runs were still hung at 300 s, the nested `npm install` holding four open
+// sockets with no reply; with 30 s, 0 of 6 hung (20-140 s). Through a local
+// proxy that never answers one metadata request, the install was still hung
+// at 200 s by default and finished in 49 s with 30 s, after one retry.
+//
+// What this does not bound: a request still waiting for its proxy tunnel has
+// no socket yet, and fetch-timeout only starts once it has one. One request
+// took 121 s with this setting and was not retried, most likely that wait, so
+// a budget can still be overrun.
+// 30 s is npm-registry-fetch's own default when it is given no config.
+const NPM_FETCH_ENV = { npm_config_fetch_timeout: '30000' };
+
 async function makeClaudeHome(prefix) {
   const home = await mkdtemp(join(tmpdir(), prefix));
   const claudeDir = join(home, '.claude');
@@ -333,7 +350,7 @@ describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () =>
     // Run install.js from the npx-sim dir (no node_modules present)
     execFileSync('node', [join(npxSimDir, 'install.js')], {
       cwd: npxSimDir,
-      env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
+      env: { ...process.env, ...NPM_FETCH_ENV, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude') },
       encoding: 'utf-8',
       timeout: 55000,
     });
@@ -557,7 +574,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 180000 }, () => {
     // npm install -g from tarball into isolated prefix
     await runGroup(
       `npm install -g ${JSON.stringify(tarball)} --prefix ${JSON.stringify(npmPrefix)}`,
-      { timeout: 120000 }
+      { env: { ...process.env, ...NPM_FETCH_ENV }, timeout: 120000 }
     );
   });
 
@@ -689,6 +706,7 @@ describe('Layer B: npx from tarball E2E', { timeout: 240000 }, () => {
       {
         env: {
           ...process.env,
+          ...NPM_FETCH_ENV,
           HOME: home,
           CLAUDE_CONFIG_DIR: join(home, '.claude'),
           npm_config_cache: npxCache,
