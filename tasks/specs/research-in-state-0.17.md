@@ -1,5 +1,5 @@
 # 0.17.0：研究进入 state、刷新重设计，以及 0.16.0 的遗留
-状态：进行中（2026-10-20 开始）
+状态：完成（v0.17.0 已于 2026-10-21 发布）
 
 ## 背景与目标
 
@@ -50,8 +50,8 @@
 - [x] AC11：start.md:19、execution-loop.md 的级别说明、review-cycle.md 38 与 53–54、reviewer.md:59 与代码一致
 - [x] AC12：`scripts/sync-versions.js` 遇到任何参数都报错退出，不写任何文件
 - [x] AC13：e2e Layer B 超时时杀掉整个进程组
-- [ ] AC14：`npm test`、`npm run lint` 全绿；有源码改动的 PR 里改动的测试文件经 gate-replay 判 DISCRIMINATIVE
-- [ ] AC15：独立复审（克隆仓库，禁止运行 `scripts/sync-versions.js`）后发版，按 ship runbook 核对产物
+- [x] AC14：`npm test`、`npm run lint` 全绿；有源码改动的 PR 里改动的测试文件经 gate-replay 判 DISCRIMINATIVE
+- [x] AC15：独立复审（克隆仓库，禁止运行 `scripts/sync-versions.js`）后发版，按 ship runbook 核对产物
 
 ## 方案
 
@@ -103,7 +103,7 @@
 - [x] PR3 `fix/0.17-loops-and-docs`：两个死循环；文档与代码对不上的几处；`sync-versions.js`。
 - [x] PR4 `test/layer-b-budget`（纯测试）：Layer B 时间预算按实测放宽。
 - [x] PR5 `feat/research-in-state`：研究存储重设计 + A12，以及两轮复审的修复。
-- [ ] 独立复审（全范围 v0.16.0..HEAD）→ 修复 → 发版分支（CHANGELOG + `npm version minor`，临时 `CLAUDE_CONFIG_DIR`）→ tag → 核对产物。
+- [x] 独立复审（全范围 v0.16.0..HEAD）→ 修复 → 发版分支（CHANGELOG + `npm version minor`，临时 `CLAUDE_CONFIG_DIR`）→ tag → 核对产物。
 
 ## 决策与进展
 
@@ -140,8 +140,27 @@
   - LOW：失败的重试会删掉之前留下的标记 → 只删本次自己建的；两处"L0 不会派给你"；resume.md 两处措辞；state-diagram 门禁看不见 REFRESH_MODES 变化 → 改为比对预检列表；
     TTL 下限只被无关测试顺带挡住 → 受阻用例改用 24 小时；工具描述补上下限与拒收；CHANGELOG 措辞。
   - 早于本次（未改，记为遗留）：调试中被暂停的项目，resume 报告 `resume_to: reviewing_task`（resume.js 的 paused 分支同样只看 scope 不看 stage）。
+- 发版前复审第三轮（增量，第二轮修复 + CHANGELOG）：无 BLOCKER / HIGH；S1–S4 实际运行成立（32 组合矩阵、SIGKILL 崩溃模拟），CHANGELOG 未发现不实句子。
+  - MEDIUM：混合记录 / 混合结果的拒收没有测试钉住（两个变异保持绿）→ 补测试（c453e2f）。
+  - LOW 已改：researcher.md 一句话在收窄后不准且被测试钉死；resume.md 两条指令重叠（受阻拒收会多派一次）；出路与 L0 的说明未钉住；工具描述未写出路（29fbb05 的提交说明说写了）。
+  - LOW 未改（记为遗留，属于未经复审的行为改动）：受阻识别是精确前缀，前面多一个空格就识别不到；结果的 `decision_index` 为空时会抹掉真实记录。两者都要 researcher 偏离提示词。
+  - LOW 未改（早于本次）：`state-update` 的增量校验允许写入格式不对的 `decision_index` 条目（null、无 summary），其上的真实刷新会抛 TypeError。
+  - 环境：在全新 HOME 下 install 类 e2e 测试冷缓存超时；本机 pre-commit 钩子也两次在 e2e install 处失败（负载 3–4.6），之后同一份代码在钩子环境变量下和真实钩子里都完整通过。
+- 2026-10-21 用户在第三轮复审后选"发布 0.17.0"（此前约定第三轮仍有发现就交给用户决定）。
 
 ## 验证记录
+
+- 发版（v0.17.0）：
+  - PR #39、#40、#41 rebase 合并；main 9981daf，`git diff 5768a88 origin/main` 为空；三处版本号与 package-lock 两处均为 0.17.0
+  - main CI run 39547556637 → 通过（gate-replay、test 20/22/24）
+  - release run 39547707303 → 通过（validate、publish）；日志含 `All versions consistent: 0.17.0`、`Packed gsd-lite-0.17.0.tgz — sha256=64280315…`、`Signed checksum (Ed25519)`、
+    `Embedded public key pairs with the signing secret ✓`、provenance logIndex=3350054794、`+ gsd-lite@0.17.0`
+  - `npm view gsd-lite version --prefer-online` → 第 3 次轮询为 0.17.0（前两次 0.16.0）；`dist.attestations` predicateType slsa provenance v1
+  - Release 资产 `sha256sum` == 正文 `sha256:` == 发布日志 sha256；`verifyReleaseSignature` 8/8 符合预期（真对 true，7 个反例 false，翻转取中间字符）
+  - 解包：13 项改动 grep 命中；`scripts/` `tests/` `tasks/` `docs/` 不在包内
+  - 冒烟：一次性 `CLAUDE_CONFIG_DIR` 里 marketplace add + `claude plugin install gsd@gsd` → `gsd@gsd 0.17.0`，Skills 6、Agents 4、Hooks 3、MCP servers 1；
+    真实 `~/.claude.json`、`~/.claude/settings.json` md5 不变，`~/.claude` 条目 51 → 51；冒烟目录已删除
+- 第三轮修复后：`npm test` → 通过（1641/1641）；`npm run lint` → 通过（112 files）；gate-replay 9 个测试文件均 DISCRIMINATIVE；PR #39 CI run 39505634315 → 通过
 
 - 基线 `gh run list --branch main --limit 1` → success（run 39477719256，53e5476）
 - 基线 `npm test`（main 53e5476，load 1.4）→ 通过（1567/1567，exit 0，103 秒）；`npm run lint` → 通过（111 files）
