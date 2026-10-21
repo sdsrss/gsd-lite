@@ -198,6 +198,8 @@ describe('a store lands whole or changes nothing', () => {
     ['a blocked result with full-width brackets', { 'decision:blocked-no-sources': { summary: '［BLOCKED］研究来源不可用', source: 'none' } }],
     ['a blocked result with lenticular brackets', { 'decision:blocked-no-sources': { summary: '【BLOCKED】研究来源不可用', source: 'none' } }],
     ['a blocked result behind a zero-width space', { 'decision:blocked-no-sources': { summary: '\u200B[BLOCKED] 研究来源不可用', source: 'none' } }],
+    ['a blocked result behind a word joiner', { 'decision:blocked-no-sources': { summary: '\u2060[BLOCKED] 研究来源不可用', source: 'none' } }],
+    ['a blocked result in underscores', { 'decision:blocked-no-sources': { summary: '_[BLOCKED]_ 研究来源不可用', source: 'none' } }],
     ['a blocked result with spaces inside the brackets', { 'decision:blocked-no-sources': { summary: '[ BLOCKED ] 研究来源不可用', source: 'none' } }],
     // Stored, it replaced every decision on record with nothing.
     ['a result with no decisions', {}],
@@ -218,19 +220,26 @@ describe('a store lands whole or changes nothing', () => {
       'decision:a': { summary: 'Blocked requests are retried with backoff', source: 'docs' },
       'decision:b': { summary: 'Use JWT; [BLOCKED] tokens are rotated', source: 'docs' },
       'decision:c': { summary: 'BLOCKED-list stays in the gateway', source: 'docs' },
+      // The tag is a whole bracketed word: both brackets, nothing else inside.
+      'decision:d': { summary: '[Blocked-by-default] flags stay in config', source: 'docs' },
+      'decision:e': { summary: 'Blocked] entries are drained first', source: 'docs' },
     }), basePath: dir });
     assert.equal(res.action, 'research_stored', JSON.stringify(res));
   });
 
-  it('reads a placeholder on record whose summary starts with a space as blocked, and stores the next blocked result', async () => {
-    // Read as real research, the placeholder made every later blocked
-    // refresh a refusal, and an offline project could not move on.
-    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
-    const placeholder = payload({ 'decision:blocked-no-sources': { summary: ' [BLOCKED] 研究来源不可用', source: 'none' } });
-    assert.equal((await handleResearcherResult({ ...placeholder, basePath: dir })).action, 'research_stored', 'premise: the placeholder is stored');
-    const res = await handleResearcherResult({ ...payload({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } }), basePath: dir });
-    assert.equal(res.action, 'research_stored', JSON.stringify(res));
-  });
+  // The record is read with the same match as the result (pre-tag review: a
+  // record-side match left at the old text passed every test above).
+  for (const summary of [' [BLOCKED] 研究来源不可用', '[blocked] 研究来源不可用', '**[BLOCKED]** 研究来源不可用', '［BLOCKED］研究来源不可用']) {
+    it(`reads a placeholder on record written as ${JSON.stringify(summary.slice(0, 13))} as blocked, and stores the next blocked result`, async () => {
+      // Read as real research, the placeholder made every later blocked
+      // refresh a refusal, and an offline project could not move on.
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+      const placeholder = payload({ 'decision:blocked-no-sources': { summary, source: 'none' } });
+      assert.equal((await handleResearcherResult({ ...placeholder, basePath: dir })).action, 'research_stored', 'premise: the placeholder is stored');
+      const res = await handleResearcherResult({ ...payload({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } }), basePath: dir });
+      assert.equal(res.action, 'research_stored', JSON.stringify(res));
+    });
+  }
 
   it('stores a result with no decisions when there is no research on record', async () => {
     await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });

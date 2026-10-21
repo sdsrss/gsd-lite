@@ -741,6 +741,14 @@ describe('update() never writes a state that validateState refuses', () => {
       assert.ok(retried.success, JSON.stringify(retried));
     });
 
+    it('does not offer it for a failure that is not about research', async () => {
+      await writeFile(join(dir, '.gsd', 'state.json'), original);
+      const res = await update({ updates: { phases: [{ id: 1, name: '' }] }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.match(res.message, /name must be a non-empty string/);
+      assert.ok(!res.message.includes('research: null'), res.message);
+    });
+
     it('does not offer it to an update that writes research itself', async () => {
       // There the update is what is wrong, and dropping the record is not the fix.
       await writeFile(join(dir, '.gsd', 'state.json'), original);
