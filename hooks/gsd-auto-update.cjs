@@ -75,6 +75,24 @@ const CHECK_FAILURE_NOTICE_EVERY = 7;
 // (v24.14.0+, v25.4.0+), for `gsd update`, which nobody started that way.
 const PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'];
 
+/**
+ * Whether Node can use every proxy value the environment sets: an http:// or
+ * https:// URL that parses. curl and git also take `host:port` and socks5h://;
+ * Node does not, and started with NODE_USE_ENV_PROXY=1 it exits at startup on
+ * one, while http.setGlobalProxyFromEnv() throws with the value — credentials
+ * included — in its message.
+ */
+function proxyEnvUsable(env = process.env) {
+  return PROXY_VARS.filter((key) => env[key]).every((key) => {
+    try {
+      const { protocol } = new URL(env[key]);
+      return protocol === 'http:' || protocol === 'https:';
+    } catch {
+      return false;
+    }
+  });
+}
+
 function nodeReadsProxyEnvAtStartup(version = process.versions.node) {
   const [major, minor] = String(version).replace(/^v/, '').split('.').map(Number);
   return major >= 24 || (major === 22 && minor >= 21);
@@ -82,16 +100,23 @@ function nodeReadsProxyEnvAtStartup(version = process.versions.node) {
 
 /**
  * How fetch in this process reaches the network, turning the runtime switch on
- * when that is the only way to the proxy the environment names.
- * @returns {'direct'|'startup'|'runtime'|'opted-out'|'unsupported'}
+ * when that is the only way to the proxy the environment names. Never throws.
+ * @returns {'direct'|'startup'|'runtime'|'opted-out'|'unsupported'|'unusable'}
  */
 function envProxyRoute({ env = process.env, version = process.versions.node, http = require('node:http') } = {}) {
   if (!PROXY_VARS.some((key) => env[key])) return 'direct';
+  if (!proxyEnvUsable(env)) return 'unusable';
   // Any value but 1 is the user's own choice, and Node reads it as off.
   if (env.NODE_USE_ENV_PROXY !== undefined && env.NODE_USE_ENV_PROXY !== '1') return 'opted-out';
   if (env.NODE_USE_ENV_PROXY === '1' && nodeReadsProxyEnvAtStartup(version)) return 'startup';
   if (typeof http.setGlobalProxyFromEnv === 'function') {
-    http.setGlobalProxyFromEnv(env);
+    // Its error message is the proxy value; this function's callers must not
+    // be handed it.
+    try {
+      http.setGlobalProxyFromEnv(env);
+    } catch {
+      return 'unusable';
+    }
     return 'runtime';
   }
   return 'unsupported';
@@ -125,6 +150,8 @@ function describeFetchFailure({ status, err } = {}, { route = proxyRoute ?? 'dir
       return `${what} (through the proxy set in the environment)`;
     case 'opted-out':
       return `${what} (${set}, but NODE_USE_ENV_PROXY keeps Node from using it)`;
+    case 'unusable':
+      return `${what} (${set} that Node cannot use: it is not an http:// or https:// URL)`;
     case 'unsupported':
       return nodeReadsProxyEnvAtStartup(version)
         ? `${what} (${set}, but Node v${version} uses it only when started with NODE_USE_ENV_PROXY=1)`
@@ -791,6 +818,7 @@ module.exports = {
   describeFetchFailure,
   envProxyRoute,
   nodeReadsProxyEnvAtStartup,
+  proxyEnvUsable,
   requiresSignature,
   getInstallMode,
   isDevMode,

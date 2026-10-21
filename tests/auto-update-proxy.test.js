@@ -44,6 +44,15 @@ describe('which way the updater reaches the network', () => {
     ['not started with it, no runtime switch', { ...PROXY }, '24.13.0', withoutRuntime, 'unsupported', false],
     ['the user turned it off', { ...PROXY, NODE_USE_ENV_PROXY: '0' }, '26.8.1', withRuntime, 'opted-out', false],
     ['only a lower-case http_proxy', { http_proxy: 'http://127.0.0.1:9' }, '26.8.1', withRuntime, 'runtime', true],
+    // Values curl and git accept and Node does not: started with
+    // NODE_USE_ENV_PROXY=1, Node exits at startup on each of these, and
+    // setGlobalProxyFromEnv throws with the value — credentials and all — in
+    // its message.
+    ['a proxy with no scheme', { HTTPS_PROXY: 'proxy.corp:3128' }, '26.8.1', withRuntime, 'unusable', false],
+    ['a host:port proxy', { HTTPS_PROXY: '127.0.0.1:9' }, '26.8.1', withRuntime, 'unusable', false],
+    ['a SOCKS proxy', { HTTPS_PROXY: 'socks5h://127.0.0.1:1080' }, '26.8.1', withRuntime, 'unusable', false],
+    ['a proxy URL that does not parse', { HTTPS_PROXY: 'http://alice:pa#ss@proxy.corp:8080' }, '26.8.1', withRuntime, 'unusable', false],
+    ['one unusable value among usable ones', { HTTPS_PROXY: 'http://127.0.0.1:9', HTTP_PROXY: 'proxy.corp:3128' }, '22.21.0', withRuntime, 'unusable', false],
   ]) {
     it(`${label} → ${route}`, () => {
       calls.length = 0;
@@ -51,6 +60,18 @@ describe('which way the updater reaches the network', () => {
       assert.deepEqual(calls, enabled ? ['runtime'] : [], enabled ? 'the runtime switch is turned on' : 'and nothing global is changed');
     });
   }
+
+  it('a runtime switch that refuses the value counts as unusable rather than throwing', () => {
+    const refusing = { setGlobalProxyFromEnv: () => { throw Object.assign(new Error('http://user:secret@proxy:1'), { code: 'ERR_PROXY_INVALID_CONFIG' }); } };
+    assert.equal(mod.envProxyRoute({ env: PROXY, version: '26.8.1', http: refusing }), 'unusable');
+  });
+
+  it('premise: proxyEnvUsable is exported for session-init', () => {
+    assert.equal(typeof mod.proxyEnvUsable, 'function');
+    assert.equal(mod.proxyEnvUsable({ HTTPS_PROXY: 'http://127.0.0.1:9' }), true);
+    assert.equal(mod.proxyEnvUsable({ HTTPS_PROXY: 'proxy.corp:3128' }), false);
+    assert.equal(mod.proxyEnvUsable({}), true, 'nothing set is nothing to refuse');
+  });
 
   for (const [version, reads] of [['20.19.0', false], ['22.20.0', false], ['22.21.0', true], ['23.11.0', false], ['24.0.0', true], ['26.8.1', true], ['v24.0.0', true]]) {
     it(`Node ${version} ${reads ? 'reads' : 'does not read'} NODE_USE_ENV_PROXY at startup`, () => {
@@ -93,10 +114,10 @@ describe('the route matches what this Node really does', () => {
     return { ...env, HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, ...extra };
   }
 
-  function probe(env) {
+  function probe(env, url) {
     const script = `
       const route = require(${JSON.stringify(SOURCE)}).envProxyRoute();
-      fetch('http://gsd-proxy-probe.invalid/probe', { signal: AbortSignal.timeout(5000) })
+      fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(5000) })
         .then((res) => res.status, (err) => err.cause?.code || err.name)
         .then((outcome) => { console.log(JSON.stringify({ route, outcome })); process.exit(0); });`;
     return new Promise((resolve, reject) => {
@@ -111,13 +132,18 @@ describe('the route matches what this Node really does', () => {
     });
   }
 
-  for (const [label, extra] of [
-    ['a child started the way session-init starts the updater', { NODE_USE_ENV_PROXY: '1' }],
-    ['a process started without it, like `gsd update`', {}],
+  // http:// is answered by the proxy itself; https:// — what the updater
+  // sends — goes through a CONNECT tunnel, which the proxy records and then
+  // cannot complete, so the fetch fails after the proxy has seen it.
+  for (const [label, extra, url] of [
+    ['a child started the way session-init starts the updater (http)', { NODE_USE_ENV_PROXY: '1' }, 'http://gsd-proxy-probe.invalid/probe'],
+    ['a child started the way session-init starts the updater (https)', { NODE_USE_ENV_PROXY: '1' }, 'https://gsd-proxy-probe.invalid/probe'],
+    ['a process started without it, like `gsd update` (http)', {}, 'http://gsd-proxy-probe.invalid/probe'],
+    ['a process started without it, like `gsd update` (https)', {}, 'https://gsd-proxy-probe.invalid/probe'],
   ]) {
     it(label, async () => {
       await withProxy(async (proxyUrl, seen) => {
-        const { route, outcome } = await probe(childEnv(proxyUrl, extra));
+        const { route, outcome } = await probe(childEnv(proxyUrl, extra), url);
         const proxied = seen.some((line) => line.includes('gsd-proxy-probe.invalid'));
         const claimsProxy = route === 'startup' || route === 'runtime';
         assert.ok(['startup', 'runtime', 'unsupported'].includes(route), `route ${route} on Node ${process.versions.node}`);
@@ -173,6 +199,33 @@ describe('the updater\'s network calls go through the proxy', () => {
   }
 });
 
+// `gsd update` with a proxy value Node refuses: the check runs and fails
+// with a reason, instead of the refusal escaping with the value in its
+// message, which `gsd update` printed.
+describe('an unusable proxy setting', () => {
+  it('neither throws nor repeats the value', async () => {
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) {
+      if (/^(https?|no|all)_proxy$/i.test(key) || key === 'NODE_USE_ENV_PROXY' || key.startsWith('NODE_TEST')) delete env[key];
+    }
+    env.HTTPS_PROXY = 'http://alice:pa#ss@proxy.corp:8080';
+    const script = `
+      globalThis.fetch = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }); };
+      require(${JSON.stringify(SOURCE)}).fetchLatestRelease(null)
+        .then((r) => console.log(JSON.stringify(r)), (e) => console.log('THREW ' + e.message));`;
+    const out = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', script], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let text = '';
+      child.stdout.on('data', (d) => { text += d; });
+      child.stderr.on('data', (d) => { text += d; });
+      child.on('error', reject);
+      child.on('close', () => resolve(text.trim()));
+    });
+    assert.doesNotMatch(out, /alice|pa#ss|THREW/, out);
+    assert.match(JSON.parse(out).error, /^ECONNREFUSED \(a proxy is set in the environment that Node cannot use/);
+  });
+});
+
 describe('a failed check says why', () => {
   const route = (r) => ({ route: r, version: '20.19.0' });
 
@@ -204,6 +257,7 @@ describe('a failed check says why', () => {
     ['opted-out', '26.8.1', /NODE_USE_ENV_PROXY keeps Node from using it/],
     ['unsupported', '22.21.0', /only when started with NODE_USE_ENV_PROXY=1/],
     ['unsupported', '20.19.0', /cannot use one: it needs v22\.21\+ or v24\+/],
+    ['unusable', '26.8.1', /a proxy is set in the environment that Node cannot use: it is not an http:\/\/ or https:\/\/ URL/],
   ]) {
     it(`says what the proxy did when the route was ${r} on Node ${version}`, () => {
       assert.match(mod.describeFetchFailure({ status: 500 }, { route: r, version }), pattern);

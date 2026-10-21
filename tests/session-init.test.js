@@ -311,7 +311,7 @@ describe('session init reads repo-controlled paths without blocking', () => {
 // not reach GitHub on a network that requires a proxy, and failed silently
 // every day. The child is replaced by a stub that records what it was given.
 describe('session init starts the updater able to use a proxy', () => {
-  async function spawnedEnv(extra) {
+  async function spawnedEnv(extra, { proxy } = {}) {
     const root = await mkdtemp(join(tmpdir(), 'gsd-si-proxy-'));
     const home = join(root, 'home');
     const claudeDir = join(home, '.claude');
@@ -320,10 +320,20 @@ describe('session init starts the updater able to use a proxy', () => {
       await mkdir(join(claudeDir, 'hooks'), { recursive: true });
       cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
       cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
-      await writeFile(join(claudeDir, 'hooks', 'gsd-auto-update.cjs'),
-        `require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ value: process.env.NODE_USE_ENV_PROXY ?? null }));\n`);
+      // Spawned, it records its environment; required (session-init asks the
+      // updater whether the proxy is usable), it is the real module.
+      await writeFile(join(claudeDir, 'hooks', 'gsd-auto-update.cjs'), `if (require.main === module) {
+  require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ value: process.env.NODE_USE_ENV_PROXY ?? null }));
+} else {
+  module.exports = require(${JSON.stringify(AUTO_UPDATE)});
+}
+`);
       const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, ...extra };
       if (!('NODE_USE_ENV_PROXY' in extra)) delete env.NODE_USE_ENV_PROXY;
+      if (proxy !== undefined) {
+        for (const key of Object.keys(env)) if (/^(https?|all)_proxy$/i.test(key)) delete env[key];
+        env.HTTPS_PROXY = proxy;
+      }
       execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], { cwd: root, env, encoding: 'utf8', timeout: 6000 });
       // The child is detached; give it a moment to write.
       for (let i = 0; i < 100 && !existsSync(record); i++) await new Promise((r) => setTimeout(r, 50));
@@ -339,6 +349,19 @@ describe('session init starts the updater able to use a proxy', () => {
 
   it('leaves a value the user set alone', async () => {
     assert.equal(await spawnedEnv({ NODE_USE_ENV_PROXY: '0' }), '0');
+  });
+
+  // Started with the switch on, Node exits before running a line when a proxy
+  // value is one it cannot parse — and the updater recorded nothing, every
+  // session, where before it at least tried directly.
+  for (const proxy of ['proxy.corp:3128', 'socks5h://127.0.0.1:1080']) {
+    it(`does not turn it on for a proxy Node cannot use (${proxy})`, async () => {
+      assert.equal(await spawnedEnv({}, { proxy }), null);
+    });
+  }
+
+  it('turns it on for a usable proxy', async () => {
+    assert.equal(await spawnedEnv({}, { proxy: 'http://127.0.0.1:9' }), '1');
   });
 });
 
