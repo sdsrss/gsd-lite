@@ -2,6 +2,63 @@
 
 All notable changes to this project are documented here.
 
+## [0.17.1] - 2026-10-21
+
+Patch: fixes for what 0.17.0's pre-tag reviews left open, for states and
+results the server mishandled, and two network requests every install made
+for nothing. **Nothing here changes what the tools do for a project that was
+already working.** One thing to know if you used 0.17.0's `state-update` to
+write research by hand: see the second point.
+
+- **Leaving a review and coming back returns to the review.** A `/clear` while
+  a task was under review resumed by dispatching the *next* task, and the
+  interrupted review was lost; a pause while debugging reported `resume_to:
+  reviewing_task`; and `/gsd:resume` of a pause wrote `executing_task` whatever
+  `resume_to` said. A `/clear`, a pause and a research refresh now all work the
+  return out from `current_review` the same way: a review in progress comes back
+  as that review, debugging as execution, and a hold that is waiting on you
+  (an L3 confirmation, exhausted review retries, direction drift) as
+  `awaiting_user`. An L3 confirmation carried through a `/clear` or a pause is no
+  longer overridden by a plan or HEAD change found on resume. Resolving a
+  direction drift with `phase-complete` (`direction_ok: true`) on a phase that is
+  not the last one now ends the hold; it used to stay, and every resume reported
+  the drift again.
+
+- **`state-update` no longer writes a state it then cannot read.** 0.17.0's
+  `state-update` accepted research and evidence the full validator refuses (a
+  decision entry of `null`, a `decision_index` that is not an object, an evidence
+  `passed` that is not a boolean, a `total_phases` that disagrees with the plan),
+  after which every write validated in full failed on it. Those are refused now,
+  and every answer is checked against the full validator. A state already holding
+  such research gets an error that ends with the way out, `state-update`
+  (`research: null`), which discards the record (tasks' `research_basis` then no
+  longer resolves). A research refresh over such a record replaces it instead of
+  throwing. A phase or task patch that is not an object (`phases: [null]`), a
+  phase patch without a numeric id, and evidence that is not an object are
+  refused naming the entry; several of these used to crash the tool call with
+  a message that named neither.
+
+- **Research on record is not replaced by a refresh that found nothing.** A
+  refresh result with no decisions, or the researcher's `[BLOCKED]` fallback
+  written with a leading space, in lower case, bold, in full-width brackets and
+  the like, was stored over real research: every decision on record was replaced
+  and the tasks citing them were sent back. Both are refused now and the research
+  stays; the refusal names how to retry or give the research up.
+
+- **Installs make two kinds of registry request fewer.** The runtime dependency
+  install in `install.js` (with a lockfile), the plugin launcher's first-start
+  install and auto-update's cache install asked the registry for a security audit
+  whose output nobody saw. It was the only request a cached `npm ci` made, and a
+  slow proxy could hold it past the 60 s the launcher allows the MCP server to
+  start. They now pass `--no-audit --no-fund`, like install.js's other branch
+  already did. The runtime `package.json` written to `~/.claude/gsd/` no longer
+  lists devDependencies, which an npx install resolved for nothing: 11 of its
+  nested install's 13 registry requests. The installed dependencies are the same.
+
+- **Docs.** `workflows/research.md` no longer lists two "expire immediately"
+  triggers that nothing implemented; `commands/resume.md` and the state diagram
+  describe the returns above.
+
 ## [0.17.0] - 2026-10-21
 
 Minor, not patch: research found while planning is now recorded in state, so it
