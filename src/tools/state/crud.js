@@ -509,10 +509,9 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     }
 
     // Auto-prune evidence when entries exceed limit
-    if (merged.evidence && Object.keys(merged.evidence).length > MAX_EVIDENCE_ENTRIES) {
-      const gsdDir = dirname(statePath);
-      await _pruneEvidenceFromState(merged, merged.current_phase, gsdDir);
-    }
+    const pruned = merged.evidence && Object.keys(merged.evidence).length > MAX_EVIDENCE_ENTRIES
+      ? _pruneEvidenceFromState(merged, merged.current_phase)
+      : {};
 
     // Use incremental validation for simple updates (no phases/propagation/decisions changes)
     const needsFullValidation = updates.phases
@@ -543,6 +542,7 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     // Optimistic concurrency: increment _version on every successful write
     merged._version = (merged._version ?? 0) + 1;
 
+    await _writeEvidenceArchive(dirname(statePath), pruned);
     await writeJson(statePath, merged);
     // R-25 (audit L13): GSD_DEBUG state-write trace (stderr only).
     if (process.env.GSD_DEBUG) {
@@ -779,7 +779,7 @@ export async function phaseComplete({
     state.git_head = await getGitHead(dirname(gsdDir));
 
     // Prune evidence from old phases (in-memory to avoid double read/write)
-    await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
+    const pruned = _pruneEvidenceFromState(state, state.current_phase);
 
     // Validate final state before persisting (match direction_ok=false branch)
     const finalValidation = validateState(state);
@@ -787,6 +787,7 @@ export async function phaseComplete({
       return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${finalValidation.errors.join('; ')}${researchEscape(finalValidation.errors)}` };
     }
     state._version = (state._version ?? 0) + 1;
+    await _writeEvidenceArchive(gsdDir, pruned);
     await writeJson(statePath, state);
     const isCompleted = state.workflow_mode === 'completed';
     const nextPhaseInfo = !isCompleted && state.phases.find(p => p.id === state.current_phase);
@@ -834,28 +835,33 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
     state.evidence[id] = data;
 
     // Auto-prune when evidence exceeds limit
-    const entries = Object.keys(state.evidence);
-    if (entries.length > MAX_EVIDENCE_ENTRIES) {
-      const gsdDir = dirname(statePath);
-      await _pruneEvidenceFromState(state, state.current_phase, gsdDir);
-    }
+    const pruned = Object.keys(state.evidence).length > MAX_EVIDENCE_ENTRIES
+      ? _pruneEvidenceFromState(state, state.current_phase)
+      : {};
 
     state._version = (state._version ?? 0) + 1;
+    await _writeEvidenceArchive(dirname(statePath), pruned);
     await writeJson(statePath, state);
     return { success: true };
   }, statePath);
 }
 
 /**
- * Internal: prune evidence in-memory and write archive file.
- * Mutates state.evidence. Returns count of archived entries.
+ * Internal: move evidence from phases before currentPhase out of state.evidence,
+ * in memory only. Returns the entries moved, which the caller hands to
+ * _writeEvidenceArchive once it is about to write the state they left.
+ *
+ * Writing the archive here, as this used to, put it ahead of the validation
+ * update() and phase-complete run on the state they are about to write: a
+ * rejected call left an archive holding copies of entries still live in
+ * state.json, and under the archive's cap those copies displaced entries that
+ * had genuinely been archived.
  */
-async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
-  if (!state.evidence) return 0;
-
+function _pruneEvidenceFromState(state, currentPhase) {
   const toArchive = {};
-  const toKeep = {};
+  if (!state.evidence) return toArchive;
 
+  const toKeep = {};
   for (const [id, entry] of Object.entries(state.evidence)) {
     const phaseNum = parseScopePhase(entry.scope);
     if (phaseNum !== null && phaseNum < currentPhase) {
@@ -864,37 +870,39 @@ async function _pruneEvidenceFromState(state, currentPhase, gsdDir) {
       toKeep[id] = entry;
     }
   }
+  if (Object.keys(toArchive).length > 0) state.evidence = toKeep;
+  return toArchive;
+}
 
-  const archivedCount = Object.keys(toArchive).length;
+/**
+ * Internal: add pruned entries to evidence-archive.json. Call it after the
+ * state has passed validation and immediately before writing state.json.
+ */
+async function _writeEvidenceArchive(gsdDir, toArchive) {
+  if (Object.keys(toArchive).length === 0) return;
+  // R-20 (audit L3): two-step commit recovery semantics. The archive file is
+  // written FIRST and the caller persists state.json afterwards. This
+  // archive-first ordering has no data-loss window: a crash between the archive
+  // write and the state.json write leaves the archived entries in BOTH the
+  // archive and state.json. That transient duplication is safe and
+  // self-healing — `Object.assign` below dedupes by id, so the next prune
+  // re-archives the same entries idempotently (no duplicate keys, no loss).
+  // Decision: accept the duplication rather than add a crash sentinel; a
+  // sentinel would guard a state that is already benign and idempotently
+  // reconciled.
+  const archivePath = join(gsdDir, 'evidence-archive.json');
+  const existing = await readJson(archivePath);
+  const archive = existing.ok ? existing.data : {};
+  Object.assign(archive, toArchive);
 
-  if (archivedCount > 0) {
-    // R-20 (audit L3): two-step commit recovery semantics. The archive file is
-    // written FIRST, then `state.evidence = toKeep` (in-memory) and the caller
-    // persists state.json afterwards. This archive-first ordering has no
-    // data-loss window: a crash between the archive write and the state.json
-    // write leaves the archived entries in BOTH the archive and state.json.
-    // That transient duplication is safe and self-healing — `Object.assign`
-    // below dedupes by id, so the next prune re-archives the same entries
-    // idempotently (no duplicate keys, no loss). Decision: accept the duplication
-    // rather than add a crash sentinel; a sentinel would guard a state that is
-    // already benign and idempotently reconciled.
-    const archivePath = join(gsdDir, 'evidence-archive.json');
-    const existing = await readJson(archivePath);
-    const archive = existing.ok ? existing.data : {};
-    Object.assign(archive, toArchive);
-
-    // H-2: Cap archive size to prevent unbounded growth
-    const archiveKeys = Object.keys(archive);
-    if (archiveKeys.length > MAX_ARCHIVE_ENTRIES) {
-      const toRemove = archiveKeys.slice(0, archiveKeys.length - MAX_ARCHIVE_ENTRIES);
-      for (const key of toRemove) delete archive[key];
-    }
-
-    await writeJson(archivePath, archive);
-    state.evidence = toKeep;
+  // H-2: Cap archive size to prevent unbounded growth
+  const archiveKeys = Object.keys(archive);
+  if (archiveKeys.length > MAX_ARCHIVE_ENTRIES) {
+    const toRemove = archiveKeys.slice(0, archiveKeys.length - MAX_ARCHIVE_ENTRIES);
+    for (const key of toRemove) delete archive[key];
   }
 
-  return archivedCount;
+  await writeJson(archivePath, archive);
 }
 
 /**
@@ -916,10 +924,11 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
     if (loaded.error) return loaded.error;
     const state = loaded.state;
 
-    const gsdDir = dirname(statePath);
-    const archived = await _pruneEvidenceFromState(state, currentPhase, gsdDir);
+    const pruned = _pruneEvidenceFromState(state, currentPhase);
+    const archived = Object.keys(pruned).length;
     if (archived > 0) {
       state._version = (state._version ?? 0) + 1;
+      await _writeEvidenceArchive(dirname(statePath), pruned);
       await writeJson(statePath, state);
     }
 

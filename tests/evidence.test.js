@@ -254,3 +254,113 @@ describe('evidence store', () => {
     });
   });
 });
+
+// A prune moves entries out of state.json into evidence-archive.json. It used
+// to write the archive while it worked out the move — before update() and
+// phase-complete validated the state they were about to write — so a rejected
+// call left an archive behind holding copies of entries that were still live.
+// The archive is capped, and those copies take the place of entries that were
+// genuinely archived earlier. Asked of every caller of the prune: a rejected
+// call writes nothing, and an accepted one loses nothing.
+describe('the evidence archive is written with the state, not before it', () => {
+  const PASSED = { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } };
+  const entry = (i, phase = 1) => ({ scope: `task:${phase}.1`, type: 'test', passed: true, summary: `e${i}` });
+
+  // Phase 1 complete but not yet handed off, so phase-complete can run.
+  async function project(t) {
+    const { createTempDir, removeTempDir, initProject, acceptTask, update } = await import('./e2e-helpers.js');
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    await acceptTask(dir, 1, '1.1');
+    await acceptTask(dir, 1, '1.2');
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: dir });
+    await update({ updates: { phases: [{ id: 1, phase_review: { status: 'accepted' } }] }, basePath: dir });
+    const statePath = join(dir, '.gsd', 'state.json');
+    const archivePath = join(dir, '.gsd', 'evidence-archive.json');
+    const { readFile, writeFile } = await import('node:fs/promises');
+    return {
+      dir,
+      async plant(count, extra = {}) {
+        const state = JSON.parse(await readFile(statePath, 'utf8'));
+        state.evidence = Object.fromEntries(Array.from({ length: count }, (_, i) => [`ev:${i}`, entry(i)]));
+        Object.assign(state, extra);
+        await writeFile(statePath, JSON.stringify(state));
+        return { state: JSON.stringify(state), evidence: state.evidence };
+      },
+      stateText: () => readFile(statePath, 'utf8'),
+      archive: () => readFile(archivePath, 'utf8').then(JSON.parse, () => null),
+    };
+  }
+
+  const MAX = 200; // MAX_EVIDENCE_ENTRIES — a prune runs in update/addEvidence above it
+
+  it('a rejected update writes no archive', async (t) => {
+    const { update } = await import('../src/tools/state/index.js');
+    const p = await project(t);
+    const planted = await p.plant(MAX);
+    const res = await update({ updates: { current_phase: 2, evidence: { 'ev:new': { ...entry('new', 2), passed: 'not-bool' } } }, basePath: p.dir });
+    assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+    assert.equal(await p.stateText(), planted.state, 'premise: the update was rejected whole');
+    assert.equal(await p.archive(), null, 'and it left no archive behind');
+  });
+
+  it('a rejected phase-complete writes no archive', async (t) => {
+    const { phaseComplete } = await import('../src/tools/state/index.js');
+    const p = await project(t);
+    // Invalid on file before the call: phase-complete validates only the
+    // state it is about to write, after the prune has run.
+    const planted = await p.plant(3, { context: 'not-an-object' });
+    const res = await phaseComplete({ phase_id: 1, verification: PASSED, direction_ok: true, basePath: p.dir });
+    assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+    assert.match(res.message, /context must be an object/);
+    assert.equal(await p.stateText(), planted.state, 'premise: the call was rejected whole');
+    assert.equal(await p.archive(), null, 'and it left no archive behind');
+  });
+
+  // Every entry that leaves state.json is in the archive, unchanged.
+  async function assertNothingLost(p, planted) {
+    const after = JSON.parse(await p.stateText()).evidence;
+    const moved = Object.keys(planted.evidence).filter((id) => !(id in after));
+    assert.ok(moved.length > 0, 'premise: the call archived something');
+    const archive = await p.archive();
+    assert.ok(archive, 'an archive was written');
+    for (const id of moved) assert.deepEqual(archive[id], planted.evidence[id], `${id} was archived as it was`);
+  }
+
+  it('an accepted update archives what it prunes', async (t) => {
+    const { update } = await import('../src/tools/state/index.js');
+    const p = await project(t);
+    const planted = await p.plant(MAX);
+    const res = await update({ updates: { current_phase: 2, evidence: { 'ev:new': entry('new', 2) } }, basePath: p.dir });
+    assert.ok(res.success, JSON.stringify(res));
+    await assertNothingLost(p, planted);
+  });
+
+  it('an accepted phase-complete archives what it prunes', async (t) => {
+    const { phaseComplete } = await import('../src/tools/state/index.js');
+    const p = await project(t);
+    const planted = await p.plant(3);
+    const res = await phaseComplete({ phase_id: 1, verification: PASSED, direction_ok: true, basePath: p.dir });
+    assert.ok(res.success, JSON.stringify(res));
+    await assertNothingLost(p, planted);
+  });
+
+  it('add-evidence archives what it prunes', async (t) => {
+    const { addEvidence } = await import('../src/tools/state/index.js');
+    const p = await project(t);
+    const planted = await p.plant(MAX, { current_phase: 2 });
+    const res = await addEvidence({ id: 'ev:new', data: entry('new', 2), basePath: p.dir });
+    assert.ok(res.success, JSON.stringify(res));
+    await assertNothingLost(p, planted);
+  });
+
+  it('prune-evidence archives what it prunes', async (t) => {
+    const { pruneEvidence } = await import('../src/tools/state/index.js');
+    const p = await project(t);
+    const planted = await p.plant(3);
+    const res = await pruneEvidence({ currentPhase: 2, basePath: p.dir });
+    assert.ok(res.success, JSON.stringify(res));
+    await assertNothingLost(p, planted);
+  });
+});
