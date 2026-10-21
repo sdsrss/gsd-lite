@@ -540,6 +540,16 @@ describe('prompt layer — research found at planning time reaches the server', 
     assert.deepEqual(skips, [], 'research.md still skips research because research already exists');
   });
 
+  it('research.md names no expiry trigger the server does not have', () => {
+    // The server expires research by its dates only (collectExpiredResearch).
+    // research.md also listed a major dependency bump and "重新研究" as
+    // immediate triggers, which nothing implemented; an orchestrator acting on
+    // them had no tool to do it with.
+    const ttl = section(read('workflows/research.md'), '## 研究过期规则 (TTL)');
+    assert.match(ttl, /expires_at/, 'premise: the TTL section is not the one that names expires_at');
+    assert.doesNotMatch(ttl, /立即过期|强制过期/, 'research.md promises an expiry trigger the server does not implement');
+  });
+
   it("the researcher's blocked fallback carries the prefix the server refuses on a refresh", () => {
     // storeResearch keeps the research on record when a refresh comes back
     // [BLOCKED]; it recognises the result only by this prefix.
