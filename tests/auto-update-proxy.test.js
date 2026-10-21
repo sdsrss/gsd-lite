@@ -128,6 +128,51 @@ describe('the route matches what this Node really does', () => {
   }
 });
 
+// The route only helps if the two places that reach the network take it
+// first. Run each on its own, in a process started the way `gsd update` is,
+// against a proxy that sees the CONNECT for GitHub's host and then hangs up.
+// Skipped where this Node cannot route at runtime, rather than letting the
+// request go out to the real network.
+describe('the updater\'s network calls go through the proxy', () => {
+  for (const [label, call, host] of [
+    ['the release check', 'mod.fetchLatestRelease(null)', 'api.github.com:443'],
+    ['the download', "mod.downloadAndInstall('https://github.com/sdsrss/gsd-lite/releases/download/v9.9.9/gsd-lite-9.9.9.tgz')", 'github.com:443'],
+  ]) {
+    it(label, async (t) => {
+      const seen = [];
+      const server = createServer();
+      server.on('connect', (req, socket) => { seen.push(req.url); socket.destroy(); });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const proxyUrl = `http://127.0.0.1:${server.address().port}`;
+        const env = { ...process.env };
+        for (const key of Object.keys(env)) {
+          if (/^(https?|no|all)_proxy$/i.test(key) || key === 'NODE_USE_ENV_PROXY' || key.startsWith('NODE_TEST')) delete env[key];
+        }
+        Object.assign(env, { HTTPS_PROXY: proxyUrl, CLAUDE_CONFIG_DIR: await mkdtemp(join(tmpdir(), 'gsd-proxy-wire-')) });
+        t.after(() => rm(env.CLAUDE_CONFIG_DIR, { recursive: true, force: true }));
+        const script = `
+          const mod = require(${JSON.stringify(SOURCE)});
+          if (typeof require('node:http').setGlobalProxyFromEnv !== 'function') { console.log('unsupported'); process.exit(0); }
+          Promise.resolve(${call}).then(() => { console.log('done'); process.exit(0); }, () => { console.log('done'); process.exit(0); });`;
+        const out = await new Promise((resolve, reject) => {
+          const child = spawn(process.execPath, ['-e', script], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+          let text = '';
+          child.stdout.on('data', (d) => { text += d; });
+          child.on('error', reject);
+          child.on('close', () => resolve(text.trim()));
+        });
+        if (out === 'unsupported') return void t.skip(`Node ${process.versions.node} has no http.setGlobalProxyFromEnv`);
+        assert.equal(out, 'done');
+        assert.deepEqual(seen, [host], `the proxy saw ${JSON.stringify(seen)}`);
+      } finally {
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+  }
+});
+
 describe('a failed check says why', () => {
   const route = (r) => ({ route: r, version: '20.19.0' });
 
