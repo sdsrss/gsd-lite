@@ -15,6 +15,7 @@ import {
   validateTransition,
   createInitialState,
   detectCycles,
+  settleSuspendedModes,
 } from '../../schema.js';
 import {
   ERROR_CODES,
@@ -382,6 +383,7 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
 
     // Deep merge phases by ID instead of shallow replace [I-1]
     const merged = { ...state, ...updates };
+    settleSuspendedModes(state, merged);
 
     // Deep merge context by key (preserves plan_hashes, last_session, etc.)
     if (updates.context && isPlainObject(updates.context)) {
@@ -500,8 +502,11 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
 
     // Auto-refresh plan hashes when leaving replan_required — establishes a new
     // baseline so the next resume doesn't re-trigger drift for already-acknowledged changes.
-    if (state.workflow_mode === 'replan_required'
-        && updates.workflow_mode && updates.workflow_mode !== 'replan_required') {
+    // Finishing a plan revision is the same acknowledgement: planning edits
+    // the plan files, and preflight does not run while it does.
+    if ((state.workflow_mode === 'replan_required'
+        && updates.workflow_mode && updates.workflow_mode !== 'replan_required')
+        || (state.workflow_mode === 'planning' && updates.workflow_mode === 'executing_task')) {
       const freshHashes = await computePlanHashes(basePath);
       if (Object.keys(freshHashes).length > 0) {
         merged.context = { ...(merged.context || {}), plan_hashes: freshHashes };
@@ -619,6 +624,7 @@ export async function phaseComplete({
     const loaded = await loadState(statePath);
     if (loaded.error) return loaded.error;
     const state = loaded.state;
+    const before = { workflow_mode: state.workflow_mode, suspended_modes: state.suspended_modes };
 
     const phase = state.phases.find((p) => p.id === phase_id);
     if (!phase) {
@@ -711,6 +717,7 @@ export async function phaseComplete({
         summary: `Direction drift detected for phase ${phase.id}`,
       };
       phase.phase_handoff.direction_ok = false;
+      settleSuspendedModes(before, state);
       const driftValidation = validateState(state);
       if (!driftValidation.valid) {
         return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${driftValidation.errors.join('; ')}${researchEscape(driftValidation.errors)}` };
@@ -777,6 +784,8 @@ export async function phaseComplete({
     // Update git_head to current commit
     const gsdDir = dirname(statePath);
     state.git_head = await getGitHead(dirname(gsdDir));
+
+    settleSuspendedModes(before, state);
 
     // Prune evidence from old phases (in-memory to avoid double read/write)
     const pruned = _pruneEvidenceFromState(state, state.current_phase);

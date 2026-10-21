@@ -38,13 +38,84 @@ export const WORKFLOW_MODES = [
 // resolution, not shortcuts: widening the door to them cannot skip work.
 export const SYSTEM_HOLD_MODES = ['reconcile_workspace', 'replan_required', 'research_refresh_needed', 'awaiting_user'];
 
+// The modes work happens in, and the two the workflow ends in. Every other
+// mode is a hold: something set the work aside and something has to release
+// it. Named here as the trusted set and the holds derived from it, so a mode
+// added later is a hold until someone decides otherwise.
+export const WORK_MODES = ['planning', 'executing_task', 'reviewing_task', 'reviewing_phase'];
+export const TERMINAL_MODES = ['completed', 'failed'];
+export const HOLD_MODES = WORKFLOW_MODES.filter((mode) => !WORK_MODES.includes(mode) && !TERMINAL_MODES.includes(mode));
+
+// How many interrupted modes suspended_modes keeps. A real chain is two or
+// three deep (a /clear over a pause over work); past this the oldest goes.
+export const MAX_SUSPENDED_MODES = 8;
+
+/**
+ * The modes the holds in force interrupted, most recent last, after the
+ * workflow moves from `from` to `to`. A hold remembers what it interrupted
+ * and its release goes back there: one slot cannot, since holds stack (a
+ * /clear over a pause, a pause over an owed decision), and working the way
+ * back out from current_review cannot express planning at all.
+ *
+ *   to is the top            → pop: back to what was interrupted (all of it
+ *                              when that is a work mode, which holds nothing)
+ *   to is a hold             → push from
+ *   to is anything else      → empty: the interrupted work was left for other
+ *                              work, or for the end of the workflow
+ */
+export function nextSuspendedModes(stack, from, to) {
+  const current = Array.isArray(stack) ? stack : [];
+  if (to === from) return current;
+  if (current.length > 0 && to === current.at(-1)) {
+    return WORK_MODES.includes(to) ? [] : current.slice(0, -1);
+  }
+  if (HOLD_MODES.includes(to)) return [...current, from].slice(-MAX_SUSPENDED_MODES);
+  return [];
+}
+
+/**
+ * Keep `next.suspended_modes` in step with a workflow_mode change from
+ * `previous` (anything with workflow_mode and suspended_modes, such as the
+ * state as loaded). Every writer of workflow_mode calls it before writing.
+ */
+export function settleSuspendedModes(previous, next) {
+  next.suspended_modes = nextSuspendedModes(previous.suspended_modes, previous.workflow_mode, next.workflow_mode);
+  return next;
+}
+
+// The stages a review in progress carries (agents/reviewer.md); a phase review
+// may carry none. Any other stage is a hold the user owes a decision on
+// (human_confirmation, review_retry_exhausted, direction_drift, and whatever
+// is added later), so it is this list that is named, not the holds.
+const REVIEW_STAGES = ['spec', 'quality'];
+
+/**
+ * The workflow_mode a saved current_review belongs to: what a hold returns to
+ * when nothing recorded what it interrupted (a state written before
+ * suspended_modes existed). A review in progress comes back as that review,
+ * debugging as execution, a hold stage as awaiting_user.
+ */
+export function workflowModeForReview(review) {
+  if (!review || review.stage === 'debugging') return 'executing_task';
+  if (review.stage != null && !REVIEW_STAGES.includes(review.stage)) return 'awaiting_user';
+  if (review.scope === 'phase') return 'reviewing_phase';
+  if (review.scope === 'task') return 'reviewing_task';
+  return 'executing_task';
+}
+
+/** Where releasing the current hold goes back to. */
+export function resumeTarget(state) {
+  const top = Array.isArray(state?.suspended_modes) ? state.suspended_modes.at(-1) : undefined;
+  return top ?? workflowModeForReview(state?.current_review);
+}
+
 const WORKFLOW_TRANSITIONS_BASE = {
-  planning:                 ['executing_task', 'paused_by_user'],
+  planning:                 ['executing_task', 'paused_by_user', 'awaiting_clear'],
   executing_task:           ['planning', 'reviewing_task', 'reviewing_phase', 'awaiting_clear', 'paused_by_user', 'failed'],
   reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_clear', 'paused_by_user', 'failed'],
   reviewing_phase:          ['executing_task', 'awaiting_clear', 'paused_by_user', 'completed', 'failed'],
   awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear', 'planning'],
-  awaiting_clear:           ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user'],
+  awaiting_clear:           ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'planning'],
   paused_by_user:           ['executing_task', 'awaiting_clear', 'reviewing_task', 'reviewing_phase'],
   reconcile_workspace:      ['executing_task', 'paused_by_user'],
   replan_required:          ['executing_task', 'paused_by_user'],
@@ -154,7 +225,7 @@ export const CANONICAL_FIELDS = [
  * that drifted twice in this repo before DEP_GATES and phaseReviewSatisfied()
  * collapsed it.
  */
-export const READABLE_FIELDS = [...CANONICAL_FIELDS, '_version'];
+export const READABLE_FIELDS = [...CANONICAL_FIELDS, '_version', 'suspended_modes'];
 
 function validateResearchSourcesArray(sources, errors, path = 'sources') {
   if (!Array.isArray(sources)) {
@@ -318,7 +389,11 @@ export function validateStateUpdate(state, updates) {
         const currentMode = state.workflow_mode;
         if (currentMode && updates.workflow_mode !== currentMode) {
           const allowed = WORKFLOW_TRANSITIONS[currentMode];
-          if (allowed && !allowed.includes(updates.workflow_mode)) {
+          // Releasing a hold to what it interrupted is always a valid move:
+          // that mode was the workflow's a moment ago. It is how a pause
+          // returns to planning, which no table row would otherwise allow.
+          const returning = HOLD_MODES.includes(currentMode) && updates.workflow_mode === resumeTarget(state);
+          if (allowed && !returning && !allowed.includes(updates.workflow_mode)) {
             errors.push(`Invalid workflow_mode transition: '${currentMode}' → '${updates.workflow_mode}' (allowed: ${allowed.join(', ') || 'none (terminal state)'})`);
           }
         }
@@ -515,6 +590,18 @@ export function validateState(state) {
     }
   }
   errors.push(...researchErrors(state.research));
+  // Server-owned (nextSuspendedModes). Empty outside a hold: a work or
+  // terminal mode has nothing set aside, so a stack there is a writer that
+  // skipped settleSuspendedModes.
+  if (state.suspended_modes !== undefined) {
+    if (!Array.isArray(state.suspended_modes)
+        || state.suspended_modes.length > MAX_SUSPENDED_MODES
+        || !state.suspended_modes.every((mode) => WORKFLOW_MODES.includes(mode))) {
+      errors.push(`suspended_modes must be an array of at most ${MAX_SUSPENDED_MODES} workflow modes`);
+    } else if (state.suspended_modes.length > 0 && !HOLD_MODES.includes(state.workflow_mode)) {
+      errors.push(`suspended_modes must be empty in workflow_mode "${state.workflow_mode}"`);
+    }
+  }
   if (state.current_task !== null && typeof state.current_task !== 'string') {
     errors.push('current_task must be a string or null');
   }
@@ -937,6 +1024,14 @@ export function migrateState(state) {
   // Future migrations go here:
   // if (version < 2) { migrateV1toV2(state); state.schema_version = 2; }
 
+  // Not a version step: a state from before suspended_modes has none, and a
+  // stack outside a hold holds nothing (validateState). Cleared on load so a
+  // stale one cannot fail every later write with no way to remove it — the
+  // field is server-owned and state-update cannot touch it.
+  if (!Array.isArray(state.suspended_modes) || !HOLD_MODES.includes(state.workflow_mode)) {
+    state.suspended_modes = [];
+  }
+
   return state;
 }
 
@@ -1081,6 +1176,7 @@ export function createInitialState({ project, phases }) {
     current_phase: 1,
     current_task: null,
     current_review: null,
+    suspended_modes: [],
     total_phases: phases.length,
     phases: phases.map((p, i) => ({
       id: i + 1,
