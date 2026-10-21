@@ -23,7 +23,6 @@ import {
   ensureLockPathFromStatePath,
   loadState,
   withStateLock,
-  inferWorkflowModeAfterResearch,
   normalizeResearchArtifacts,
 } from './constants.js';
 
@@ -682,11 +681,16 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       }
     }
 
+    // Back to what the refresh interrupted (suspended_modes), except that a
+    // refresh that sends tasks back drops an interrupted review: what it
+    // reviewed may have to be redone.
     if (state.workflow_mode === 'research_refresh_needed') {
-      const resumed = inferWorkflowModeAfterResearch(state, { invalidated: invalidated.length > 0 });
-      state.suspended_modes = nextSuspendedModes(state.suspended_modes, state.workflow_mode, resumed.workflow_mode);
-      state.workflow_mode = resumed.workflow_mode;
-      state.current_review = resumed.current_review;
+      const back = resumeTarget(state);
+      const dropReview = invalidated.length > 0 && (back === 'reviewing_task' || back === 'reviewing_phase');
+      const next = dropReview ? 'executing_task' : back;
+      state.suspended_modes = nextSuspendedModes(state.suspended_modes, state.workflow_mode, next);
+      state.workflow_mode = next;
+      if (dropReview) state.current_review = null;
     }
 
     // Recompute done after applyResearchRefresh may have invalidated tasks

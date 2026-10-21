@@ -2,7 +2,7 @@
 
 import { join, dirname } from 'node:path';
 import { isPlainObject, readJson, withFileLock } from '../../utils.js';
-import { migrateState, workflowModeForReview } from '../../schema.js';
+import { migrateState } from '../../schema.js';
 
 // Moved to schema.js, which validates transitions with them; re-exported so
 // the state module's callers keep one import.
@@ -125,22 +125,6 @@ export async function loadState(statePath) {
     return { error: { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: CORRUPT_STATE_MESSAGE } };
   }
   return { state: migrateState(result.data) };
-}
-
-/**
- * Where a refreshed project goes back to (workflowModeForReview). A refresh
- * that invalidated tasks drops an interrupted review — what it was reviewing
- * may have to be redone first, and a phase review is raised again once that
- * work is checkpointed. A debugging hold survives: a running task is never
- * invalidated. Only execution and review modes reach here (REFRESH_MODES in
- * orchestrator/helpers.js).
- */
-export function inferWorkflowModeAfterResearch(state, { invalidated = false } = {}) {
-  const review = state.current_review;
-  const workflow_mode = workflowModeForReview(review);
-  const reviewing = workflow_mode === 'reviewing_phase' || workflow_mode === 'reviewing_task';
-  if (invalidated && reviewing) return { workflow_mode: 'executing_task', current_review: null };
-  return { workflow_mode, current_review: review ?? null };
 }
 
 export function normalizeResearchArtifacts(artifacts) {

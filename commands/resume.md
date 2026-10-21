@@ -100,7 +100,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 - 上下文已通过 /clear 清理
 - 再次验证上下文健康度 ≥ 40%，不足则要求再次 /clear
-- 验证通过后服务端按 `current_review` 恢复模式 (不记得 /clear 之前是哪个模式)：被打断的审查回到审查，调试中的回到执行，等你决定的 hold 回到 `awaiting_user`，其余从 `current_phase` + `current_task` 继续调度。按响应里的 `action` 走
+- 验证通过后服务端回到被 /clear 打断的模式 (服务端记下的 `suspended_modes`)：规划中回到规划，暂停中回到暂停，审查中回到审查，等你决定的回到 `awaiting_user`，执行中从 `current_phase` + `current_task` 继续调度。按响应里的 `action` 走
 
 ---
 
@@ -186,7 +186,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 ### `planning` — 计划中断
 
 - 计划编制过程中被中断 (暂停、/clear 或核对之后回到规划，也停在这里)
-- 告知用户: "项目仍在计划阶段。请运行 /gsd:start 或 /gsd:prd 重新启动计划流程"
+- 告知用户: "项目正在修订计划。用 `state-patch` 改计划，改完后 `state-update({updates: {workflow_mode: \"executing_task\"}})`，再 /gsd:resume"。项目已经存在，计划只在原地修订
 - 不自动执行
 
 ---

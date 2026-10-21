@@ -238,8 +238,11 @@ stateDiagram-v2
 进入 hold (`awaiting_clear`、`awaiting_user`、`paused_by_user`、`reconcile_workspace`、`replan_required`、`research_refresh_needed`) 时，服务端把离开的模式压进 `suspended_modes` (只读，`state-update` 不能写)；释放 hold 回到栈顶时出栈，去了别的工作模式或结束时清空。hold 可以叠 hold (例如暂停后又 /clear)，各自回到自己打断的那个模式。回到栈顶的转移总是允许的。
 - /clear: `awaiting_clear` 恢复时直接写栈顶。
 - 暂停、`reconcile_workspace`、`replan_required`: resume 响应带 `resume_to` (栈顶)，确认后写入。
-- 研究刷新: `storeResearch()` 中，如果 `workflow_mode === 'research_refresh_needed'`，调用 `inferWorkflowModeAfterResearch()` 决定去处：刷新让 task 失效时回到 `executing_task` 并清掉被打断的审查，否则回到原来的执行或审查；放弃研究时写 `resume_to`。
-- 0.18.0 之前写下、没有 `suspended_modes` 的 state：退回只凭 `current_review` 推断 (`workflowModeForReview()`)：没有审查或调试中 → `executing_task`；`spec` / `quality` 以外的 stage → `awaiting_user`；其余按 scope 回到 `reviewing_phase` / `reviewing_task`。
+- 研究刷新: `storeResearch()` 中，如果 `workflow_mode === 'research_refresh_needed'`，回到栈顶；只有刷新让 task 失效、栈顶又是审查时，改回 `executing_task` 并清掉被打断的审查。放弃研究时写 `resume_to`。
+- 阻塞的 task 自动解除 (`awaiting_user`，没有 stage): 回到栈顶。
+- 栈顶是审查模式、但 `current_review` 已不是那次审查 (hold 期间被清掉) 时，回程按 `current_review` 推断 (下一条)，否则写回去也通不过校验。
+- 栈满 (`MAX_SUSPENDED_MODES`) 时丢掉最旧的 hold，栈底被打断的工作模式保留。
+- 0.18.0 之前写下、没有 `suspended_modes` 的 state，以及上一条的情况：退回只凭 `current_review` 推断 (`workflowModeForReview()`)：没有审查或调试中 → `executing_task`；`spec` / `quality` 以外的 stage → `awaiting_user`；其余按 scope 回到 `reviewing_phase` / `reviewing_task`。
 - 离开 `planning` 去 `executing_task` 时刷新计划哈希，规划期间改过的计划文件不会在下一次 resume 被报成漂移。
 
 来源: `WORKFLOW_MODES` in `src/schema.js`, `resumeWorkflow()` in `src/tools/orchestrator/resume.js`, `evaluatePreflight()` in `src/tools/orchestrator/helpers.js`, `storeResearch()` in `src/tools/state/`

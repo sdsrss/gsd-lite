@@ -245,6 +245,37 @@ describe('prompt layer — commands', () => {
     }
   });
 
+  // A pause, a /clear or a reconcile now returns to planning, so these texts
+  // are reached more often. /gsd:start and /gsd:prd start a project: on this
+  // one they offer to resume (back to planning) or to start over, discarding
+  // its progress; state-init refuses an existing project. The server's own
+  // guidance is the way out: state-patch, then executing_task.
+  it('a plan revision is finished with state-patch, not by starting planning over', () => {
+    const row = read('workflows/execution-flow.md').split('\n').find((l) => l.startsWith('| `planning` |')) ?? '';
+    const resume = section(read('commands/resume.md'), '### `planning`');
+    const status = read('commands/status.md').split('\n').find((l) => l.startsWith('| planning |')) ?? '';
+    for (const [where, text] of [['execution-flow.md', row], ['commands/resume.md', resume], ['commands/status.md', status]]) {
+      assert.ok(text, `premise: ${where} has no planning entry`);
+      assert.doesNotMatch(text, /gsd:start|gsd:prd|state-init/, `${where}: ${text}`);
+      assert.match(text, /state-patch/, `${where}: ${text}`);
+    }
+  });
+
+  it("state-read's description names every readable field that is not canonical", () => {
+    const { READABLE_FIELDS = [], CANONICAL_FIELDS = [] } = schemaNs;
+    const extra = READABLE_FIELDS.filter((f) => !CANONICAL_FIELDS.includes(f));
+    assert.ok(extra.includes('_version'), 'premise: _version is readable');
+    const server = read('src/server.js');
+    const tool = server.slice(server.indexOf("name: 'state-read'"), server.indexOf("name: 'state-update'"));
+    for (const field of extra) assert.ok(tool.includes(`\`${field}\``), `state-read does not name ${field}`);
+  });
+
+  it('resume.md says a /clear comes back to the mode it interrupted', () => {
+    const text = section(read('commands/resume.md'), '### `awaiting_clear`');
+    assert.doesNotMatch(text, /不记得/, text);
+    assert.match(text, /被 \/clear 打断的模式/, text);
+  });
+
   it('no command wraps its rules in a pressure tag (token check)', () => {
     // The orchestration rules have reasons; the tag only raised the volume.
     const offenders = mdFiles('commands').filter((f) => read(f).includes('EXTREMELY-IMPORTANT'));
