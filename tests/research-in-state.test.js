@@ -317,6 +317,87 @@ describe('a store lands whole or changes nothing', () => {
     await writeFile(statePath, JSON.stringify(raw));
   }
 
+  // A record written through state-update has no researcher result behind
+  // it, so its flag is read from its decisions; storeResearch decides by the
+  // flag alone, and a flag out of step with the decisions let a blocked
+  // refresh replace real research, or refused the one an offline project
+  // needs (pre-tag review).
+  describe('a research record written by state-update', () => {
+    const PLACEHOLDER = { 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } };
+    const REAL = { 'decision:a': { summary: 'A', source: 'docs' } };
+    async function blockedOnRecord() {
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+      const stored = await handleResearcherResult({ ...payload(PLACEHOLDER, { blocked: true }), basePath: dir });
+      assert.equal(stored.action, 'research_stored', JSON.stringify(stored));
+      return (await read({ basePath: dir })).research;
+    }
+
+    it('refuses real decisions written over the placeholder with its blocked: true kept', async () => {
+      const research = await blockedOnRecord();
+      const res = await update({ updates: { research: { ...research, decision_index: REAL } }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.match(res.message, /research\.blocked/);
+      assert.deepEqual((await read({ basePath: dir })).research, research, 'nothing was written');
+    });
+
+    it('reads the flag from the decisions when it is left out, so a blocked refresh is then refused', async () => {
+      const { blocked, ...research } = await blockedOnRecord();
+      assert.equal(blocked, true, 'premise');
+      const res = await update({ updates: { research: { ...research, decision_index: REAL } }, basePath: dir });
+      assert.ok(res.success, JSON.stringify(res));
+      assert.equal((await read({ basePath: dir })).research.blocked, false);
+      const refresh = await handleResearcherResult({ ...payload(PLACEHOLDER, { blocked: true }), basePath: dir });
+      assert.equal(refresh.code, 'VALIDATION_FAILED', JSON.stringify(refresh));
+    });
+
+    it('refuses blocked: true on real research', async () => {
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+      await handleResearcherResult({ ...payload(REAL), basePath: dir });
+      const { research } = await read({ basePath: dir });
+      const res = await update({ updates: { research: { ...research, blocked: true } }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.equal((await read({ basePath: dir })).research.blocked, false);
+    });
+
+    it('refuses blocked: false on a record whose every decision is the placeholder', async () => {
+      const research = await blockedOnRecord();
+      const res = await update({ updates: { research: { ...research, blocked: false } }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.equal((await read({ basePath: dir })).research.blocked, true);
+    });
+
+    it('keeps the flag of the record on file written back with the same decisions', async () => {
+      // A blocked result need not use the tag; its record is blocked because
+      // the result said so, and an edit that leaves the decisions alone
+      // (here the expiry) leaves that alone too.
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+      await handleResearcherResult({ ...payload({ 'decision:x': { summary: '来源都不可用', source: 'none' } }, { blocked: true }), basePath: dir });
+      const { research } = await read({ basePath: dir });
+      const res = await update({ updates: { research: { ...research, expires_at: future(2) } }, basePath: dir });
+      assert.ok(res.success, JSON.stringify(res));
+      assert.equal((await read({ basePath: dir })).research.blocked, true);
+    });
+  });
+
+  it('reflags a record whose blocked on file is not a boolean', async () => {
+    // validateState refuses it, so left as it was every later write failed.
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    await writeLegacyResearch({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } });
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    raw.research.blocked = null;
+    await writeFile(statePath, JSON.stringify(raw));
+    assert.equal((await read({ basePath: dir })).research.blocked, true);
+    assert.ok((await update({ updates: { context: { last_session: 'x', remaining_percentage: 50 } }, basePath: dir })).success);
+  });
+
+  it('stores a blocked result over a record that holds no decisions', async () => {
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    assert.equal((await handleResearcherResult({ ...payload({}), basePath: dir })).action, 'research_stored', 'premise');
+    const res = await handleResearcherResult({ ...payload({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } }, { blocked: true }), basePath: dir });
+    assert.equal(res.action, 'research_stored', JSON.stringify(res));
+  });
+
   it('stores a result with no decisions when there is no research on record', async () => {
     await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
     const res = await handleResearcherResult({ ...payload({}), basePath: dir });

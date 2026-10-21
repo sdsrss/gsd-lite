@@ -129,6 +129,7 @@ Decision ID 供 plan/task 的 `research_basis` 字段引用，建立研究→计
 ```json
 {
   "decision_ids": ["decision:jwt-rotation", "decision:orm-choice"],
+  "blocked": false,
   "volatility": "medium",
   "expires_at": "<ISO 8601：研究完成时间 + 上方 TTL>",
   "sources": [
@@ -137,3 +138,4 @@ Decision ID 供 plan/task 的 `research_basis` 字段引用，建立研究→计
   ]
 }
 ```
+`blocked` 必填：研究完成为 `false`；来源不可用或范围无法收敛时为 `true` (受阻结果的写法见 `agents/researcher.md` 的 uncertainty_handling)。缺了它整个结果会被拒收
