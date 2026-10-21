@@ -412,4 +412,12 @@ describe('every update notification kind is read where the file is read', () => 
     const doctor = readFileSync(join(import.meta.dirname, '..', 'commands', 'doctor.md'), 'utf8');
     assert.deepEqual(kinds.filter((kind) => !doctor.includes(`\`${kind}\``)), []);
   });
+
+  // The notice is deleted once shown; the streak stays in update-state.json,
+  // and doctor is where it is read after that.
+  it('/gsd:doctor reads the failure streak the updater records', () => {
+    assert.match(writer, /checkFailure/, 'premise: the updater records checkFailure');
+    const doctor = readFileSync(join(import.meta.dirname, '..', 'commands', 'doctor.md'), 'utf8');
+    assert.match(doctor, /update-state\.json` has `checkFailure`/);
+  });
 });

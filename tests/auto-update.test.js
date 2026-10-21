@@ -122,6 +122,18 @@ describe('auto update install modes', () => {
     });
   }
 
+  // The other side of reading the registry first: with no plugin record, a
+  // git checkout is still dev mode, which checks only when forced.
+  it('treats a git checkout with no plugin record as dev mode', async () => {
+    const ctx = await loadAutoUpdate('plugin');
+    try {
+      await mkdir(join(ctx.claudeDir, '..', '..', 'plugin-root', '.git'), { recursive: true });
+      assert.equal(ctx.mod.getInstallMode(), 'dev');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
   it('manual mode reports a failed install instead of saying nothing', async () => {
     // writeNotification only ever fired on success, so a background update that
     // failed was completely silent — and because the old installer wrote the new
