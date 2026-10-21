@@ -254,7 +254,10 @@ describe('prompt layer — commands', () => {
     const row = read('workflows/execution-flow.md').split('\n').find((l) => l.startsWith('| `planning` |')) ?? '';
     const resume = section(read('commands/resume.md'), '### `planning`');
     const status = read('commands/status.md').split('\n').find((l) => l.startsWith('| planning |')) ?? '';
-    for (const [where, text] of [['execution-flow.md', row], ['commands/resume.md', resume], ['commands/status.md', status]]) {
+    // replan_required cannot go to planning, and need not: state-patch works
+    // in the hold, and leaving it records the revised plan.
+    const replan = section(read('commands/resume.md'), '### `replan_required`');
+    for (const [where, text] of [['execution-flow.md', row], ['commands/resume.md', resume], ['commands/status.md', status], ['commands/resume.md replan_required', replan]]) {
       assert.ok(text, `premise: ${where} has no planning entry`);
       assert.doesNotMatch(text, /gsd:start|gsd:prd|state-init/, `${where}: ${text}`);
       assert.match(text, /state-patch/, `${where}: ${text}`);
