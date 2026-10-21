@@ -9,6 +9,7 @@ import {
   validateState,
   createInitialState,
   CANONICAL_FIELDS,
+  WORKFLOW_MODES,
 } from '../src/schema.js';
 import { init, storeResearch, update } from '../src/tools/state/index.js';
 
@@ -491,6 +492,18 @@ describe('validateStateUpdate', () => {
       assert.ok(result.errors.some(e => e.includes('evidence["ev:1"] must be an object')));
     });
 
+    it('rejects what validateState rejects in research and in evidence fields', () => {
+      // update() also checks the result against validateState; this is the
+      // fast path's own answer, which used to accept both.
+      const state = baseState();
+      const research = validateStateUpdate(state, { research: { decision_index: { 'decision:a': null } } });
+      assert.equal(research.valid, false);
+      assert.ok(research.errors.some(e => e.includes('decision_index.decision:a must be an object')), research.errors.join('; '));
+      const evidence = validateStateUpdate(state, { evidence: { 'ev:1': { scope: 'task:1.1', passed: 'false' } } });
+      assert.equal(evidence.valid, false);
+      assert.ok(evidence.errors.some(e => e.includes('passed must be a boolean')), evidence.errors.join('; '));
+    });
+
     it('accepts valid evidence entries with scope', () => {
       const state = baseState();
       const result = validateStateUpdate(state, { evidence: { 'ev:1': { scope: 'task:1.1' }, 'ev:2': { scope: 'global' } } });
@@ -531,36 +544,66 @@ describe('update() never writes a state that validateState refuses', () => {
     ],
     context: [{ remaining_percentage: 'x' }, { last_session: 1 }],
     current_review: [{ scope: 'x' }, { scope: 'task', scope_id: '9.9' }, { scope: 'phase', scope_id: 9 }],
+    // With a review of task 1.1 in progress, moving current_phase to 2 left a
+    // scope_id the full validator refuses (pre-tag review).
+    current_phase: [1, 2, 3],
+    current_task: ['1.1', '2.1', '9.9'],
+    workflow_mode: WORKFLOW_MODES,
+  };
+
+  // Two states to write into: a fresh plan, and a task review in progress in
+  // a two-phase plan. Fields checked against each other only fail where the
+  // other one is set.
+  const BASES = {
+    'a fresh one-phase plan': async (dir) => {
+      await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }], basePath: dir });
+    },
+    'a task review in progress in a two-phase plan': async (dir) => {
+      await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }, { name: 'P2', tasks: [{ index: 1, name: 'T2' }] }], basePath: dir });
+      for (const lifecycle of ['running', 'checkpointed']) {
+        await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle, ...(lifecycle === 'checkpointed' ? { checkpoint_commit: 'c1' } : {}) }] }] }, basePath: dir });
+      }
+      await update({ updates: { workflow_mode: 'reviewing_task', current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' } }, basePath: dir });
+    },
   };
 
   let dir;
   let original;
+  const originals = {};
   before(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'gsd-incremental-'));
-    await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }], basePath: dir });
-    original = await readFile(join(dir, '.gsd', 'state.json'), 'utf8');
-  });
-  after(async () => { await rm(dir, { recursive: true, force: true }); });
-
-  it('holds for every canonical field', async () => {
-    assert.ok(validateState(JSON.parse(original)).valid, 'premise: the initial state is valid');
-    const statePath = join(dir, '.gsd', 'state.json');
-    const written = [];
-    let tried = 0;
-    for (const field of CANONICAL_FIELDS) {
-      for (const value of [...GENERIC, ...(NESTED[field] ?? [])]) {
-        await writeFile(statePath, original);
-        tried += 1;
-        // A throw writes nothing either; this asks only about what is written.
-        const res = await update({ updates: { [field]: value }, basePath: dir }).catch((err) => ({ thrown: err }));
-        if (!res.success) continue;
-        const check = validateState(JSON.parse(await readFile(statePath, 'utf8')));
-        if (!check.valid) written.push(`${field} = ${JSON.stringify(value)}: ${check.errors.join('; ')}`);
-      }
+    for (const [label, build] of Object.entries(BASES)) {
+      const d = await mkdtemp(join(tmpdir(), 'gsd-incremental-'));
+      await build(d);
+      originals[label] = { dir: d, json: await readFile(join(d, '.gsd', 'state.json'), 'utf8') };
     }
-    assert.ok(tried > CANONICAL_FIELDS.length * GENERIC.length, 'premise: the values were tried');
-    assert.deepEqual(written, []);
+    ({ dir, json: original } = originals['a fresh one-phase plan']);
   });
+  after(async () => {
+    for (const { dir: d } of Object.values(originals)) await rm(d, { recursive: true, force: true });
+  });
+
+  for (const label of Object.keys(BASES)) {
+    it(`holds for every canonical field, writing into ${label}`, async () => {
+      const { dir: base, json } = originals[label];
+      assert.ok(validateState(JSON.parse(json)).valid, 'premise: the base state is valid');
+      const statePath = join(base, '.gsd', 'state.json');
+      const written = [];
+      let tried = 0;
+      for (const field of CANONICAL_FIELDS) {
+        for (const value of [...GENERIC, ...(NESTED[field] ?? [])]) {
+          await writeFile(statePath, json);
+          tried += 1;
+          // A throw writes nothing either; this asks only about what is written.
+          const res = await update({ updates: { [field]: value }, basePath: base }).catch((err) => ({ thrown: err }));
+          if (!res.success) continue;
+          const check = validateState(JSON.parse(await readFile(statePath, 'utf8')));
+          if (!check.valid) written.push(`${field} = ${JSON.stringify(value)}: ${check.errors.join('; ')}`);
+        }
+      }
+      assert.ok(tried > CANONICAL_FIELDS.length * GENERIC.length, 'premise: the values were tried');
+      assert.deepEqual(written, []);
+    });
+  }
 
   // The property above holds as well when both validators are equally lax, so
   // the two reported writes are asserted on their own.
@@ -577,6 +620,22 @@ describe('update() never writes a state that validateState refuses', () => {
     assert.match(res.message, /decision_index\.decision:a must be an object/);
     const refresh = await storeResearch({ result, decision_index: { 'decision:a': { summary: 'A2', source: 'docs' } }, artifacts, basePath: dir });
     assert.ok(refresh.success, JSON.stringify(refresh));
+  });
+
+  it('still writes to a state that was already invalid, when the update adds nothing invalid', async () => {
+    // update() checks the fast path's answer against validateState, counting
+    // only errors the update introduces. A state 0.17.0 left with a null
+    // decision must still be pausable, and recoverable with research: null.
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(original);
+    raw.research = { decision_index: { 'decision:a': null } };
+    await writeFile(statePath, JSON.stringify(raw));
+    assert.equal(validateState(raw).valid, false, 'premise: the planted state is invalid');
+    const paused = await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+    assert.ok(paused.success, JSON.stringify(paused));
+    const recovered = await update({ updates: { research: null }, basePath: dir });
+    assert.ok(recovered.success, JSON.stringify(recovered));
+    assert.ok(validateState(JSON.parse(await readFile(statePath, 'utf8'))).valid);
   });
 
   it('refuses an evidence entry whose passed is not a boolean', async () => {
