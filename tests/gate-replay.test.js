@@ -60,7 +60,7 @@ function fixtureRepo(t) {
   };
 }
 
-const HEADER = `import { describe, it, before, after } from 'node:test';
+const HEADER = `import { describe, it, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -82,7 +82,7 @@ describe('needs the fix to set up', () => {
     const { code, out } = repo.replay('tests/setup.test.js');
     assert.doesNotMatch(out, /VACUOUS/, out);
     assert.equal(code, 2, `INCONCLUSIVE exits 2:\n${out}`);
-    assert.match(out, /INCONCLUSIVE — 2 of 2 tests never ran/);
+    assert.match(out, /INCONCLUSIVE — 2 of 2 tests have no result of their own/);
     assert.match(out, /needs the fix to set up/, 'and it names the suite whose hook failed');
   });
 
@@ -137,8 +137,60 @@ it('b', () => {});
     });
     const { code, out } = repo.replay('tests/toplevel.test.js');
     assert.equal(code, 2, out);
-    assert.match(out, /INCONCLUSIVE — 2 of 2 tests never ran/);
+    assert.match(out, /INCONCLUSIVE — 2 of 2 tests have no result of their own/);
     assert.match(out, /setup needs the fix/);
+  });
+
+  // Second pre-tag review: each of these was read as something it is not.
+  it('does not count a failing todo test as a red', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/todo.test.js': `${HEADER}
+it('passes', () => {});
+it('known bug', { todo: true }, () => { throw new Error('expected to fail'); });
+` });
+    const { code, out } = repo.replay('tests/todo.test.js');
+    assert.equal(code, 1, out);
+    assert.match(out, /VACUOUS — 1\/2 passed/);
+  });
+
+  it('reports a failing afterEach as a hook failure, not as a test that never ran', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/teardown.test.js': `${HEADER}
+afterEach(() => { if (require('../src.cjs') !== 2) throw new Error('teardown needs the fix'); });
+it('x', () => {});
+` });
+    const { code, out } = repo.replay('tests/teardown.test.js');
+    assert.equal(code, 2, out);
+    assert.match(out, /a hook failed before or after "x": .*teardown needs the fix/);
+    assert.doesNotMatch(out, /never ran/);
+  });
+
+  it('counts a suite that timed out on the base tree as a failure', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/slowsuite.test.js': `${HEADER}
+describe('slow suite', { timeout: 300 }, () => {
+  it('waits', () => (require('../src.cjs') === 2 ? undefined : new Promise((resolve) => setTimeout(resolve, 2000))));
+});
+` });
+    const { code, out } = repo.replay('tests/slowsuite.test.js');
+    assert.equal(code, 0, out);
+    assert.match(out, /DISCRIMINATIVE — 1\/1 failed/);
+    assert.match(out, /✖ slow suite/);
+  });
+
+  it('does not call a file vacuous when a describe threw before registering its tests', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/collect.test.js': `${HEADER}
+describe('needs the fix to collect', () => {
+  if (require('../src.cjs') !== 2) throw new Error('collection needs the fix');
+  it('a', () => {});
+});
+it('other', () => {});
+` });
+    const { code, out } = repo.replay('tests/collect.test.js');
+    assert.equal(code, 2, out);
+    assert.match(out, /INCONCLUSIVE/);
+    assert.match(out, /needs the fix to collect/);
   });
 
   it('does not call a file whose every test was skipped vacuous', (t) => {
