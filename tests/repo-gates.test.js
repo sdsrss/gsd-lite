@@ -394,6 +394,17 @@ describe('repo gates — the test-count parsers read the reporter this repo actu
     }
   });
 
+  // The hook captures `npm test` with $(...), and Node 20 and 22 print TAP when
+  // stdout is not a terminal: `not ok 2 - name`, no ✖ (pre-tag review).
+  it('pre-commit.sh names the failing test in both reporter formats', () => {
+    const line = lineContaining('pre-commit.sh', 'sort -u');
+    for (const [name, output] of Object.entries(REPORTERS)) {
+      const got = execFileSync('bash', ['-c', `TEST_OUT=$(cat)\n${line.trim()}`], { input: output, encoding: 'utf8' });
+      assert.ok(got.includes('counts the tests 99 it was given'),
+        `pre-commit.sh printed ${JSON.stringify(got)} for a failed ${name}-reporter run, which does not name the failing test. The line run was:\n  ${line.trim()}`);
+    }
+  });
+
   it('sync-versions.js reads the count in both reporter formats', () => {
     const matchLine = lineContaining('sync-versions.js', 'matchAll(');
     const pickLine = lineContaining('sync-versions.js', 'countMatches.at(');

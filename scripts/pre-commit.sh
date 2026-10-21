@@ -67,9 +67,11 @@ if [ -n "$STAGED_TESTS" ] || [ -n "$STAGED_CLAUDE" ] || [ -n "$STAGED_CODE" ]; t
     # The tail is the last failure's stack, and for a child process that timed
     # out that is node:net frames with no test name: three e2e-install failures
     # were blamed on it unconfirmed. Name the failures and keep the whole run.
+    # ✖ is the spec reporter's mark; Node 20 and 22 print TAP here, since $(...)
+    # is not a terminal, and mark a failure `not ok`.
     TEST_LOG="$(git rev-parse --git-dir)/pre-commit-tests.log"
     printf '%s\n' "$TEST_OUT" > "$TEST_LOG"
-    printf '%s\n' "$TEST_OUT" | grep '✖' | sort -u | head -20
+    printf '%s\n' "$TEST_OUT" | grep -E '✖|^ *not ok ' | sort -u | head -20
     echo -e "${RED}Tests failed. Fix before committing.${NC} Full output: $TEST_LOG"
     exit 1
   fi
