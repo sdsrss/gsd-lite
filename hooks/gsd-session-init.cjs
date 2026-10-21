@@ -335,19 +335,18 @@ setTimeout(() => process.exit(0), 4000).unref();
   //
   // NODE_USE_ENV_PROXY=1 lets the child's fetch use HTTPS_PROXY, which Node
   // reads only at startup (v22.21+, v24+). Without it every check on a network
-  // that requires a proxy failed, silently, every day. It does nothing when no
-  // proxy is set, and a value the user chose comes after it and wins. Not set
-  // when a proxy value is one Node cannot parse (`host:port`, socks5h://):
-  // started that way Node exits before the updater runs a line, and nothing
-  // is recorded at all.
+  // that requires a proxy failed, silently, every day. The updater decides
+  // (updaterEnv): set only when Node, asked, starts with it — a proxy value
+  // Node refuses makes it exit before the updater runs a line — and never over
+  // a value the user chose.
   try {
     const { spawn } = require('node:child_process');
-    let proxyUsable = false;
-    try { proxyUsable = require('./gsd-auto-update.cjs').proxyEnvUsable(process.env); } catch { /* updater absent — spawn fails below anyway */ }
+    let env = process.env;
+    try { env = require('./gsd-auto-update.cjs').updaterEnv(process.env); } catch { /* updater absent — spawn fails below anyway */ }
     const child = spawn(
       process.execPath,
       [path.join(__dirname, 'gsd-auto-update.cjs')],
-      { detached: true, stdio: 'ignore', env: { ...(proxyUsable ? { NODE_USE_ENV_PROXY: '1' } : {}), ...process.env } },
+      { detached: true, stdio: 'ignore', env },
     );
     child.unref();
   } catch { /* silent — never block session start */ }

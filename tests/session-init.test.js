@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, lstatSync, readFileSync, symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -311,7 +312,10 @@ describe('session init reads repo-controlled paths without blocking', () => {
 // not reach GitHub on a network that requires a proxy, and failed silently
 // every day. The child is replaced by a stub that records what it was given.
 describe('session init starts the updater able to use a proxy', () => {
-  async function spawnedEnv(extra, { proxy } = {}) {
+  const { nodeReadsProxyEnvAtStartup } = createRequire(import.meta.url)(AUTO_UPDATE);
+  const reads = nodeReadsProxyEnvAtStartup(process.versions.node);
+
+  async function spawnedEnv(extra, { proxy, lower, throttled = false } = {}) {
     const root = await mkdtemp(join(tmpdir(), 'gsd-si-proxy-'));
     const home = join(root, 'home');
     const claudeDir = join(home, '.claude');
@@ -321,48 +325,96 @@ describe('session init starts the updater able to use a proxy', () => {
       cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
       cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
       // Spawned, it records its environment; required (session-init asks the
-      // updater whether the proxy is usable), it is the real module.
+      // updater which environment to start it with), it is the real module.
       await writeFile(join(claudeDir, 'hooks', 'gsd-auto-update.cjs'), `if (require.main === module) {
-  require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ value: process.env.NODE_USE_ENV_PROXY ?? null }));
+  require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ value: process.env.NODE_USE_ENV_PROXY ?? null, refused: process.env.GSD_PROXY_ENV_REFUSED ?? null }));
 } else {
   module.exports = require(${JSON.stringify(AUTO_UPDATE)});
 }
 `);
-      const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, ...extra };
-      if (!('NODE_USE_ENV_PROXY' in extra)) delete env.NODE_USE_ENV_PROXY;
-      if (proxy !== undefined) {
-        for (const key of Object.keys(env)) if (/^(https?|all)_proxy$/i.test(key)) delete env[key];
-        env.HTTPS_PROXY = proxy;
+      if (throttled) {
+        await mkdir(join(claudeDir, 'gsd', 'runtime'), { recursive: true });
+        await writeFile(join(claudeDir, 'gsd', 'runtime', 'update-state.json'), JSON.stringify({ lastCheck: new Date().toISOString() }));
       }
-      execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], { cwd: root, env, encoding: 'utf8', timeout: 6000 });
+      // Not a git checkout, so the real module is not in dev mode.
+      const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, GSD_TEST_PLUGIN_ROOT: root, ...extra };
+      if (!('NODE_USE_ENV_PROXY' in extra)) delete env.NODE_USE_ENV_PROXY;
+      delete env.PLUGIN_AUTO_UPDATE;
+      for (const key of Object.keys(env)) if (/^(https?|all|no)_proxy$/i.test(key)) delete env[key];
+      if (proxy !== undefined) env.HTTPS_PROXY = proxy;
+      if (lower !== undefined) env.https_proxy = lower;
+      execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], { cwd: root, env, encoding: 'utf8', timeout: 8000 });
       // The child is detached; give it a moment to write.
       for (let i = 0; i < 100 && !existsSync(record); i++) await new Promise((r) => setTimeout(r, 50));
-      return JSON.parse(await readFile(record, 'utf8')).value;
+      return JSON.parse(await readFile(record, 'utf8'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   }
 
-  it('turns it on for the updater it spawns', async () => {
-    assert.equal(await spawnedEnv({}), '1');
+  it('turns it on for a proxy Node accepts', async () => {
+    assert.deepEqual(await spawnedEnv({}, { proxy: 'http://127.0.0.1:9' }), { value: reads ? '1' : null, refused: null });
+  });
+
+  it('leaves it off with no proxy set', async () => {
+    assert.deepEqual(await spawnedEnv({}), { value: null, refused: null });
   });
 
   it('leaves a value the user set alone', async () => {
-    assert.equal(await spawnedEnv({ NODE_USE_ENV_PROXY: '0' }), '0');
+    assert.equal((await spawnedEnv({ NODE_USE_ENV_PROXY: '0' }, { proxy: 'http://127.0.0.1:9' })).value, '0');
   });
 
-  // Started with the switch on, Node exits before running a line when a proxy
-  // value is one it cannot parse — and the updater recorded nothing, every
-  // session, where before it at least tried directly.
-  for (const proxy of ['proxy.corp:3128', 'socks5h://127.0.0.1:1080']) {
-    it(`does not turn it on for a proxy Node cannot use (${proxy})`, async () => {
-      assert.equal(await spawnedEnv({}, { proxy }), null);
+  it('does not ask when no check is due', async () => {
+    assert.deepEqual(await spawnedEnv({}, { proxy: 'http://127.0.0.1:9', throttled: true }), { value: null, refused: null });
+  });
+
+  // Started with the switch on, Node exits before running a line on each of
+  // these, and the updater recorded nothing, every session. Found across two
+  // pre-tag reviews; the second list is the one a restated parser missed.
+  for (const proxy of ['proxy.corp:3128', 'socks5h://127.0.0.1:1080', 'http://user:p%ss@127.0.0.1:9', 'http://127.0.0.1:9/proxy', 'http://127.0.0.1:9/?x=1', 'http://127.0.0.1:9/#frag']) {
+    it(`does not turn it on for a proxy Node refuses (${proxy})`, async () => {
+      assert.deepEqual(await spawnedEnv({}, { proxy }), { value: null, refused: reads ? '1' : null });
     });
   }
 
-  it('turns it on for a usable proxy', async () => {
-    assert.equal(await spawnedEnv({}, { proxy: 'http://127.0.0.1:9' }), '1');
+  // Node reads https_proxy before HTTPS_PROXY: a junk upper-case value behind
+  // a usable lower-case one is never read.
+  it('turns it on when the variable Node reads is usable', async () => {
+    assert.deepEqual(await spawnedEnv({}, { proxy: 'proxy.corp:3128', lower: 'http://127.0.0.1:9' }), { value: reads ? '1' : null, refused: null });
   });
+});
+
+// The real updater, started by the real hook, records a check for every proxy
+// value — the property the list above stands for. A version far ahead of any
+// release keeps it from installing anything.
+describe('the updater session-init starts records a check whatever the proxy value', () => {
+  for (const proxy of ['http://127.0.0.1:9', 'proxy.corp:3128', 'http://user:p%ss@127.0.0.1:9', 'http://127.0.0.1:9/proxy']) {
+    it(proxy, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'gsd-si-proxy-e2e-'));
+      const home = join(root, 'home');
+      const claudeDir = join(home, '.claude');
+      const statePath = join(claudeDir, 'gsd', 'runtime', 'update-state.json');
+      try {
+        await mkdir(join(claudeDir, 'hooks'), { recursive: true });
+        await mkdir(join(claudeDir, 'gsd'), { recursive: true });
+        await writeFile(join(claudeDir, 'gsd', 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '99.0.0' }));
+        await writeFile(join(claudeDir, 'gsd', '.install-mode'), 'manual\n');
+        cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
+        cpSync(AUTO_UPDATE, join(claudeDir, 'hooks', 'gsd-auto-update.cjs'));
+        cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
+        const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, HTTPS_PROXY: proxy };
+        for (const key of ['NODE_USE_ENV_PROXY', 'PLUGIN_AUTO_UPDATE', 'https_proxy', 'http_proxy', 'HTTP_PROXY', 'no_proxy', 'NO_PROXY', 'GSD_TEST_PLUGIN_ROOT']) delete env[key];
+        execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], { cwd: root, env, encoding: 'utf8', timeout: 8000 });
+        for (let i = 0; i < 200 && !existsSync(statePath); i++) await new Promise((r) => setTimeout(r, 50));
+        const state = JSON.parse(await readFile(statePath, 'utf8'));
+        assert.ok(state.lastCheck, `a check was recorded: ${JSON.stringify(state)}`);
+      } finally {
+        // The detached updater may still be finishing its write.
+        for (let i = 0; i < 40 && existsSync(join(claudeDir, 'gsd', 'runtime', 'update-state.lock')); i++) await new Promise((r) => setTimeout(r, 50));
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
 });
 
 // The version fields of the older notification kinds reach the model the
