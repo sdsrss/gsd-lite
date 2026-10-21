@@ -120,7 +120,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 - 展示当前进度摘要 (从 canonical fields 推导)
 - 询问用户: "项目已暂停。是否继续执行？"
-- 用户确认 → `state-update` 把 `workflow_mode` 设为响应里的 `resume_to` (暂停前的模式；一律写 `executing_task` 会丢掉暂停时进行中的审查) → 恢复调度
+- 用户确认 → `state-update` 把 `workflow_mode` 设为响应里的 `resume_to` (由暂停时的 `current_review` 推出；一律写 `executing_task` 会丢掉暂停时进行中的审查) → 恢复调度
 - 用户拒绝 → 保持暂停状态
 
 ---

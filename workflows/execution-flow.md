@@ -185,7 +185,7 @@
 | `reconcile_workspace` | 同上表 `reconcile_workspace` 行：核对 `changed_files`，确认无误后 `state-update({updates: {git_head: "<当前HEAD>", workflow_mode: "executing_task"}})` → 继续循环 |
 | `replan_required` | 同上表 `replan_required` 行：核对 `drift_phase` 指出的计划改动，确认无误后 `state-update({updates: {workflow_mode: "executing_task"}})` → 继续循环 |
 | `awaiting_clear` | 上下文不足。执行 /clear 后重新 /gsd:resume |
-| `paused_by_user` | 项目已暂停。向用户确认是否恢复;确认 → `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 (`resume_to` 是暂停前的模式：审查中回到审查，调试中回到执行，等你决定的回到等待) |
+| `paused_by_user` | 项目已暂停。向用户确认是否恢复;确认 → `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 (`resume_to` 由暂停时的 `current_review` 推出：审查中回到审查，调试中回到执行，等你决定的回到等待，其余回到执行) |
 | `planning` | 计划尚未落地。完成计划并调用 `state-init` |
 | `awaiting_user` | 有 `current_review.stage` 的 hold（如 `review_retry_exhausted`）。展示 `current_review` 与 `recovery_options`，等待用户选择;用户决定后 `orchestrator-resume recovery:'retry_failed'\|'skip_failed'\|'replan'` |
 | 其他 | 展示信息并停止 |

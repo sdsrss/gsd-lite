@@ -182,6 +182,7 @@ stateDiagram-v2
     awaiting_clear --> executing_task : /clear + /resume 后恢复
     awaiting_clear --> reviewing_task : /clear 前在审查，恢复审查
     awaiting_clear --> reviewing_phase : /clear 前在审查，恢复审查
+    awaiting_clear --> awaiting_user : /clear 前在等用户决定
     awaiting_user --> executing_task : 用户解除阻塞 / 自动匹配 decision
 
     state preflight_overrides <<choice>>
@@ -199,6 +200,7 @@ stateDiagram-v2
     paused_by_user --> executing_task : 用户恢复
     paused_by_user --> reviewing_task : resume 恢复审查状态
     paused_by_user --> reviewing_phase : resume 恢复审查状态
+    paused_by_user --> awaiting_user : 暂停前在等用户决定
 
     completed --> [*]
     failed --> [*]
