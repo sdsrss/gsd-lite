@@ -12,7 +12,7 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createTempDir, removeTempDir, initProject, checkpointTask, read, update } from './e2e-helpers.js';
+import { createTempDir, removeTempDir, initProject, checkpointTask, completePhase, phaseComplete, read, update } from './e2e-helpers.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
 
 const ONE_PHASE = [{ name: 'Phase 1', tasks: [
@@ -120,6 +120,33 @@ describe('a project set aside comes back to what it was doing', () => {
       assert.deepEqual(next(await resumeWorkflow({ basePath: dir })), expected, `resume_to was ${paused.resume_to}`);
     });
   }
+
+  it('a drift hold that phase-complete resolves is over, and the next phase runs', async () => {
+    // phase-complete({direction_ok: true}) is how the action table resolves a
+    // drift. On a phase that is not the last it accepted the phase and left
+    // awaiting_user and the drift review in place, so every resume reported
+    // the drift again (pre-tag review). The first phase holds both tasks so
+    // that it can complete while a second phase is still to do.
+    const dir = await createTempDir();
+    dirs.push(dir);
+    await initProject(dir, { phases: [
+      { name: 'Phase 1', tasks: [{ index: 1, name: 'Task A', level: 'L1', requires: [] }] },
+      { name: 'Phase 2', tasks: [{ index: 1, name: 'Task C', level: 'L1', requires: [] }] },
+    ] });
+    await checkpointTask(dir, 1, '1.1');
+    await update({ updates: { phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: dir });
+    const drift = await completePhase(dir, 1, { direction_ok: false });
+    assert.equal(drift.action, 'direction_drift', `premise: ${JSON.stringify(drift)}`);
+    const done = await phaseComplete({
+      phase_id: 1, basePath: dir, direction_ok: true,
+      verification: { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } },
+    });
+    assert.ok(done.success, `premise: ${JSON.stringify(done)}`);
+    // Said by phase-complete itself, not left for a resume's auto-unblock to clear.
+    const after = await read({ basePath: dir });
+    assert.deepEqual([after.workflow_mode, after.current_review], ['executing_task', null]);
+    assert.deepEqual(next(await resumeWorkflow({ basePath: dir })), { action: 'dispatch_executor', workflow_mode: 'executing_task', target: '2.1' });
+  });
 
   it('covers every stage the server writes into current_review', async () => {
     // A stage added later has to say where a project held at it comes back to.
