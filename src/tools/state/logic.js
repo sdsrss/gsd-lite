@@ -2,7 +2,7 @@
 
 import { dirname, join } from 'node:path';
 import { writeFile, rename, unlink, open, stat } from 'node:fs/promises';
-import { ensureDir, writeJson, getStatePath, fsyncDir, shippedDocPath } from '../../utils.js';
+import { ensureDir, writeJson, getStatePath, fsyncDir, isPlainObject, shippedDocPath } from '../../utils.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 import {
   DEP_GATES,
@@ -607,6 +607,11 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // left them describing research that state.json did not record, and the
     // commit marker that would have said so was removed with the refusal.
     const state = loaded.state;
+    // What is on record is compared with and then replaced. A decision_index
+    // that is not an object (0.17.0's state-update could write a string) holds
+    // no decision to keep: read as itself, a string's characters became
+    // removed decisions and `in` threw on it.
+    if (isPlainObject(state.research) && !isPlainObject(state.research.decision_index)) state.research.decision_index = {};
     const previousIndex = state.research?.decision_index || {};
 
     // A blocked result says the research could not be done. Over real research
