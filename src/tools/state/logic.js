@@ -498,7 +498,9 @@ export function applyResearchRefresh(state, newResearch) {
     if (!(id in newIndex)) {
       invalidatedIds.add(id);
       warnings.push(`Decision "${id}" removed in new research — dependent tasks invalidated`);
-    } else if (oldDecision.summary !== newIndex[id].summary) {
+    } else if (oldDecision?.summary !== newIndex[id].summary) {
+      // An entry with no readable summary (0.17.0's state-update could write
+      // null) counts as changed: its conclusion cannot be shown to hold.
       invalidatedIds.add(id);
     }
   }

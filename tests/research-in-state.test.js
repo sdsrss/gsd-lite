@@ -331,6 +331,23 @@ describe('a store lands whole or changes nothing', () => {
 });
 
 describe('a refresh replaces the decision index', () => {
+  it('replaces a record holding a malformed decision, and sends the tasks citing it back', async () => {
+    // 0.17.0's state-update let a decision_index entry of null be written;
+    // the refresh over it read `.summary` of null and threw a TypeError
+    // (pre-tag review). Written straight to disk, as that state-update did.
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a', research_basis: ['decision:a'] }] }], basePath: dir });
+    await walk(dir, 1, '1.1', ['running', 'checkpointed', 'accepted']);
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    raw.research = { ...expiredResearch({ 'decision:b': { summary: 'B', source: 'docs' } }), decision_index: { 'decision:a': null } };
+    await writeFile(statePath, `${JSON.stringify(raw, null, 2)}\n`);
+    const res = await handleResearcherResult({ ...payload({ 'decision:a': { summary: 'A', source: 'docs' } }), basePath: dir });
+    assert.equal(res.action, 'research_stored', JSON.stringify(res));
+    const state = await read({ basePath: dir });
+    assert.deepEqual(state.research.decision_index, { 'decision:a': { summary: 'A', source: 'docs' } });
+    assert.equal(state.phases[0].todo[0].lifecycle, 'needs_revalidation', 'a task citing an unreadable decision kept its acceptance');
+  });
+
   it('stores exactly the new index: a dropped decision is gone, a kept one keeps no stale date', async () => {
     // Rule 3 kept a dropped decision with its past expires_at, and rule 1 kept
     // the old expires_at when the new entry had none; either one expired the
