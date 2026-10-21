@@ -616,6 +616,32 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
     });
   });
 
+  // installed_plugins.json and plugins/cache belong to Claude Code. The updater
+  // used to copy each release into the cache and repoint the registry at it
+  // whenever a gsd@gsd record was there — reachable only from a git checkout
+  // running `gsd update --force`, since a plugin install is told to run
+  // `claude plugin update` instead — and the copy resolved devDependencies
+  // with no lockfile to install it.
+  it('leaves Claude Code\'s plugin registry and cache alone', async () => {
+    await withRealModule(async (mod, root, marker, { claudeDir }) => {
+      const pluginsDir = join(claudeDir, 'plugins');
+      const cacheVersion = join(pluginsDir, 'cache', 'gsd', 'gsd', '0.3.0');
+      await mkdir(cacheVersion, { recursive: true });
+      const registry = `${JSON.stringify({ version: 2, plugins: { 'gsd@gsd': [{ scope: 'user', installPath: cacheVersion, version: '0.3.0' }] } }, null, 2)}\n`;
+      await writeFile(join(pluginsDir, 'installed_plugins.json'), registry);
+      const { bytes, sha256 } = await buildFixtureTarball(root);
+      const ok = await mod.downloadAndInstall(TARBALL_URL, true, null, {
+        expectedChecksum: sha256,
+        fetchImpl: makeFetchImpl(bytes),
+      });
+      assert.equal(ok, true, 'premise: the install itself succeeded');
+      assert.equal(await readFile(marker, 'utf8'), 'installed', 'premise: install.js ran');
+      assert.equal(await readFile(join(pluginsDir, 'installed_plugins.json'), 'utf8'), registry, 'the registry is untouched');
+      assert.equal(await readFile(join(pluginsDir, 'cache', 'gsd', 'gsd', '9.9.9', 'package.json'), 'utf8').catch(() => null), null,
+        'and no cache version was created');
+    });
+  });
+
   it('rejects a tampered checksum and does NOT run install.js', async () => {
     await withRealModule(async (mod, root, marker) => {
       const { bytes } = await buildFixtureTarball(root);

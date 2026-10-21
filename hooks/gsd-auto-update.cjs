@@ -607,11 +607,9 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
       throw new Error(`Installer failed: ${(install.stderr || '').toString().slice(0, 200)}`);
     }
 
-    // Sync to plugin cache if installed as plugin
-    // The MCP server loads from plugins/cache, not the runtime dir,
-    // so we must update the cache for version changes to take effect.
-    syncPluginCache(tmpDir, verbose);
-
+    // Nothing here touches plugins/cache or installed_plugins.json: both
+    // belong to Claude Code, and a plugin install is told to run `claude
+    // plugin update` (checkForUpdate) rather than updated from here.
     return true;
   } catch (err) {
     if (verbose) console.error('  Install failed:', err.message);
@@ -649,130 +647,6 @@ function writeNotification(notification) {
     atomicWriteJson(NOTIFICATION_FILE, notification);
   } catch {
     /* silent */
-  }
-}
-
-// ── Cache Cleanup ─────────────────────────────────────────
-// Remove old plugin cache versions, keeping the N most recent.
-function pruneOldCacheVersions(cacheBase, keepCount = 3, verbose = false) {
-  try {
-    if (!fs.existsSync(cacheBase)) return;
-    const entries = fs.readdirSync(cacheBase, { withFileTypes: true })
-      .filter(e => e.isDirectory() && /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(e.name))
-      .map(e => e.name);
-    if (entries.length <= keepCount) return;
-
-    // Sort by semver using shared comparator
-    const sorted = entries.slice().sort(semverSortComparator);
-
-    // Detect versions with active processes to avoid disrupting running sessions
-    let activeVersions;
-    try {
-      const psOutput = spawnSync('ps', ['aux'], { stdio: 'pipe', timeout: 5000 });
-      const lines = (psOutput.stdout || '').toString();
-      activeVersions = new Set(
-        entries.filter(ver => lines.includes(`/cache/gsd/gsd/${ver}/`))
-      );
-    } catch { activeVersions = new Set(); }
-
-    const toRemove = sorted.slice(0, sorted.length - keepCount);
-    for (const ver of toRemove) {
-      if (activeVersions.has(ver)) {
-        if (verbose) console.log(`  Skipped ${ver} (active process detected)`);
-        continue;
-      }
-      const verPath = path.join(cacheBase, ver);
-      fs.rmSync(verPath, { recursive: true, force: true });
-      if (verbose) console.log(`  Pruned old cache: ${ver}`);
-    }
-  } catch { /* best effort */ }
-}
-
-// ── Plugin Cache Sync ─────────────────────────────────────
-// When installed as a plugin, the MCP server runs from plugins/cache/gsd/gsd/<version>/
-// The auto-update installs to ~/.claude/gsd/ (runtime dir) via install.js,
-// but must ALSO update the cache directory for the MCP server to pick up changes.
-function syncPluginCache(extractedDir, verbose = false) {
-  try {
-    const pluginsFile = path.join(claudeDir, 'plugins', 'installed_plugins.json');
-    if (!fs.existsSync(pluginsFile)) return;
-
-    const plugins = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'));
-    const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
-    if (!gsdEntry?.installPath) return;
-
-    // Read new version from extracted package
-    const newPkgPath = path.join(extractedDir, 'package.json');
-    if (!fs.existsSync(newPkgPath)) return;
-    const newVersion = JSON.parse(fs.readFileSync(newPkgPath, 'utf8')).version;
-    if (!newVersion || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(newVersion)) return;
-
-    // Determine new cache path
-    const cacheBase = path.join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd');
-    const newCachePath = path.join(cacheBase, newVersion);
-
-    // Skip if already up to date
-    if (gsdEntry.installPath === newCachePath && fs.existsSync(newCachePath)) {
-      const existingVersion = (() => {
-        try { return JSON.parse(fs.readFileSync(path.join(newCachePath, 'package.json'), 'utf8')).version; }
-        catch { return null; }
-      })();
-      if (existingVersion === newVersion) {
-        if (verbose) console.log('  Plugin cache already up to date');
-        return;
-      }
-    }
-
-    // Copy extracted files to new cache directory
-    if (verbose) console.log(`  Syncing plugin cache → ${newCachePath}`);
-    fs.mkdirSync(newCachePath, { recursive: true });
-    fs.cpSync(extractedDir, newCachePath, { recursive: true });
-
-    // Install dependencies in cache dir
-    if (!fs.existsSync(path.join(newCachePath, 'node_modules', '@modelcontextprotocol'))) {
-      // --no-audit --no-fund: the output is piped, and the audit is a registry
-      // request that can stall past the timeout below.
-      const npmResult = spawnSync('npm', ['install', '--omit=dev', '--no-fund', '--no-audit', '--ignore-scripts'], {
-        cwd: newCachePath,
-        stdio: 'pipe',
-        timeout: 60000,
-      });
-      if (npmResult.status !== 0) {
-        // npm install failed — don't update registry to point to broken cache
-        if (verbose) console.error('  npm install failed in cache dir, aborting cache sync');
-        fs.rmSync(newCachePath, { recursive: true, force: true });
-        return;
-      }
-    }
-
-    // Update installed_plugins.json to point to new cache path
-    gsdEntry.installPath = newCachePath;
-    gsdEntry.version = newVersion;
-    gsdEntry.lastUpdated = new Date().toISOString();
-    atomicWriteJson(pluginsFile, plugins);
-
-    // Update settings.json statusLine if it points to the old cache path
-    try {
-      const settingsPath = path.join(claudeDir, 'settings.json');
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      if (settings.statusLine?.command?.includes('/plugins/cache/gsd/gsd/')) {
-        const oldCmd = settings.statusLine.command;
-        const updated = oldCmd.replace(/\/plugins\/cache\/gsd\/gsd\/[^/]+\//g, `/plugins/cache/gsd/gsd/${newVersion}/`);
-        if (updated !== oldCmd) {
-          settings.statusLine.command = updated;
-          atomicWriteJson(settingsPath, settings);
-          if (verbose) console.log('  StatusLine path updated to new version');
-        }
-      }
-    } catch {}
-
-    // Prune old cache versions — keep only the 3 most recent
-    pruneOldCacheVersions(cacheBase, 3, verbose);
-
-    if (verbose) console.log(`  Plugin cache synced to v${newVersion}`);
-  } catch (err) {
-    // Best effort — don't fail the update if cache sync fails
-    if (verbose) console.error('  Plugin cache sync failed:', err.message);
   }
 }
 
