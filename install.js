@@ -373,14 +373,19 @@ export function main() {
   // (prepare/prepublishOnly/version use POSIX shell + dev tooling absent from
   // the runtime). Leaving them in means a later manual `npm install` in
   // ~/.claude/gsd fails under cmd.exe on Windows (issue #2).
+  // Dev dependencies go too: with no lockfile, `npm install --omit=dev` still
+  // resolves them to build its tree, which on an npx install was 11 of its 13
+  // registry requests (biome and its platform packages), for the same
+  // installed tree.
   if (DRY_RUN) {
-    log('  [dry-run] Would write runtime/package.json (dev scripts stripped)');
+    log('  [dry-run] Would write runtime/package.json (dev scripts and dependencies stripped)');
   } else {
     const runtimePkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'));
     delete runtimePkg.scripts;
+    delete runtimePkg.devDependencies;
     mkdirSync(STAGING_DIR, { recursive: true });
     writeFileSync(join(STAGING_DIR, 'package.json'), JSON.stringify(runtimePkg, null, 2) + '\n');
-    log('  ✓ runtime/package.json → ~/.claude/gsd/package.json (scripts stripped)');
+    log('  ✓ runtime/package.json → ~/.claude/gsd/package.json (dev scripts and dependencies stripped)');
   }
   // Copy uninstall.js so the SessionStart hook's Phase 0 orphan-cleanup can
   // spawn it when /plugin uninstall has removed the plugin without running our

@@ -145,6 +145,12 @@ async function assertInstallTree(claudeDir, { userScope = true } = {}) {
   // under cmd.exe on Windows.
   const runtimePkg = JSON.parse(await readFile(join(claudeDir, 'gsd', 'package.json'), 'utf-8'));
   assert.equal(runtimePkg.scripts, undefined, 'Runtime package.json should have dev scripts stripped');
+  // With no lockfile (every npx install) the runtime's `npm install --omit=dev`
+  // still resolves dev dependencies to build its tree: 11 registry requests for
+  // biome's metadata, against 2 for everything else npx had not already cached
+  // (measured 2026-10-21). The installed tree is identical without them.
+  assert.equal(runtimePkg.devDependencies, undefined, 'Runtime package.json should not declare dev dependencies');
+  assert.ok(runtimePkg.dependencies?.['@modelcontextprotocol/sdk'], 'premise: the runtime package.json keeps its dependencies');
   const sdkStat = await stat(join(claudeDir, 'gsd', 'node_modules', '@modelcontextprotocol', 'sdk'));
   assert.ok(sdkStat.isDirectory(), 'Runtime @modelcontextprotocol/sdk should exist');
 }
