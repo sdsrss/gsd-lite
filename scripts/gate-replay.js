@@ -37,9 +37,10 @@
  * `at`. Both used to produce a verdict — one a confident VACUOUS, the other a
  * stack trace at exit 1, which is the code VACUOUS uses.
  *
- * A test cancelled because a hook or an enclosing suite failed was never
- * evaluated. It is neither a pass nor a failure, so a file with cancelled tests
- * and no failure is INCONCLUSIVE, never VACUOUS.
+ * A test that never ran its body — cancelled by its parent, or behind a hook
+ * that failed — was never evaluated. It is neither a pass nor a failure, so a
+ * file with such tests and no failure is INCONCLUSIVE, never VACUOUS. A test
+ * that timed out is a failure.
  *
  * Nothing is written inside the repo: the base tree is a detached worktree in a
  * temp dir, removed on exit, and its node_modules holds a symlink to each of
@@ -162,10 +163,6 @@ try {
   };
   const tests = num('tests');
   const fail = num('fail');
-  const pass = num('pass');
-  // `# fail` does not count these, and the exit code says nothing either way:
-  // a test whose hook or parent failed was cancelled, never run.
-  const cancelled = num('cancelled') ?? 0;
 
   // TAP names every result on its own line, and a failing SUITE gets one too —
   // so the naive list came out longer than the count above it (3 names under
@@ -187,17 +184,26 @@ try {
       failureType ??= lines[j].match(/^\s*failureType: '(\w+)'/)?.[1] ?? null;
       error ??= lines[j].match(/^\s*error: (.+)$/)?.[1] ?? null;
     }
-    results.push({ ok: m[2] === 'ok', name: m[3].trim(), type, failureType, error });
+    const skipped = / # (SKIP|TODO)\b/.test(m[3]);
+    results.push({ ok: m[2] === 'ok', name: m[3].replace(/ # (SKIP|TODO)\b.*$/, '').trim(), type, failureType, error, skipped });
   }
-  // `type` is absent on a bare result line; keep those rather than dropping a
-  // real failure over a missing diagnostic. A cancelled leaf is reported as
-  // `not ok` too, and is not a failure.
-  const leaves = (ok) => results
-    .filter((r) => r.ok === ok && r.type !== 'suite' && r.failureType !== 'cancelledByParent')
-    .map((r) => r.name);
-  const failing = leaves(false);
-  const passing = leaves(true);
+  // The verdict is read from each leaf's failureType, not from the summary
+  // counts, because Node's counts do not say what ran: a test cancelled by
+  // its parent, and one that timed out, are both under `# cancelled`, and a
+  // test whose top-level before/beforeEach failed is under `# fail`. A test
+  // that never ran its body — cancelledByParent, hookFailed — is neither a
+  // pass nor a failure; one that timed out is a red. `type` is absent on a
+  // bare result line; keep those rather than dropping a real failure over a
+  // missing diagnostic.
+  const NOT_RUN = ['cancelledByParent', 'hookFailed'];
+  const leafResults = results.filter((r) => r.type !== 'suite');
+  const failing = leafResults.filter((r) => !r.ok && !NOT_RUN.includes(r.failureType)).map((r) => r.name);
+  const notRun = leafResults.filter((r) => !r.ok && NOT_RUN.includes(r.failureType)).map((r) => r.name);
+  const passing = leafResults.filter((r) => r.ok && !r.skipped).map((r) => r.name);
   const hookFailures = results.filter((r) => !r.ok && r.failureType === 'hookFailed');
+  const printHookFailures = () => {
+    for (const r of hookFailures) console.log(`  a hook failed${r.type === 'suite' ? ` in "${r.name}"` : ` before "${r.name}"`}: ${(r.error ?? '').slice(0, 200)}`);
+  };
 
   // Node names a FILE as the test when the file contributed no test of its own,
   // in both directions: one failing test named after the file when it could not
@@ -234,28 +240,31 @@ try {
     console.log('against a base where the file\'s imports resolve — usually the commit\'s own');
     console.log('parent rather than a distant branch point.');
     exitCode = 2;
-  } else if (fail === 0 && cancelled > 0) {
-    console.log(`INCONCLUSIVE — ${cancelled} of ${tests} tests were cancelled on ${baseSha}, so they never ran.`);
-    for (const r of hookFailures) console.log(`  a hook failed in "${r.name}": ${(r.error ?? '').slice(0, 200)}`);
-    console.log('\nA test cancelled because a hook or an enclosing suite failed was neither');
-    console.log('passed nor failed. The rest passing says nothing about these. Replay against a');
-    console.log('base where the setup succeeds, or read why it failed above.');
-    exitCode = 2;
-  } else if (fail === 0) {
-    console.log(`VACUOUS — ${pass}/${tests} passed on ${baseSha}.`);
-    console.log(`Every test in this file is green on the tree ${atSha} was written to change, so`);
-    console.log('the file encodes nothing that commit fixed. Assert the property, not a token of it.');
-    exitCode = 1;
-  } else {
-    console.log(`DISCRIMINATIVE — ${fail}/${tests} failed on ${baseSha}:\n`);
+  } else if (failing.length > 0) {
+    console.log(`DISCRIMINATIVE — ${failing.length}/${tests} failed on ${baseSha}:\n`);
     for (const name of [...new Set(failing)]) console.log(`  ✖ ${name}`);
-    if (cancelled > 0) {
-      console.log(`\n  (${cancelled} more cancelled, not run: a hook or an enclosing suite failed)`);
-      for (const r of hookFailures) console.log(`  a hook failed in "${r.name}": ${(r.error ?? '').slice(0, 200)}`);
+    if (notRun.length > 0) {
+      console.log(`\n  (${notRun.length} more never ran: a hook or an enclosing suite failed)`);
+      printHookFailures();
     }
     console.log('\nRead the failures before believing them. A test that goes red on the base tree');
     console.log('for an unrelated reason — a missing import, a helper added by the same commit —');
     console.log('is indistinguishable from one that earns its place, except by reading it.');
+  } else if (notRun.length > 0) {
+    console.log(`INCONCLUSIVE — ${notRun.length} of ${tests} tests never ran on ${baseSha}: a hook or an enclosing suite failed.`);
+    printHookFailures();
+    console.log('\nA test whose setup failed was neither passed nor failed. The rest passing says');
+    console.log('nothing about these. Replay against a base where the setup succeeds, or read');
+    console.log('why it failed above.');
+    exitCode = 2;
+  } else if (passing.length === 0) {
+    console.log(`INCONCLUSIVE — every test in the file was skipped on ${baseSha}; nothing was evaluated.`);
+    exitCode = 2;
+  } else {
+    console.log(`VACUOUS — ${passing.length}/${tests} passed on ${baseSha}.`);
+    console.log(`Every test in this file is green on the tree ${atSha} was written to change, so`);
+    console.log('the file encodes nothing that commit fixed. Assert the property, not a token of it.');
+    exitCode = 1;
   }
 } finally {
   // The creating task disposes its own sandbox; a leftover worktree also leaves
