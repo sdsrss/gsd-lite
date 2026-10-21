@@ -40,7 +40,7 @@ GSD-Lite is an AI orchestration tool for [Claude Code](https://docs.anthropic.co
 - **Research with TTL** — Research artifacts include volatility ratings and expiration dates
 
 ### Auto-Update & Version Management
-- **Automatic update checks** — Checks GitHub Releases every 24 hours with rate-limit backoff
+- **Automatic update checks** — Checks GitHub Releases every 24 hours with rate-limit backoff, through `HTTPS_PROXY` when one is set (Node 22.21+ or 24+); a check that keeps failing is reported at session start with the reason
 - **Version drift detection** — Server startup compares running version against disk and plugin registry, warns on mismatch
 - **Smart cache management** — Keeps latest 3 cached versions, auto-prunes old entries
 - **Idempotent installer** — Reinstall anytime without uninstalling; legacy files auto-cleaned
