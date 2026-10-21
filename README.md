@@ -142,8 +142,11 @@ settings to turn it off there). That covers everything `npx gsd-lite install`
 added beside it too: its hooks, the StatusLine and its MCP server stand down
 while the plugin is disabled, and come back when you enable it. They read the
 same settings files Claude Code does, and keep running when those do not say
-`false` plainly or when the plugin is switched off somewhere they cannot read
-(an organization's managed settings, `claude --settings`).
+`false` plainly. They cannot read an organization's managed settings or
+`claude --settings`: a disable there leaves them running, and an enable there
+over a disable in your own files stands them down.
+With the plugin installed, gsd updates only the plugin; run
+`npx gsd-lite@latest install` to bring these copies up to date.
 
 To remove just the StatusLine afterwards, delete the `statusLine` key from
 `~/.claude/settings.json`. Do not reach for `npx gsd-lite uninstall` for that —
