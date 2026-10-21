@@ -280,6 +280,15 @@ describe('the npx install stands down when the plugin is disabled', () => {
     }
   });
 
+  it('the MCP server reads the project the session started in (CLAUDE_PROJECT_DIR)', async (t) => {
+    const m = machine(t, { records: { 'gsd@gsd': USER_RECORD() }, user: { 'gsd@gsd': true }, project: { 'gsd@gsd': false } });
+    npxInstall(m);
+    const sub = join(m.project, 'src');
+    mkdirSync(sub);
+    const { tools } = await mcpSession(join(m.claudeDir, 'gsd', 'src', 'server.js'), m, { cwd: sub, env: { CLAUDE_PROJECT_DIR: m.project } });
+    assert.deepEqual(tools, []);
+  });
+
   it('the MCP server asks on every request, so turning gsd back on needs no restart', async (t) => {
     const m = machine(t, STATES.disabled);
     npxInstall(m);
@@ -317,10 +326,10 @@ describe('the npx install stands down when the plugin is disabled', () => {
   });
 });
 
-async function mcpSession(serverPath, m, { between } = {}) {
+async function mcpSession(serverPath, m, { between, cwd = m.project, env = {} } = {}) {
   const proc = spawn(process.execPath, [serverPath], {
-    cwd: m.project,
-    env: { ...process.env, HOME: m.home, CLAUDE_CONFIG_DIR: m.claudeDir, CLAUDE_PLUGIN_ROOT: '' },
+    cwd,
+    env: { ...process.env, HOME: m.home, CLAUDE_CONFIG_DIR: m.claudeDir, CLAUDE_PLUGIN_ROOT: '', ...env },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let buf = '';

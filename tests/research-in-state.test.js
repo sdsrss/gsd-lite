@@ -336,7 +336,7 @@ describe('a store lands whole or changes nothing', () => {
       const research = await blockedOnRecord();
       const res = await update({ updates: { research: { ...research, decision_index: REAL } }, basePath: dir });
       assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
-      assert.match(res.message, /research\.blocked/);
+      assert.match(res.message, /research\.blocked is true, but it holds a decision that is not the \[BLOCKED\] placeholder/);
       assert.deepEqual((await read({ basePath: dir })).research, research, 'nothing was written');
     });
 
