@@ -409,6 +409,22 @@ describe('the holds the server releases itself', () => {
     });
   }
 
+  it('blocked tasks that unblock return to the review they interrupted, review and all', async (t) => {
+    // A phase review need carry no stage, so awaiting_user over one is the
+    // blocked-task hold, not a decision held at a stage.
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    await checkpointTask(dir, 1, '1.1');
+    const review = { scope: 'phase', scope_id: 1 };
+    await update({ updates: { workflow_mode: 'reviewing_phase', current_review: review }, basePath: dir });
+    await update({ updates: { workflow_mode: 'awaiting_user' }, basePath: dir });
+    await resumeWorkflow({ basePath: dir });
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'reviewing_phase', JSON.stringify(after.current_review));
+    assert.deepEqual(after.current_review, review);
+  });
+
   it('blocked tasks that unblock return to the plan revision they interrupted', async (t) => {
     const dir = await createTempDir();
     t.after(() => removeTempDir(dir));
