@@ -689,6 +689,14 @@ export async function phaseComplete({
       && state.phases.find((p) => p.id === nextPhaseId)?.lifecycle === 'accepted') {
       nextPhaseId += 1;
     }
+    // Completing the phase answers what was held on it. phase-complete with
+    // direction_ok: true is how a drift hold is resolved, and on a phase that
+    // was not the last it left awaiting_user and the drift review in place:
+    // every later resume reported the drift again, with no way out.
+    if (state.current_review?.scope === 'phase' && state.current_review.scope_id === phase_id) {
+      state.current_review = null;
+      if (state.workflow_mode === 'awaiting_user') state.workflow_mode = 'executing_task';
+    }
     if (state.current_phase === phase_id && nextPhaseId <= state.total_phases) {
       state.current_phase = nextPhaseId;
       // Activate the next phase (M-3: use validateTransition for consistency)
