@@ -615,14 +615,27 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // project planned with no sources), there is nothing to protect and it is
     // stored: refusing it there left that project dispatching the researcher
     // on every resume once its 24-hour placeholder expired.
-    const isBlocked = (entry) => typeof entry?.summary === 'string' && entry.summary.startsWith(BLOCKED_DECISION_PREFIX);
+    // Leading whitespace is allowed before the prefix: a summary written as
+    // " [BLOCKED] …" was read as real research, on either side.
+    const isBlocked = (entry) => typeof entry?.summary === 'string' && entry.summary.trimStart().startsWith(BLOCKED_DECISION_PREFIX);
     const blocked = Object.keys(decision_index).filter((id) => isBlocked(decision_index[id]));
     const recordHasResearch = Object.values(previousIndex).some((entry) => !isBlocked(entry));
+    const giveUp = 'give up the expired research with state-update (research: null, workflow_mode: "executing_task"), after which tasks\' research_basis no longer resolves';
     if (recordHasResearch && blocked.length > 0) {
       return {
         error: true,
         code: ERROR_CODES.VALIDATION_FAILED,
-        message: `A blocked research result (${blocked.join(', ')}) would replace the research on record, so it is kept. Retry the refresh once the researcher can complete it, or give up the expired research with state-update (research: null, workflow_mode: "executing_task"), after which tasks' research_basis no longer resolves.`,
+        message: `A blocked research result (${blocked.join(', ')}) would replace the research on record, so it is kept. Retry the refresh once the researcher can complete it, or ${giveUp}.`,
+      };
+    }
+    // A result with no decisions is not a research that found none: a refresh
+    // returns the whole decision set, and stored, this one replaced every
+    // decision on record and sent every task citing them back.
+    if (recordHasResearch && Object.keys(decision_index).length === 0) {
+      return {
+        error: true,
+        code: ERROR_CODES.VALIDATION_FAILED,
+        message: `A research result with no decisions would replace the research on record, so it is kept. Return the complete decision set, keeping the ids in current_decision_index whose conclusions still hold, or ${giveUp}.`,
       };
     }
     // The one writer of the decision index; with no research on record the old

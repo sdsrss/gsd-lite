@@ -185,6 +185,38 @@ describe('a store lands whole or changes nothing', () => {
     assert.deepEqual(await snapshot(), before, 'a refused store changed the project');
   });
 
+  for (const [label, index] of [
+    // The prefix with whitespace in front was not recognised (third pre-tag review).
+    ['a blocked result whose summary starts with a space', { 'decision:blocked-no-sources': { summary: ' [BLOCKED] 研究来源不可用', source: 'none' } }],
+    ['a blocked result whose summary starts with a newline', { 'decision:blocked-no-sources': { summary: '\n[BLOCKED] 研究来源不可用', source: 'none' } }],
+    // Stored, it replaced every decision on record with nothing.
+    ['a result with no decisions', {}],
+  ]) {
+    it(`refuses ${label} over the research on record, writing nothing`, async () => {
+      const before = await seeded();
+      const res = await handleResearcherResult({ ...payload(index), basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.ok(res.message.includes('research: null') && res.message.includes('workflow_mode: "executing_task"'), res.message);
+      assert.deepEqual(await snapshot(), before, 'a refused store changed the project');
+    });
+  }
+
+  it('reads a placeholder on record whose summary starts with a space as blocked, and stores the next blocked result', async () => {
+    // Read as real research, the placeholder made every later blocked
+    // refresh a refusal, and an offline project could not move on.
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    const placeholder = payload({ 'decision:blocked-no-sources': { summary: ' [BLOCKED] 研究来源不可用', source: 'none' } });
+    assert.equal((await handleResearcherResult({ ...placeholder, basePath: dir })).action, 'research_stored', 'premise: the placeholder is stored');
+    const res = await handleResearcherResult({ ...payload({ 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } }), basePath: dir });
+    assert.equal(res.action, 'research_stored', JSON.stringify(res));
+  });
+
+  it('stores a result with no decisions when there is no research on record', async () => {
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    const res = await handleResearcherResult({ ...payload({}), basePath: dir });
+    assert.equal(res.action, 'research_stored', JSON.stringify(res));
+  });
+
   // The researcher's fallback asks for an expiry 24 hours out (agents/researcher.md).
   const blockedPayload = () => payload(
     { 'decision:blocked-no-sources': { summary: '[BLOCKED] 研究来源不可用，请提供替代信息或缩小范围', source: 'none', expires_at: future(1) } },
