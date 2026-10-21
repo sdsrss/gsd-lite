@@ -190,7 +190,10 @@ describe('the updater\'s network calls go through the proxy', () => {
         });
         if (out === 'unsupported') return void t.skip(`Node ${process.versions.node} has no http.setGlobalProxyFromEnv`);
         assert.equal(out, 'done');
-        assert.deepEqual(seen, [host], `the proxy saw ${JSON.stringify(seen)}`);
+        // At least once, and only for GitHub's host: undici retries a tunnel
+        // the proxy hangs up on (seen repeatedly on CI's Node 24.22, once on
+        // 26.8), so the count is not the property.
+        assert.ok(seen.length > 0 && seen.every((url) => url === host), `the proxy saw ${JSON.stringify(seen)}`);
       } finally {
         server.closeAllConnections();
         await new Promise((resolve) => server.close(resolve));
