@@ -18,6 +18,8 @@ function corruptStateOnDisk(dir, mutate) {
 }
 import { init, read, update } from '../src/tools/state/index.js';
 import { MAX_RESUME_DEPTH } from '../src/tools/orchestrator/helpers.js';
+// Namespace import: MAX_SUSPENDED_MODES is newer than this file's other cases.
+import * as schemaNs from '../src/schema.js';
 import {
   handleDebuggerResult,
   handleExecutorResult,
@@ -1586,6 +1588,14 @@ describe('orchestrator skeleton', () => {
     const result = await resumeWorkflow({ basePath: tempDir, _depth: MAX_RESUME_DEPTH });
     assert.equal(result.error, true);
     assert.ok(result.message.includes('depth'), `Expected depth-related error, got: ${result.message}`);
+  });
+
+  // Resume recurses once per hold the server releases itself, each popping
+  // suspended_modes, plus a few one-off re-resumes; a bound of 3 ran out under
+  // a stack of two holds, after the write had landed.
+  it('has room for a full stack of holds released by the server', () => {
+    assert.equal(typeof schemaNs.MAX_SUSPENDED_MODES, 'number', 'premise: schema exports MAX_SUSPENDED_MODES');
+    assert.ok(MAX_RESUME_DEPTH >= schemaNs.MAX_SUSPENDED_MODES + 3, `MAX_RESUME_DEPTH ${MAX_RESUME_DEPTH}`);
   });
 
   it('allows resumeWorkflow recursive calls below MAX_RESUME_DEPTH', async () => {
