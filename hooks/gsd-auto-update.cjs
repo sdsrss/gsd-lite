@@ -75,24 +75,6 @@ const CHECK_FAILURE_NOTICE_EVERY = 7;
 // (v24.14.0+, v25.4.0+), for `gsd update`, which nobody started that way.
 const PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'];
 
-/**
- * Whether Node can use every proxy value the environment sets: an http:// or
- * https:// URL that parses. curl and git also take `host:port` and socks5h://;
- * Node does not, and started with NODE_USE_ENV_PROXY=1 it exits at startup on
- * one, while http.setGlobalProxyFromEnv() throws with the value — credentials
- * included — in its message.
- */
-function proxyEnvUsable(env = process.env) {
-  return PROXY_VARS.filter((key) => env[key]).every((key) => {
-    try {
-      const { protocol } = new URL(env[key]);
-      return protocol === 'http:' || protocol === 'https:';
-    } catch {
-      return false;
-    }
-  });
-}
-
 function nodeReadsProxyEnvAtStartup(version = process.versions.node) {
   const [major, minor] = String(version).replace(/^v/, '').split('.').map(Number);
   return major >= 24 || (major === 22 && minor >= 21);
@@ -105,7 +87,8 @@ function nodeReadsProxyEnvAtStartup(version = process.versions.node) {
  */
 function envProxyRoute({ env = process.env, version = process.versions.node, http = require('node:http') } = {}) {
   if (!PROXY_VARS.some((key) => env[key])) return 'direct';
-  if (!proxyEnvUsable(env)) return 'unusable';
+  // session-init asked Node and Node refused the value (updaterEnv).
+  if (env.GSD_PROXY_ENV_REFUSED === '1') return 'unusable';
   // Any value but 1 is the user's own choice, and Node reads it as off.
   if (env.NODE_USE_ENV_PROXY !== undefined && env.NODE_USE_ENV_PROXY !== '1') return 'opted-out';
   if (env.NODE_USE_ENV_PROXY === '1' && nodeReadsProxyEnvAtStartup(version)) return 'startup';
@@ -120,6 +103,39 @@ function envProxyRoute({ env = process.env, version = process.versions.node, htt
     return 'runtime';
   }
   return 'unsupported';
+}
+
+/**
+ * The environment the SessionStart hook starts this updater with. Node reads
+ * NODE_USE_ENV_PROXY only at startup, and when it refuses a proxy value it
+ * exits before running a line — nothing recorded, every session. Which values
+ * it refuses (a path, a raw %, a query, no scheme, socks5h://, and which of
+ * the upper- and lower-case variables it reads at all) is Node's to say; two
+ * restatements of its parser here were each wrong. So ask it: start an empty
+ * Node with the switch on and see whether it starts. Only when the answer is
+ * used — a proxy is set, the user has not set the switch, this Node reads it,
+ * and a check is due (otherwise the updater exits at once). A refusal is
+ * passed on, so the failure reason can say so.
+ */
+function updaterEnv(env = process.env, { version = process.versions.node, due = checkDue, probe = nodeAcceptsProxyEnv } = {}) {
+  if (!PROXY_VARS.some((key) => env[key]) || env.NODE_USE_ENV_PROXY !== undefined || !nodeReadsProxyEnvAtStartup(version) || !due()) {
+    return env;
+  }
+  return probe(env) ? { ...env, NODE_USE_ENV_PROXY: '1' } : { ...env, GSD_PROXY_ENV_REFUSED: '1' };
+}
+
+function nodeAcceptsProxyEnv(env) {
+  const started = spawnSync(process.execPath, ['-e', ''], { env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'ignore', timeout: 3000 });
+  return started.status === 0;
+}
+
+/** Would the updater check now, rather than exit at once? */
+function checkDue() {
+  try {
+    return !isOrphan() && !shouldSkipUpdateCheck() && shouldCheck(readState());
+  } catch {
+    return false;
+  }
 }
 
 let proxyRoute = null;
@@ -151,7 +167,7 @@ function describeFetchFailure({ status, err } = {}, { route = proxyRoute ?? 'dir
     case 'opted-out':
       return `${what} (${set}, but NODE_USE_ENV_PROXY keeps Node from using it)`;
     case 'unusable':
-      return `${what} (${set} that Node cannot use: it is not an http:// or https:// URL)`;
+      return `${what} (${set} that Node refused to use)`;
     case 'unsupported':
       return nodeReadsProxyEnvAtStartup(version)
         ? `${what} (${set}, but Node v${version} uses it only when started with NODE_USE_ENV_PROXY=1)`
@@ -838,7 +854,7 @@ module.exports = {
   describeFetchFailure,
   envProxyRoute,
   nodeReadsProxyEnvAtStartup,
-  proxyEnvUsable,
+  updaterEnv,
   requiresSignature,
   getInstallMode,
   isDevMode,

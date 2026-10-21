@@ -44,15 +44,8 @@ describe('which way the updater reaches the network', () => {
     ['not started with it, no runtime switch', { ...PROXY }, '24.13.0', withoutRuntime, 'unsupported', false],
     ['the user turned it off', { ...PROXY, NODE_USE_ENV_PROXY: '0' }, '26.8.1', withRuntime, 'opted-out', false],
     ['only a lower-case http_proxy', { http_proxy: 'http://127.0.0.1:9' }, '26.8.1', withRuntime, 'runtime', true],
-    // Values curl and git accept and Node does not: started with
-    // NODE_USE_ENV_PROXY=1, Node exits at startup on each of these, and
-    // setGlobalProxyFromEnv throws with the value — credentials and all — in
-    // its message.
-    ['a proxy with no scheme', { HTTPS_PROXY: 'proxy.corp:3128' }, '26.8.1', withRuntime, 'unusable', false],
-    ['a host:port proxy', { HTTPS_PROXY: '127.0.0.1:9' }, '26.8.1', withRuntime, 'unusable', false],
-    ['a SOCKS proxy', { HTTPS_PROXY: 'socks5h://127.0.0.1:1080' }, '26.8.1', withRuntime, 'unusable', false],
-    ['a proxy URL that does not parse', { HTTPS_PROXY: 'http://alice:pa#ss@proxy.corp:8080' }, '26.8.1', withRuntime, 'unusable', false],
-    ['one unusable value among usable ones', { HTTPS_PROXY: 'http://127.0.0.1:9', HTTP_PROXY: 'proxy.corp:3128' }, '22.21.0', withRuntime, 'unusable', false],
+    // session-init asked Node and Node refused the value (updaterEnv).
+    ['started after Node refused the proxy value', { ...PROXY, GSD_PROXY_ENV_REFUSED: '1' }, '22.21.0', withRuntime, 'unusable', false],
   ]) {
     it(`${label} → ${route}`, () => {
       calls.length = 0;
@@ -66,11 +59,30 @@ describe('which way the updater reaches the network', () => {
     assert.equal(mod.envProxyRoute({ env: PROXY, version: '26.8.1', http: refusing }), 'unusable');
   });
 
-  it('premise: proxyEnvUsable is exported for session-init', () => {
-    assert.equal(typeof mod.proxyEnvUsable, 'function');
-    assert.equal(mod.proxyEnvUsable({ HTTPS_PROXY: 'http://127.0.0.1:9' }), true);
-    assert.equal(mod.proxyEnvUsable({ HTTPS_PROXY: 'proxy.corp:3128' }), false);
-    assert.equal(mod.proxyEnvUsable({}), true, 'nothing set is nothing to refuse');
+  // Which proxy values Node refuses (a path, a raw %, a query, no scheme,
+  // socks5h://, and which of the upper- and lower-case variables it reads)
+  // is Node's to say: two restatements of its parser here were each wrong
+  // (pre-tag reviews 1 and 2). updaterEnv asks it, by starting an empty Node
+  // with the switch on, only when that question matters.
+  describe('updaterEnv: the environment session-init starts the updater with', () => {
+    const probe = (verdict) => { const calls = []; return { calls, fn: (env) => { calls.push(env); return verdict; } }; };
+    for (const [label, env, version, isDue, verdict, expected] of [
+      ['no proxy set', {}, '26.8.1', true, true, {}],
+      ['the user set the switch themselves', { ...PROXY, NODE_USE_ENV_PROXY: '0' }, '26.8.1', true, true, { NODE_USE_ENV_PROXY: '0' }],
+      ['a Node that does not read it', { ...PROXY }, '20.19.0', true, true, {}],
+      ['no check is due', { ...PROXY }, '26.8.1', false, true, {}],
+      ['Node accepts the value', { ...PROXY }, '22.21.0', true, true, { NODE_USE_ENV_PROXY: '1' }],
+      ['Node refuses the value', { ...PROXY }, '26.8.1', true, false, { GSD_PROXY_ENV_REFUSED: '1' }],
+    ]) {
+      it(label, () => {
+        const p = probe(verdict);
+        const out = mod.updaterEnv(env, { version, due: () => isDue, probe: p.fn });
+        const added = Object.fromEntries(Object.entries(out).filter(([k]) => !(k in PROXY)));
+        assert.deepEqual(added, expected);
+        const asked = 'NODE_USE_ENV_PROXY' in expected && expected.NODE_USE_ENV_PROXY === '1' || 'GSD_PROXY_ENV_REFUSED' in expected;
+        assert.equal(p.calls.length, asked ? 1 : 0, 'Node is asked only when the answer is used');
+      });
+    }
   });
 
   for (const [version, reads] of [['20.19.0', false], ['22.20.0', false], ['22.21.0', true], ['23.11.0', false], ['24.0.0', true], ['26.8.1', true], ['v24.0.0', true]]) {
@@ -206,12 +218,15 @@ describe('the updater\'s network calls go through the proxy', () => {
 // with a reason, instead of the refusal escaping with the value in its
 // message, which `gsd update` printed.
 describe('an unusable proxy setting', () => {
+  // A value `new URL` accepts and Node does not (a raw % in the password):
+  // http.setGlobalProxyFromEnv throws on it, with the value in its message,
+  // and that used to escape to `gsd update`'s output.
   it('neither throws nor repeats the value', async () => {
     const env = { ...process.env };
     for (const key of Object.keys(env)) {
       if (/^(https?|no|all)_proxy$/i.test(key) || key === 'NODE_USE_ENV_PROXY' || key.startsWith('NODE_TEST')) delete env[key];
     }
-    env.HTTPS_PROXY = 'http://alice:pa#ss@proxy.corp:8080';
+    env.HTTPS_PROXY = 'http://alice:se%cret@127.0.0.1:9';
     const script = `
       globalThis.fetch = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }); };
       require(${JSON.stringify(SOURCE)}).fetchLatestRelease(null)
@@ -224,8 +239,10 @@ describe('an unusable proxy setting', () => {
       child.on('error', reject);
       child.on('close', () => resolve(text.trim()));
     });
-    assert.doesNotMatch(out, /alice|pa#ss|THREW/, out);
-    assert.match(JSON.parse(out).error, /^ECONNREFUSED \(a proxy is set in the environment that Node cannot use/);
+    assert.doesNotMatch(out, /alice|cret|THREW/, out);
+    const reason = JSON.parse(out).error;
+    assert.match(reason, /^ECONNREFUSED/);
+    if (typeof require('node:http').setGlobalProxyFromEnv === 'function') assert.match(reason, /refused to use/);
   });
 });
 
@@ -260,7 +277,7 @@ describe('a failed check says why', () => {
     ['opted-out', '26.8.1', /NODE_USE_ENV_PROXY keeps Node from using it/],
     ['unsupported', '22.21.0', /only when started with NODE_USE_ENV_PROXY=1/],
     ['unsupported', '20.19.0', /cannot use one: it needs v22\.21\+ or v24\+/],
-    ['unusable', '26.8.1', /a proxy is set in the environment that Node cannot use: it is not an http:\/\/ or https:\/\/ URL/],
+    ['unusable', '26.8.1', /a proxy is set in the environment that Node refused to use/],
   ]) {
     it(`says what the proxy did when the route was ${r} on Node ${version}`, () => {
       assert.match(mod.describeFetchFailure({ status: 500 }, { route: r, version }), pattern);
