@@ -746,6 +746,30 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
     });
   });
 
+  // Every way the check can come back empty says which, for update-state.json
+  // and the SessionStart notice; a bare null was what made a stopped updater
+  // invisible. A 403 stays `false`, the rate-limit signal.
+  it('fetchLatestRelease names why nothing came back', async () => {
+    await withRealModule(async (mod) => {
+      const realFetch = globalThis.fetch;
+      const answer = (res) => { globalThis.fetch = async () => res; };
+      try {
+        answer({ ok: false, status: 502 });
+        assert.match((await mod.fetchLatestRelease(null)).error, /^HTTP 502\b/);
+        answer({ ok: false, status: 403 });
+        assert.equal(await mod.fetchLatestRelease(null), false);
+        answer({ ok: true, status: 200, json: async () => ({ body: '' }) });
+        assert.equal((await mod.fetchLatestRelease(null)).error, 'the latest release has no tag');
+        answer({ ok: true, status: 200, json: async () => ({ tag_name: 'v9.9.9', assets: [] }) });
+        assert.equal((await mod.fetchLatestRelease(null)).error, 'the latest release has nothing to download');
+        globalThis.fetch = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); };
+        assert.match((await mod.fetchLatestRelease(null)).error, /^ENOTFOUND\b/);
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
   it('fetchLatestRelease returns null checksum when the body has none', async () => {
     await withRealModule(async (mod) => {
       const realFetch = globalThis.fetch;
