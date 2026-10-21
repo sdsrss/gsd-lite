@@ -4,19 +4,21 @@ All notable changes to this project are documented here.
 
 ## [0.17.2] - 2026-10-21
 
-Patch: the update check works behind a proxy and says why when it fails,
-auto-update stops writing Claude Code's plugin cache, and a refused state
-write no longer leaves an evidence archive behind. One call that used to be
-accepted is now refused; it is listed under **Now refused** at the end.
+Patch: the update check works behind a proxy on Node 22.21+ and 24+ and says
+why when it fails, auto-update stops writing Claude Code's plugin cache, and a
+refused state write no longer leaves an evidence archive behind. One call that
+used to be accepted is now refused, and one error code changed; both are under
+**Now refused** at the end.
 
-- **The update check goes through the proxy set in the environment.** Node's
+- **The update check, and on a manual install the download, go through the
+  proxy set in the environment.** Node's
   `fetch` ignores `HTTPS_PROXY` / `HTTP_PROXY` unless it is told to use them,
   so behind a mandatory proxy every check failed, typically after 3 seconds,
   and recorded only the time of the check, which held the next one off for a
   day: an install could stay on an old version for weeks without a word. The
   check started at SessionStart now runs with `NODE_USE_ENV_PROXY=1` when a
   proxy variable is set, you have not set `NODE_USE_ENV_PROXY` yourself, a
-  check is due, and this Node accepts the value. Node is asked by starting it
+  check is due, and this Node (22.21+ or 24+) accepts the value. Node is asked by starting it
   once with the value, which SessionStart waits for, at most once a day; a
   value Node refuses, such as `host:port` without a scheme or `socks5h://`, is
   not passed on, since Node would exit before the check ran. `gsd update`
@@ -31,7 +33,7 @@ accepted is now refused; it is listed under **Now refused** at the end.
 
 - **A failing update check says why.** `update-state.json` keeps the failure
   streak: when it started, how many checks in a row failed, and the reason,
-  built only from an error code, an HTTP status, a timeout or the proxy route
+  built from fixed phrases, an error code, an HTTP status and the proxy route
   (never the raw error, which can carry a proxy password). From the third
   failure in a row the background check leaves a notice that the next
   SessionStart shows as one line with the reason, then again every seventh
@@ -50,11 +52,14 @@ accepted is now refused; it is listed under **Now refused** at the end.
   older cache versions and cleared `.orphaned_at`, as did an automatic update
   when the registry entry for gsd was an empty list. The updater now reads
   the plugin registry first, and counts a plugin install the way
-  `install.js` does.
+  `install.js` does: an install with a gsd record in the registry, even an
+  empty one, or a git checkout with one, is a plugin install, and gsd points
+  to `claude plugin update` rather than installing updates itself.
 
 - **A refused state write leaves no evidence archive behind.** `state-update`
   (once the evidence store held more than 200 entries) and `phase-complete`
-  (on every call, for evidence from earlier phases) moved entries to
+  (on every call that passed the handoff gate, for evidence from earlier
+  phases) moved entries to
   `evidence-archive.json` before validating the write, so a write that was
   then refused still wrote the archive, and once the archive was at its
   1000-entry cap, those copies pushed out entries that had really been
@@ -72,18 +77,21 @@ accepted is now refused; it is listed under **Now refused** at the end.
 - **Internal:** `scripts/gate-replay.js` reads each test's result rather than
   the summary counts. A test cancelled because a hook failed, a test behind a
   failing top-level `before`, and a todo or skipped test are no result; a
-  test or suite that timed out is a failure; a `describe` that threw
-  registered no tests. It used to call replays with cancelled, timed-out,
-  never-declared or skipped tests VACUOUS, and ones whose setup or teardown
-  hook failed DISCRIMINATIVE. The replay tree's `node_modules` is a real
+  test or suite that timed out is a failure; a `describe` that threw is read
+  as no result. It used to call replays with cancelled, timed-out or
+  never-declared tests, or with every test skipped, VACUOUS, and ones whose
+  setup or teardown hook failed DISCRIMINATIVE. A failing `after` inside a
+  `describe` still reads as VACUOUS. The replay tree's `node_modules` is a real
   directory, so `install.js`'s copy into it works.
 
-- **Now refused.** Accepted by 0.17.1:
-  - A phase patch whose `phase_review` or `phase_handoff` is not an object:
-    `INVALID_INPUT` naming the field, and nothing is written. 0.17.1 accepted
-    all of them: `null`, a number, a boolean or `[]` changed nothing and
-    reported success; a string or a non-empty array was spread into the field
-    (`"ok"` became `{"0":"o","1":"k",…}`).
+- **Now refused.** Accepted by 0.17.1, or answered with a different code:
+  - A patch to an existing phase whose `phase_review` or `phase_handoff` is
+    not an object: `INVALID_INPUT` naming the field, and nothing is written.
+    0.17.1 accepted all of them: `null`, a number, a boolean or `[]` changed
+    nothing and reported success; a string or a non-empty array was spread
+    into the field (`"ok"` became `{"0":"o","1":"k",…}`). A new phase
+    carrying such a value was already refused, as `VALIDATION_FAILED`; it is
+    now `INVALID_INPUT`.
 
 ## [0.17.1] - 2026-10-21
 
