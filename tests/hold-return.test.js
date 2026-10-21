@@ -89,7 +89,7 @@ describe('suspended_modes in the state', () => {
     const state = await read({ basePath: dir });
     assert.ok(validateState(state).valid, 'premise: a fresh state is valid');
     assert.match(validateState({ ...state, suspended_modes: ['planning'] }).errors.join('; '), /suspended_modes must be empty in workflow_mode "executing_task"/);
-    assert.match(validateState({ ...state, suspended_modes: ['nonsense'] }).errors.join('; '), /suspended_modes/);
+    assert.match(validateState({ ...state, workflow_mode: 'paused_by_user', suspended_modes: ['nonsense'] }).errors.join('; '), /suspended_modes must be an array of at most \d+ workflow modes/);
     assert.ok(validateState({ ...state, workflow_mode: 'paused_by_user', suspended_modes: ['executing_task'] }).valid);
   });
 
@@ -143,7 +143,7 @@ describe('every hold returns to the mode it interrupted', () => {
         const after = await read({ basePath: dir });
         assert.equal(after.workflow_mode, from);
         assert.deepEqual(after.current_review, MODES[from].current_review, 'the interrupted review is intact');
-        assert.deepEqual(after.suspended_modes, from === 'awaiting_user' ? [] : []);
+        assert.deepEqual(after.suspended_modes, []);
       });
     }
   }
@@ -201,6 +201,30 @@ describe('the reported cases, resumed', () => {
     assert.equal(res.workflow_mode, 'paused_by_user', JSON.stringify(res));
     assert.equal(res.action, 'await_manual_intervention');
     assert.equal(res.resume_to, 'executing_task');
+  });
+
+  it('B: a /clear during planning comes back to planning', async (t) => {
+    // Context runs low while a plan is revised as well as while one executes.
+    const dir = await gitProject(t);
+    await update({ updates: { workflow_mode: 'planning' }, basePath: dir });
+    const cleared = await update({ updates: { workflow_mode: 'awaiting_clear' }, basePath: dir });
+    assert.ok(cleared.success, JSON.stringify(cleared));
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.equal(res.workflow_mode, 'planning', JSON.stringify(res));
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'planning');
+  });
+
+  it('B: a /clear over a pause whose HEAD moved comes back paused', async (t) => {
+    // The /clear is released first, back to the pause, and the pause is
+    // not checked; the HEAD change is found once work resumes.
+    const dir = await gitProject(t);
+    await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+    await update({ updates: { workflow_mode: 'awaiting_clear' }, basePath: dir });
+    await moveHead(dir);
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.equal(res.workflow_mode, 'paused_by_user', JSON.stringify(res));
+    assert.equal(res.action, 'await_manual_intervention');
+    assert.deepEqual((await read({ basePath: dir })).suspended_modes, ['executing_task']);
   });
 
   it('C: a paused project whose HEAD moved stays paused', async (t) => {

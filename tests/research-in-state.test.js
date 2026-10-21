@@ -256,6 +256,26 @@ describe('a store lands whole or changes nothing', () => {
     assert.equal(res.action, 'research_stored', JSON.stringify(res));
   });
 
+  it('refuses a placeholder summary under blocked: false over nothing on record too, rather than storing it as blocked', async () => {
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    const res = await handleResearcherResult({ ...payload({ 'decision:x': { summary: '[BLOCKED] 研究来源不可用', source: 'none' } }), basePath: dir });
+    assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+    assert.match(res.message, /blocked: false/);
+    assert.equal((await read({ basePath: dir })).research, null, 'nothing was stored');
+  });
+
+  it('state-update refuses a research record whose blocked is not a boolean', async () => {
+    // storeResearch reads `blocked !== true` as real research, so a string
+    // written by hand would make a placeholder block every later refresh.
+    await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+    await handleResearcherResult({ ...payload({ 'decision:x': { summary: 'no sources', source: 'none' } }, { blocked: true }), basePath: dir });
+    const { research } = await read({ basePath: dir });
+    const res = await update({ updates: { research: { ...research, blocked: 'yes' } }, basePath: dir });
+    assert.equal(res.error, true, JSON.stringify(res));
+    assert.match(res.message, /research\.blocked must be a boolean/);
+    assert.equal((await read({ basePath: dir })).research.blocked, true);
+  });
+
   it('records whether the research on record was blocked', async () => {
     await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
     await handleResearcherResult({ ...payload({ 'decision:x': { summary: 'no sources', source: 'none' } }, { blocked: true }), basePath: dir });
