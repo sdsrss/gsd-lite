@@ -543,6 +543,12 @@ const MIN_RESEARCH_TTL_MS = 60 * 60 * 1000;
 // The summary prefix of the researcher's blocked fallback (agents/researcher.md,
 // uncertainty_handling): every source failed, or the scope would not converge.
 export const BLOCKED_DECISION_PREFIX = '[BLOCKED]';
+// The prefix as a model may drift from it: behind whitespace, zero-width
+// characters or markdown emphasis, in full-width or lenticular brackets, with
+// spaces inside them, in any case. A variant not recognised stores "could not
+// research" over the research on record, silently; one recognised too many is
+// a refusal that says why, so the match leans wide.
+const BLOCKED_SUMMARY = /^[\s\u200B-\u200D\u2060*_`]*[[\uFF3B\u3010]\s*blocked\s*[\]\uFF3D\u3011]/i;
 
 /**
  * The expiry dates a researcher result carries, refused when any is not a
@@ -622,9 +628,9 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // project planned with no sources), there is nothing to protect and it is
     // stored: refusing it there left that project dispatching the researcher
     // on every resume once its 24-hour placeholder expired.
-    // Leading whitespace is allowed before the prefix: a summary written as
-    // " [BLOCKED] …" was read as real research, on either side.
-    const isBlocked = (entry) => typeof entry?.summary === 'string' && entry.summary.trimStart().startsWith(BLOCKED_DECISION_PREFIX);
+    // Recognised on either side by BLOCKED_SUMMARY: " [BLOCKED] …" and
+    // "[blocked] …" were read as real research.
+    const isBlocked = (entry) => typeof entry?.summary === 'string' && BLOCKED_SUMMARY.test(entry.summary);
     const blocked = Object.keys(decision_index).filter((id) => isBlocked(decision_index[id]));
     const recordHasResearch = Object.values(previousIndex).some((entry) => !isBlocked(entry));
     const giveUp = 'give up the expired research with state-update (research: null, workflow_mode: "executing_task"), after which tasks\' research_basis no longer resolves';

@@ -189,6 +189,16 @@ describe('a store lands whole or changes nothing', () => {
     // The prefix with whitespace in front was not recognised (third pre-tag review).
     ['a blocked result whose summary starts with a space', { 'decision:blocked-no-sources': { summary: ' [BLOCKED] 研究来源不可用', source: 'none' } }],
     ['a blocked result whose summary starts with a newline', { 'decision:blocked-no-sources': { summary: '\n[BLOCKED] 研究来源不可用', source: 'none' } }],
+    // Each written the way a model may drift from the fallback's exact text;
+    // all of them were stored over the research on record. Missing one loses
+    // the research silently, while one too many is a refusal that says why.
+    ['a blocked result in lower case', { 'decision:blocked-no-sources': { summary: '[blocked] 研究来源不可用', source: 'none' } }],
+    ['a blocked result in bold', { 'decision:blocked-no-sources': { summary: '**[BLOCKED]** 研究来源不可用', source: 'none' } }],
+    ['a blocked result in code', { 'decision:blocked-no-sources': { summary: '`[BLOCKED]` 研究来源不可用', source: 'none' } }],
+    ['a blocked result with full-width brackets', { 'decision:blocked-no-sources': { summary: '［BLOCKED］研究来源不可用', source: 'none' } }],
+    ['a blocked result with lenticular brackets', { 'decision:blocked-no-sources': { summary: '【BLOCKED】研究来源不可用', source: 'none' } }],
+    ['a blocked result behind a zero-width space', { 'decision:blocked-no-sources': { summary: '\u200B[BLOCKED] 研究来源不可用', source: 'none' } }],
+    ['a blocked result with spaces inside the brackets', { 'decision:blocked-no-sources': { summary: '[ BLOCKED ] 研究来源不可用', source: 'none' } }],
     // Stored, it replaced every decision on record with nothing.
     ['a result with no decisions', {}],
   ]) {
@@ -200,6 +210,17 @@ describe('a store lands whole or changes nothing', () => {
       assert.deepEqual(await snapshot(), before, 'a refused store changed the project');
     });
   }
+
+  it('still stores a refresh whose conclusions only mention being blocked', async () => {
+    // The control for the variants above: the match is for a leading tag.
+    await seeded();
+    const res = await handleResearcherResult({ ...payload({
+      'decision:a': { summary: 'Blocked requests are retried with backoff', source: 'docs' },
+      'decision:b': { summary: 'Use JWT; [BLOCKED] tokens are rotated', source: 'docs' },
+      'decision:c': { summary: 'BLOCKED-list stays in the gateway', source: 'docs' },
+    }), basePath: dir });
+    assert.equal(res.action, 'research_stored', JSON.stringify(res));
+  });
 
   it('reads a placeholder on record whose summary starts with a space as blocked, and stores the next blocked result', async () => {
     // Read as real research, the placeholder made every later blocked
