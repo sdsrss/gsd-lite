@@ -27,7 +27,7 @@ process.stdin.on('end', () => {
     // Guarded: a missing helper renders, as before.
     try {
       const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(require('node:os').homedir(), '.claude');
-      if (require('./lib/hook-registry.cjs').pluginDisabled(claudeDir, cwd)) process.exit(0);
+      if (require('./lib/hook-registry.cjs').pluginDisabled(claudeDir, data.workspace?.project_dir || cwd)) process.exit(0);
     } catch { /* helper absent — render */ }
     // Must resolve to a real number: a non-numeric value propagates through the
     // arithmetic below as NaN, which renders an empty bar labelled "NaN%" and —

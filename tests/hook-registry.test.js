@@ -69,6 +69,8 @@ async function markPluginInstalled(claudeDir, {
 } = {}) {
   const installPath = join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd', version);
   await mkdir(join(installPath, 'hooks'), { recursive: true });
+  // The cache holds the repository, package.json included.
+  await writeFile(join(installPath, 'package.json'), JSON.stringify({ name: 'gsd-lite', version }));
   const manifestPath = join(installPath, 'hooks', 'hooks.json');
   if (manifest === 'real') {
     cpSync(join(PROJECT_ROOT, 'hooks', 'hooks.json'), manifestPath);
@@ -400,15 +402,15 @@ describe('the ~/.claude/hooks copies stand down while the plugin serves', () => 
 
   for (const [value, shouldRun, label] of [
     [true, false, 'boolean true'],
-    ['false', false, 'the string "false"'],
-    [0, false, 'the number 0'],
+    ['false', true, 'the string "false"'],
+    [0, true, 'the number 0'],
   ]) {
     it(`treats enabledPlugins ${label} the way Claude Code does`, async () => {
       // Claude Code reports a plugin with the string "false" as disabled, and a
-      // disabled plugin loads no hooks — and turns gsd off (0.18.0), so this
-      // copy stands down for every value but `true` as well: serving when true,
-      // switched off otherwise. `=== false` is the one comparison that would let
-      // a wrong-typed disable through as "still on".
+      // disabled plugin loads no hooks, so only `true` means the plugin serves
+      // this hook. Only a plain `false` means the user switched gsd off
+      // (pluginDisabled): for any other value this copy runs on, which is
+      // visible, rather than stand down on a guess, which is not.
       const { home, claudeDir } = await makeClaudeHome('gsd-standdown-enabled-');
       try {
         await markPluginInstalled(claudeDir);

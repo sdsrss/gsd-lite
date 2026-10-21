@@ -55,27 +55,23 @@ const server = new Server(
  * system's reach, so it kept serving every tool after the user turned gsd off.
  * Only the runtime copy at <config>/gsd/ stands down — the plugin's own server
  * is not started while the plugin is disabled, and a repository checkout is
- * never one to silence. The helper is shared with the hooks: loaded from the
- * npx install's hooks/lib, or from beside this file in a checkout or the
- * plugin; if neither loads, the server serves, as before.
+ * never one to silence. The helper is the hooks' own, from the npx install's
+ * <config>/hooks/lib; if it does not load, the server serves, as before.
+ * Asked on every request rather than once, so a settings file caught
+ * mid-write turns nothing off for the life of the server.
  */
-function _npxCopyTurnedOff() {
+function turnedOff() {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || _path.join(_os.homedir(), '.claude');
   const realish = (p) => { try { return _fs.realpathSync(p); } catch { return p; } };
   const here = realish(fileURLToPath(import.meta.url));
   if (!here.startsWith(realish(_path.join(claudeDir, 'gsd')) + _path.sep)) return false;
-  for (const helper of [
-    _path.join(claudeDir, 'hooks', 'lib', 'hook-registry.cjs'),
-    _path.join(_path.dirname(here), '..', 'hooks', 'lib', 'hook-registry.cjs'),
-  ]) {
-    try {
-      return _require(helper).pluginDisabled(claudeDir, process.cwd()) === true;
-    } catch { /* next candidate */ }
+  try {
+    const { pluginDisabled } = _require(_path.join(claudeDir, 'hooks', 'lib', 'hook-registry.cjs'));
+    return pluginDisabled(claudeDir, process.env.CLAUDE_PROJECT_DIR || process.cwd()) === true;
+  } catch {
+    return false;
   }
-  return false;
 }
-let _turnedOff;
-const turnedOff = () => (_turnedOff ??= _npxCopyTurnedOff());
 const TURNED_OFF_MESSAGE = 'GSD-Lite is turned off: the gsd plugin is disabled. This server is the copy `npx gsd-lite install` registered, and it serves nothing while the plugin is off. Enable gsd from /plugin to use it.';
 
 const TOOLS = [
