@@ -397,6 +397,30 @@ describe('repeated check failures are recorded and announced', () => {
     assert.ok(lines.includes('The last check failed (1 in a row): HTTP 502'), JSON.stringify(lines));
   });
 
+  // The cached answer returned before the failure was printed: a plugin
+  // install that found an update and then kept failing to check said only
+  // "Update available … (from an earlier check)" (second pre-tag review).
+  it('a throttled gsd update with a cached update still says the checks are failing', async () => {
+    const ctx = await manualInstall();
+    const lines = [];
+    const log = console.log;
+    try {
+      const statePath = join(process.env.HOME, '.claude', 'gsd', 'runtime', 'update-state.json');
+      await mkdir(join(process.env.HOME, '.claude', 'gsd', 'runtime'), { recursive: true });
+      await writeFile(statePath, JSON.stringify({
+        lastCheck: new Date().toISOString(), updateAvailable: true, latestVersion: '0.4.0',
+        checkFailure: { since: '2026-10-18T09:00:00.000Z', count: 5, reason: 'HTTP 502' },
+      }));
+      console.log = (...args) => lines.push(args.join(' '));
+      const res = await ctx.updater.checkForUpdate({ install: false, verbose: true, fetchLatestRelease: async () => assert.fail('throttled'), getCurrentVersion: () => '0.3.0' });
+      assert.equal(res?.action, 'cached', 'premise: the cached answer is returned');
+    } finally {
+      console.log = log;
+      await ctx.cleanup();
+    }
+    assert.ok(lines.includes('The last check failed (5 in a row): HTTP 502'), JSON.stringify(lines));
+  });
+
   it('says why in verbose mode, which is what gsd update prints', async () => {
     const ctx = await manualInstall();
     const lines = [];

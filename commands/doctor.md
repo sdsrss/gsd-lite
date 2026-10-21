@@ -102,9 +102,10 @@ Check for update-related information:
   - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `gsd update` (or `npx gsd-lite update`) to see why
   - `check_failed` (with `count`, `since`, `reason`): WARN "Update checks failing: {count} in a row since {since} — {reason}" (the reason is described below)
   - The SessionStart hook prints this file and then deletes it, so it is usually absent. Absence is normal: record nothing for it.
-- If `~/.claude/gsd/runtime/update-state.json` has `checkFailure` (`count`, `since`, `reason`), the update checks are failing now: WARN "Update checks failing: {count} in a row since {since} — {reason}". The reason ends with what happened to a proxy, when the environment sets one:
+- If `~/.claude/gsd/runtime/update-state.json` has `checkFailure` (`count`, `since`, `reason`) with a `count` of 3 or more, the update checks are failing now: WARN "Update checks failing: {count} in a row since {since} — {reason}". Fewer than 3 is a blip, which SessionStart does not report either: record nothing. The reason ends with what happened to a proxy, when the environment sets one:
   - `(through the proxy set in the environment)`: the proxy was used and the request still failed; the proxy or the network is the thing to check
-  - `(... only when started with NODE_USE_ENV_PROXY=1)`, `(... it needs v22.21+ or v24+)`, `(... not an http:// or https:// URL)`, `(... NODE_USE_ENV_PROXY keeps Node from using it)`: each names the setting to change
+  - `(... only when started with NODE_USE_ENV_PROXY=1)`, `(... it needs v22.21+ or v24+)`, `(... NODE_USE_ENV_PROXY keeps Node from using it)`: each names the setting to change
+  - `(... that Node refused to use)`: Node does not accept the proxy value (for example `host:port` with no scheme, a path after the port, or a `%` in the password that is not an escape); it needs to be an `http://` or `https://` URL Node can parse
 - If cannot determine: record INFO "Update status unavailable"
 
 ## STEP 6: Output Summary

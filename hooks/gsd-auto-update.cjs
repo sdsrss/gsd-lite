@@ -247,6 +247,12 @@ async function checkForUpdate(options = {}) {
     return await withFileLock(async () => {
       const state = readState();
       if (!force && !shouldCheck(state)) {
+        // Before either return: a cached "update available" from an earlier
+        // check is still followed by checks that fail.
+        const failure = state.checkFailure;
+        if (verbose && Number.isInteger(failure?.count) && typeof failure.reason === 'string') {
+          console.log(`The last check failed (${failure.count} in a row): ${failure.reason}`);
+        }
         if (state.updateAvailable && state.latestVersion) {
           return {
             updateAvailable: true,
@@ -259,13 +265,7 @@ async function checkForUpdate(options = {}) {
             installMode,
           };
         }
-        if (verbose) {
-          console.log('Throttled — last check:', state.lastCheck);
-          const failure = state.checkFailure;
-          if (Number.isInteger(failure?.count) && typeof failure.reason === 'string') {
-            console.log(`The last check failed (${failure.count} in a row): ${failure.reason}`);
-          }
-        }
+        if (verbose) console.log('Throttled — last check:', state.lastCheck);
         return null;
       }
 
