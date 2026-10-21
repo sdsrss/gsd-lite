@@ -654,13 +654,22 @@ describe('update() never writes a state that validateState refuses', () => {
   // a throw still reaches the caller, as "Tool execution failed: Cannot read
   // properties of null (reading 'id')", which names neither the field nor
   // the entry. Asked of every canonical field.
-  // Asked of the fresh plan and of an evidence store at its cap, where a prune
-  // runs on the merged evidence before anything is validated (pre-tag review).
-  it('answers every malformed update with an error instead of throwing', async () => {
-    const statePath = join(dir, '.gsd', 'state.json');
+  // An evidence store at its cap, where a prune runs on the merged evidence
+  // before anything is validated (pre-tag review).
+  const atCap = () => {
     const full = JSON.parse(original);
     full.evidence = Object.fromEntries(Array.from({ length: MAX_EVIDENCE_ENTRIES }, (_, i) => [`ev:${i}`, { scope: 'task:1.1', type: 'test', passed: true }]));
     assert.ok(validateState(full).valid, 'premise: the evidence store at its cap is valid');
+    return full;
+  };
+
+  // Asked of the fresh plan and of a store at its cap, with the values a JSON
+  // caller sends when it gets a field wrong. Not every value: an object whose
+  // toString is not a function still throws inside validation (second review),
+  // which reaches the caller as "Tool execution failed" with nothing written.
+  it('answers malformed updates with an error instead of throwing', async () => {
+    const statePath = join(dir, '.gsd', 'state.json');
+    const full = atCap();
     const entries = [null, 0, 'x', [], true];
     const PATCHES = {
       phases: [
@@ -688,19 +697,22 @@ describe('update() never writes a state that validateState refuses', () => {
     assert.deepEqual(thrown, []);
   });
 
-  for (const [label, updates, code, message] of [
-    ['a phase id that is not a number', { phases: [{ id: '(', todo: [{ id: '(.1', name: 't' }] }] }, 'INVALID_INPUT', 'phases[0] must be an object with a numeric id'],
-    // Evidence keeps the code validation gives it (tests/error-codes.test.js).
-    ['an evidence entry that is not an object', { evidence: { 'ev:new': null } }, 'VALIDATION_FAILED', 'evidence["ev:new"] must be an object'],
-    ['evidence that is not an object', { evidence: [null] }, 'VALIDATION_FAILED', 'evidence must be an object'],
+  // Evidence keeps the code and text validation gives it
+  // (tests/error-codes.test.js); asked at the cap, where it used to throw
+  // before validation could say so.
+  for (const [label, updates, code, message, cap] of [
+    ['a phase id that is not a number', { phases: [{ id: '(', todo: [{ id: '(.1', name: 't' }] }] }, 'INVALID_INPUT', 'phases[0] must be an object with a numeric id', false],
+    ['an evidence entry that is not an object', { evidence: { 'ev:new': null } }, 'VALIDATION_FAILED', 'Validation failed: evidence["ev:new"] must be an object', true],
+    ['evidence that is not an object', { evidence: Array(MAX_EVIDENCE_ENTRIES + 1).fill(null) }, 'VALIDATION_FAILED', 'Validation failed: evidence must be an object', true],
   ]) {
     it(`refuses ${label}, naming it and writing nothing`, async () => {
       const statePath = join(dir, '.gsd', 'state.json');
-      await writeFile(statePath, original);
+      const json = cap ? JSON.stringify(atCap()) : original;
+      await writeFile(statePath, json);
       const res = await update({ updates, basePath: dir });
       assert.equal(res.code, code, JSON.stringify(res));
-      assert.ok(res.message.includes(message), res.message);
-      assert.equal(await readFile(statePath, 'utf8'), original);
+      assert.equal(res.message, message);
+      assert.equal(await readFile(statePath, 'utf8'), json);
     });
   }
 
