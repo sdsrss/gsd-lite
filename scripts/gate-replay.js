@@ -37,12 +37,17 @@
  * `at`. Both used to produce a verdict — one a confident VACUOUS, the other a
  * stack trace at exit 1, which is the code VACUOUS uses.
  *
+ * A test cancelled because a hook or an enclosing suite failed was never
+ * evaluated. It is neither a pass nor a failure, so a file with cancelled tests
+ * and no failure is INCONCLUSIVE, never VACUOUS.
+ *
  * Nothing is written inside the repo: the base tree is a detached worktree in a
- * temp dir, removed on exit, and node_modules is a symlink to this checkout's.
+ * temp dir, removed on exit, and its node_modules holds a symlink to each of
+ * this checkout's packages.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -119,7 +124,14 @@ try {
   if (!existsSync(join(root, 'node_modules'))) {
     throw new Error(`node_modules is missing at ${root} — run npm ci first; without it every replay is INCONCLUSIVE for the wrong reason`);
   }
-  symlinkSync(join(root, 'node_modules'), join(tree, 'node_modules'));
+  // A directory of links, not one link to the directory. install.js copies a
+  // checkout's node_modules with mkdir + cpSync, and cpSync on a symlink source
+  // copies the link and then throws EEXIST against the directory mkdir made —
+  // which cancelled every Layer A suite of tests/e2e-install.test.js on replay.
+  mkdirSync(join(tree, 'node_modules'));
+  for (const entry of readdirSync(join(root, 'node_modules'))) {
+    symlinkSync(join(root, 'node_modules', entry), join(tree, 'node_modules', entry));
+  }
 
   for (const [file, src] of sources) {
     // The test as written AT `at`, on the tree as it stood at `base`.
@@ -150,6 +162,10 @@ try {
   };
   const tests = num('tests');
   const fail = num('fail');
+  const pass = num('pass');
+  // `# fail` does not count these, and the exit code says nothing either way:
+  // a test whose hook or parent failed was cancelled, never run.
+  const cancelled = num('cancelled') ?? 0;
 
   // TAP names every result on its own line, and a failing SUITE gets one too —
   // so the naive list came out longer than the count above it (3 names under
@@ -161,19 +177,27 @@ try {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^(\s*)(not ok|ok) \d+ - (.+)$/);
     if (!m) continue;
-    // The type sits in the YAML block between this result and the next one.
+    // The type, and for a failure its failureType and error, sit in the YAML
+    // block between this result and the next one.
     let type = null;
+    let failureType = null;
+    let error = null;
     for (let j = i + 1; j < lines.length && !/^\s*(not ok|ok) \d+ - /.test(lines[j]); j++) {
-      const t = lines[j].match(/^\s*type: '(\w+)'/);
-      if (t) { type = t[1]; break; }
+      type ??= lines[j].match(/^\s*type: '(\w+)'/)?.[1] ?? null;
+      failureType ??= lines[j].match(/^\s*failureType: '(\w+)'/)?.[1] ?? null;
+      error ??= lines[j].match(/^\s*error: (.+)$/)?.[1] ?? null;
     }
-    results.push({ ok: m[2] === 'ok', name: m[3].trim(), type });
+    results.push({ ok: m[2] === 'ok', name: m[3].trim(), type, failureType, error });
   }
   // `type` is absent on a bare result line; keep those rather than dropping a
-  // real failure over a missing diagnostic.
-  const leaves = (ok) => results.filter((r) => r.ok === ok && r.type !== 'suite').map((r) => r.name);
+  // real failure over a missing diagnostic. A cancelled leaf is reported as
+  // `not ok` too, and is not a failure.
+  const leaves = (ok) => results
+    .filter((r) => r.ok === ok && r.type !== 'suite' && r.failureType !== 'cancelledByParent')
+    .map((r) => r.name);
   const failing = leaves(false);
   const passing = leaves(true);
+  const hookFailures = results.filter((r) => !r.ok && r.failureType === 'hookFailed');
 
   // Node names a FILE as the test when the file contributed no test of its own,
   // in both directions: one failing test named after the file when it could not
@@ -210,14 +234,25 @@ try {
     console.log('against a base where the file\'s imports resolve — usually the commit\'s own');
     console.log('parent rather than a distant branch point.');
     exitCode = 2;
+  } else if (fail === 0 && cancelled > 0) {
+    console.log(`INCONCLUSIVE — ${cancelled} of ${tests} tests were cancelled on ${baseSha}, so they never ran.`);
+    for (const r of hookFailures) console.log(`  a hook failed in "${r.name}": ${(r.error ?? '').slice(0, 200)}`);
+    console.log('\nA test cancelled because a hook or an enclosing suite failed was neither');
+    console.log('passed nor failed. The rest passing says nothing about these. Replay against a');
+    console.log('base where the setup succeeds, or read why it failed above.');
+    exitCode = 2;
   } else if (fail === 0) {
-    console.log(`VACUOUS — ${tests}/${tests} passed on ${baseSha}.`);
+    console.log(`VACUOUS — ${pass}/${tests} passed on ${baseSha}.`);
     console.log(`Every test in this file is green on the tree ${atSha} was written to change, so`);
     console.log('the file encodes nothing that commit fixed. Assert the property, not a token of it.');
     exitCode = 1;
   } else {
     console.log(`DISCRIMINATIVE — ${fail}/${tests} failed on ${baseSha}:\n`);
     for (const name of [...new Set(failing)]) console.log(`  ✖ ${name}`);
+    if (cancelled > 0) {
+      console.log(`\n  (${cancelled} more cancelled, not run: a hook or an enclosing suite failed)`);
+      for (const r of hookFailures) console.log(`  a hook failed in "${r.name}": ${(r.error ?? '').slice(0, 200)}`);
+    }
     console.log('\nRead the failures before believing them. A test that goes red on the base tree');
     console.log('for an unrelated reason — a missing import, a helper added by the same commit —');
     console.log('is indistinguishable from one that earns its place, except by reading it.');
