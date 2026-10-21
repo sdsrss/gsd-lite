@@ -13,6 +13,7 @@ import {
 } from '../src/schema.js';
 import { init, patchPlan, phaseComplete, read, storeResearch, update } from '../src/tools/state/index.js';
 import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
+import { MAX_EVIDENCE_ENTRIES } from '../src/tools/state/constants.js';
 import { acceptTask, createTempDir, initProject, removeTempDir } from './e2e-helpers.js';
 
 const PASSED = { lint: { exit_code: 0 }, typecheck: { exit_code: 0 }, test: { exit_code: 0 } };
@@ -653,25 +654,55 @@ describe('update() never writes a state that validateState refuses', () => {
   // a throw still reaches the caller, as "Tool execution failed: Cannot read
   // properties of null (reading 'id')", which names neither the field nor
   // the entry. Asked of every canonical field.
+  // Asked of the fresh plan and of an evidence store at its cap, where a prune
+  // runs on the merged evidence before anything is validated (pre-tag review).
   it('answers every malformed update with an error instead of throwing', async () => {
     const statePath = join(dir, '.gsd', 'state.json');
+    const full = JSON.parse(original);
+    full.evidence = Object.fromEntries(Array.from({ length: MAX_EVIDENCE_ENTRIES }, (_, i) => [`ev:${i}`, { scope: 'task:1.1', type: 'test', passed: true }]));
+    assert.ok(validateState(full).valid, 'premise: the evidence store at its cap is valid');
     const entries = [null, 0, 'x', [], true];
     const PATCHES = {
-      phases: [...entries.map((entry) => [entry]), ...entries.map((entry) => [{ id: 1, todo: [entry] }]), [{ id: 2, todo: [null] }]],
+      phases: [
+        ...entries.map((entry) => [entry]),
+        ...entries.map((entry) => [{ id: 1, todo: [entry] }]),
+        [{ id: 2, todo: [null] }],
+        // A phase id goes into a RegExp built for the ids of its new tasks.
+        ...['(', '*', '[', 'x', null].map((id) => [{ id, todo: [{ id: `${id}.1`, name: 't' }] }]),
+      ],
+      evidence: [{ 'ev:new': null }, { 'ev:new': 'x' }, Array(MAX_EVIDENCE_ENTRIES + 1).fill(null)],
     };
     const thrown = [];
-    for (const field of CANONICAL_FIELDS) {
-      for (const value of [...GENERIC, ...(PATCHES[field] ?? [])]) {
-        await writeFile(statePath, original);
-        try {
-          await update({ updates: { [field]: value }, basePath: dir });
-        } catch (err) {
-          thrown.push(`${field} = ${JSON.stringify(value)}: ${err.message}`);
+    for (const json of [original, JSON.stringify(full)]) {
+      for (const field of CANONICAL_FIELDS) {
+        for (const value of [...GENERIC, ...(PATCHES[field] ?? [])]) {
+          await writeFile(statePath, json);
+          try {
+            await update({ updates: { [field]: value }, basePath: dir });
+          } catch (err) {
+            thrown.push(`${field} = ${JSON.stringify(value).slice(0, 60)}: ${err.message}`);
+          }
         }
       }
     }
     assert.deepEqual(thrown, []);
   });
+
+  for (const [label, updates, code, message] of [
+    ['a phase id that is not a number', { phases: [{ id: '(', todo: [{ id: '(.1', name: 't' }] }] }, 'INVALID_INPUT', 'phases[0] must be an object with a numeric id'],
+    // Evidence keeps the code validation gives it (tests/error-codes.test.js).
+    ['an evidence entry that is not an object', { evidence: { 'ev:new': null } }, 'VALIDATION_FAILED', 'evidence["ev:new"] must be an object'],
+    ['evidence that is not an object', { evidence: [null] }, 'VALIDATION_FAILED', 'evidence must be an object'],
+  ]) {
+    it(`refuses ${label}, naming it and writing nothing`, async () => {
+      const statePath = join(dir, '.gsd', 'state.json');
+      await writeFile(statePath, original);
+      const res = await update({ updates, basePath: dir });
+      assert.equal(res.code, code, JSON.stringify(res));
+      assert.ok(res.message.includes(message), res.message);
+      assert.equal(await readFile(statePath, 'utf8'), original);
+    });
+  }
 
   for (const [label, phases, where] of [
     ['a phase', [null], 'phases[0]'],

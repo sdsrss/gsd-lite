@@ -317,19 +317,34 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       }
     }
 
-    // A phase or task patch is merged by its id, so one that is not an object
-    // has nothing to merge by. null threw a TypeError below, which reached the
-    // caller as "Cannot read properties of null", and a string was spread into
-    // a phase of single-character keys for validateState to refuse.
+    // Everything between here and validation runs on the caller's values, so
+    // what it dereferences is checked first. A phase or task patch is merged by
+    // its id: null threw "Cannot read properties of null", a string was spread
+    // into a phase of single-character keys, and a phase id goes into the
+    // RegExp _newTaskIdError builds, where "(" threw a SyntaxError. Evidence
+    // entries are read by the prune that runs once the store is over its cap,
+    // where a null entry threw. Each reached the caller as "Tool execution
+    // failed" naming neither field nor entry.
     if (Array.isArray(updates.phases)) {
       for (const [i, newPhase] of updates.phases.entries()) {
-        if (!isPlainObject(newPhase)) {
-          return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `phases[${i}] must be an object with an id` };
+        if (!isPlainObject(newPhase) || !Number.isFinite(newPhase.id)) {
+          return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `phases[${i}] must be an object with a numeric id` };
         }
         const j = Array.isArray(newPhase.todo) ? newPhase.todo.findIndex((task) => !isPlainObject(task)) : -1;
         if (j !== -1) {
           return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `phases[${i}].todo[${j}] must be an object with an id` };
         }
+      }
+    }
+    // Same code and text as validation gives them, which tests/error-codes
+    // pins; only the moment changes.
+    if ('evidence' in updates) {
+      if (!isPlainObject(updates.evidence)) {
+        return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: 'Validation failed: evidence must be an object' };
+      }
+      const bad = Object.keys(updates.evidence).find((id) => !isPlainObject(updates.evidence[id]));
+      if (bad !== undefined) {
+        return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: evidence["${bad}"] must be an object` };
       }
     }
 
