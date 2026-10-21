@@ -184,6 +184,7 @@ stateDiagram-v2
     awaiting_clear --> reviewing_phase : /clear 前在审查，恢复审查
     awaiting_clear --> awaiting_user : /clear 前在等用户决定
     awaiting_user --> executing_task : 用户解除阻塞 / 自动匹配 decision
+    awaiting_user --> executing_task : phase-complete(direction_ok: true) 解决方向漂移 (非最终 phase)
 
     state preflight_overrides <<choice>>
     executing_task --> preflight_overrides : resume 时 preflight 检测
@@ -219,7 +220,7 @@ stateDiagram-v2
 `executing_task -> awaiting_clear -> executing_task` (需要 /clear + /resume)
 
 **Preflight 覆盖 (resume 时检测)**:
-`resumeWorkflow()` 执行 `evaluatePreflight()` 检测以下条件 (按优先级):
+`resumeWorkflow()` 执行 `evaluatePreflight()` 检测以下条件 (按优先级)。L3 人工确认 hold (`current_review.stage === 'human_confirmation'`) 在 `awaiting_user`、`awaiting_clear`、`paused_by_user` 中时整段跳过，任何覆盖都不能清掉它:
 1. git HEAD 不匹配 -> `reconcile_workspace`
 2. 计划文件被外部修改 -> `replan_required`
 3. 方向漂移 -> `awaiting_user`
