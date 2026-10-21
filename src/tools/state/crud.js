@@ -324,11 +324,17 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     // RegExp _newTaskIdError builds, where "(" threw a SyntaxError. Evidence
     // entries are read by the prune that runs once the store is over its cap,
     // where a null entry threw. Each reached the caller as "Tool execution
-    // failed" naming neither field nor entry.
+    // failed" naming neither field nor entry. phase_review and phase_handoff
+    // are merged into the phase's own objects below: a string was spread into
+    // them as single-character keys and passed, being an object by then.
     if (Array.isArray(updates.phases)) {
       for (const [i, newPhase] of updates.phases.entries()) {
         if (!isPlainObject(newPhase) || !Number.isFinite(newPhase.id)) {
           return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `phases[${i}] must be an object with a numeric id` };
+        }
+        const notObject = ['phase_review', 'phase_handoff'].find((field) => field in newPhase && !isPlainObject(newPhase[field]));
+        if (notObject) {
+          return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `phases[${i}].${notObject} must be an object` };
         }
         const j = Array.isArray(newPhase.todo) ? newPhase.todo.findIndex((task) => !isPlainObject(task)) : -1;
         if (j !== -1) {
