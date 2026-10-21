@@ -1,11 +1,16 @@
 // tests/incremental-validation.test.js
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   validateStateUpdate,
   validateState,
   createInitialState,
+  CANONICAL_FIELDS,
 } from '../src/schema.js';
+import { init, storeResearch, update } from '../src/tools/state/index.js';
 
 describe('validateStateUpdate', () => {
   const baseState = () => createInitialState({ project: 'test', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }] });
@@ -214,8 +219,19 @@ describe('validateStateUpdate', () => {
   describe('total_phases validation', () => {
     it('accepts valid total_phases', () => {
       const state = baseState();
-      const result = validateStateUpdate(state, { total_phases: 3 });
+      const result = validateStateUpdate(state, { total_phases: state.phases.length });
       assert.equal(result.valid, true);
+    });
+
+    it('rejects a total_phases that does not match the phases, as full validation does', () => {
+      // This case used to assert that 3 was accepted for a one-phase plan.
+      // validateState refuses that state, so every later full validation of
+      // it (a research store, a phase completion) failed.
+      const state = baseState();
+      const result = validateStateUpdate(state, { total_phases: 3 });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('does not match phases.length')), result.errors.join('; '));
+      assert.equal(validateState({ ...state, total_phases: 3 }).valid, false, 'premise: the full validator refuses it');
     });
 
     it('rejects non-finite total_phases', () => {
@@ -480,5 +496,93 @@ describe('validateStateUpdate', () => {
       const result = validateStateUpdate(state, { evidence: { 'ev:1': { scope: 'task:1.1' }, 'ev:2': { scope: 'global' } } });
       assert.equal(result.valid, true);
     });
+  });
+});
+
+// The fast path checked research as "null or an object" and evidence entries
+// for a scope only, so state-update wrote a decision_index entry of null and
+// an evidence `passed: "false"` that the full validator refuses. The next
+// research refresh read `.summary` of that null and threw a TypeError. Asked
+// of every canonical field rather than of the two that were reported.
+describe('update() never writes a state that validateState refuses', () => {
+  const GENERIC = [null, 0, -1, 1.5, '', 'x', true, [], {}, [null], { a: null }, { a: {} }, { a: 'x' }];
+  const NESTED = {
+    research: [
+      { decision_index: [] },
+      { decision_index: { 'decision:a': null } },
+      { decision_index: { 'decision:a': {} } },
+      { decision_index: { 'decision:a': { summary: '' } } },
+      { decision_index: { 'decision:a': { source: 'docs' } } },
+      { decision_index: { 'decision:a': { summary: 'A', source: '' } } },
+      { decision_index: { 'decision:a': { summary: 'A', expires_at: 'soon' } } },
+      { volatility: 'extreme' },
+      { expires_at: '' },
+      { expires_at: 'never' },
+      { files: 'STACK.md' },
+      { files: [''] },
+      { sources: 'docs' },
+      { sources: [{}] },
+    ],
+    evidence: [
+      { 'ev:1': null },
+      { 'ev:1': {} },
+      { 'ev:1': { scope: 'task:1.1', passed: 'false' } },
+      { 'ev:1': { scope: 'task:1.1', type: '' } },
+    ],
+    context: [{ remaining_percentage: 'x' }, { last_session: 1 }],
+    current_review: [{ scope: 'x' }, { scope: 'task', scope_id: '9.9' }, { scope: 'phase', scope_id: 9 }],
+  };
+
+  let dir;
+  let original;
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'gsd-incremental-'));
+    await init({ project: 'test', phases: [{ name: 'P1', tasks: [{ index: 1, name: 'T1' }] }], basePath: dir });
+    original = await readFile(join(dir, '.gsd', 'state.json'), 'utf8');
+  });
+  after(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it('holds for every canonical field', async () => {
+    assert.ok(validateState(JSON.parse(original)).valid, 'premise: the initial state is valid');
+    const statePath = join(dir, '.gsd', 'state.json');
+    const written = [];
+    let tried = 0;
+    for (const field of CANONICAL_FIELDS) {
+      for (const value of [...GENERIC, ...(NESTED[field] ?? [])]) {
+        await writeFile(statePath, original);
+        tried += 1;
+        // A throw writes nothing either; this asks only about what is written.
+        const res = await update({ updates: { [field]: value }, basePath: dir }).catch((err) => ({ thrown: err }));
+        if (!res.success) continue;
+        const check = validateState(JSON.parse(await readFile(statePath, 'utf8')));
+        if (!check.valid) written.push(`${field} = ${JSON.stringify(value)}: ${check.errors.join('; ')}`);
+      }
+    }
+    assert.ok(tried > CANONICAL_FIELDS.length * GENERIC.length, 'premise: the values were tried');
+    assert.deepEqual(written, []);
+  });
+
+  // The property above holds as well when both validators are equally lax, so
+  // the two reported writes are asserted on their own.
+  it('refuses a decision_index entry of null, and the next refresh stores normally', async () => {
+    const statePath = join(dir, '.gsd', 'state.json');
+    await writeFile(statePath, original);
+    const index = { 'decision:a': { summary: 'A', source: 'docs' } };
+    const result = { decision_ids: ['decision:a'], volatility: 'medium', expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), sources: [] };
+    const artifacts = { 'STACK.md': 's', 'ARCHITECTURE.md': 'a', 'PITFALLS.md': 'p', 'SUMMARY.md': 'm' };
+    assert.ok((await storeResearch({ result, decision_index: index, artifacts, basePath: dir })).success, 'premise: research is on record');
+    const { research } = JSON.parse(await readFile(statePath, 'utf8'));
+    const res = await update({ updates: { research: { ...research, decision_index: { 'decision:a': null } } }, basePath: dir });
+    assert.equal(res.error, true, JSON.stringify(res));
+    assert.match(res.message, /decision_index\.decision:a must be an object/);
+    const refresh = await storeResearch({ result, decision_index: { 'decision:a': { summary: 'A2', source: 'docs' } }, artifacts, basePath: dir });
+    assert.ok(refresh.success, JSON.stringify(refresh));
+  });
+
+  it('refuses an evidence entry whose passed is not a boolean', async () => {
+    await writeFile(join(dir, '.gsd', 'state.json'), original);
+    const res = await update({ updates: { evidence: { 'ev:1': { scope: 'task:1.1', passed: 'false' } } }, basePath: dir });
+    assert.equal(res.error, true, JSON.stringify(res));
+    assert.match(res.message, /passed must be a boolean/);
   });
 });

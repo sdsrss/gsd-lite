@@ -239,6 +239,62 @@ export function validateTransition(entity, from, to) {
   return { valid: true };
 }
 
+// The checks on `research` and on `evidence` entries, for validateState and
+// the incremental path alike. The incremental path checked research only as
+// "null or an object" and an evidence entry only for a scope, so state-update
+// wrote what validateState refuses: a decision_index entry of null, which the
+// next research refresh read `.summary` of and threw on.
+function researchErrors(research) {
+  if (research === null) return [];
+  if (!isPlainObject(research)) return ['research must be null or an object'];
+  const errors = [];
+  if ('volatility' in research && !['low', 'medium', 'high'].includes(research.volatility)) {
+    errors.push('research.volatility must be low|medium|high');
+  }
+  if ('expires_at' in research) {
+    if (typeof research.expires_at !== 'string' || research.expires_at.length === 0) {
+      errors.push('research.expires_at must be a non-empty string');
+    } else if (Number.isNaN(Date.parse(research.expires_at))) {
+      errors.push(`research.expires_at must be a valid ISO 8601 date (got "${research.expires_at}")`);
+    }
+  }
+  if ('files' in research && !Array.isArray(research.files)) {
+    errors.push('research.files must be an array');
+  }
+  if (Array.isArray(research.files)) {
+    for (const fileName of research.files) {
+      if (typeof fileName !== 'string' || fileName.length === 0) {
+        errors.push('research.files entries must be non-empty strings');
+        break;
+      }
+    }
+  }
+  if ('sources' in research) {
+    validateResearchSourcesArray(research.sources, errors, 'research.sources');
+  }
+  if ('decision_index' in research) {
+    const decisionIndexValidation = validateResearchDecisionIndex(research.decision_index);
+    errors.push(...decisionIndexValidation.errors.map((error) => `research.${error}`));
+  }
+  return errors;
+}
+
+// M-5: evidence entry structure.
+function evidenceEntryErrors(evidence) {
+  const errors = [];
+  for (const [id, entry] of Object.entries(evidence)) {
+    if (!isPlainObject(entry)) {
+      errors.push(`evidence["${id}"] must be an object`);
+      continue;
+    }
+    if (typeof entry.scope !== 'string' || entry.scope.length === 0) {
+      errors.push(`evidence["${id}"].scope must be a non-empty string`);
+    }
+    errors.push(...evidenceFieldErrors(entry, `evidence["${id}"]`));
+  }
+  return errors;
+}
+
 /**
  * Incremental validation: only validate changed fields + their relationships.
  * Falls back to full validateState() for complex updates (phases).
@@ -327,6 +383,8 @@ export function validateStateUpdate(state, updates) {
       case 'total_phases':
         if (!Number.isFinite(updates.total_phases)) {
           errors.push('total_phases must be a finite number');
+        } else if (Array.isArray(state.phases) && updates.total_phases !== state.phases.length) {
+          errors.push(`total_phases (${updates.total_phases}) does not match phases.length (${state.phases.length})`);
         }
         break;
       case 'project':
@@ -352,22 +410,11 @@ export function validateStateUpdate(state, updates) {
         if (!isPlainObject(updates.evidence)) {
           errors.push('evidence must be an object');
         } else {
-          // M-5: Validate evidence entry structure
-          for (const [id, entry] of Object.entries(updates.evidence)) {
-            if (!isPlainObject(entry)) {
-              errors.push(`evidence["${id}"] must be an object`);
-              continue;
-            }
-            if (typeof entry.scope !== 'string' || entry.scope.length === 0) {
-              errors.push(`evidence["${id}"].scope must be a non-empty string`);
-            }
-          }
+          errors.push(...evidenceEntryErrors(updates.evidence));
         }
         break;
       case 'research':
-        if (updates.research !== null && !isPlainObject(updates.research)) {
-          errors.push('research must be null or an object');
-        }
+        errors.push(...researchErrors(updates.research));
         break;
       default:
         errors.push(`Unknown canonical field: ${key}`);
@@ -467,42 +514,7 @@ export function validateState(state) {
       errors.push('context.remaining_percentage must be a finite number');
     }
   }
-  if (state.research !== null && !isPlainObject(state.research)) {
-    errors.push('research must be null or an object');
-  }
-  if (isPlainObject(state.research) && 'decision_index' in state.research && !isPlainObject(state.research.decision_index)) {
-    errors.push('research.decision_index must be an object');
-  }
-  if (isPlainObject(state.research)) {
-    if ('volatility' in state.research && !['low', 'medium', 'high'].includes(state.research.volatility)) {
-      errors.push('research.volatility must be low|medium|high');
-    }
-    if ('expires_at' in state.research) {
-      if (typeof state.research.expires_at !== 'string' || state.research.expires_at.length === 0) {
-        errors.push('research.expires_at must be a non-empty string');
-      } else if (Number.isNaN(Date.parse(state.research.expires_at))) {
-        errors.push(`research.expires_at must be a valid ISO 8601 date (got "${state.research.expires_at}")`);
-      }
-    }
-    if ('files' in state.research && !Array.isArray(state.research.files)) {
-      errors.push('research.files must be an array');
-    }
-    if (Array.isArray(state.research.files)) {
-      for (const fileName of state.research.files) {
-        if (typeof fileName !== 'string' || fileName.length === 0) {
-          errors.push('research.files entries must be non-empty strings');
-          break;
-        }
-      }
-    }
-    if ('sources' in state.research) {
-      validateResearchSourcesArray(state.research.sources, errors, 'research.sources');
-    }
-    if ('decision_index' in state.research) {
-      const decisionIndexValidation = validateResearchDecisionIndex(state.research.decision_index);
-      errors.push(...decisionIndexValidation.errors.map((error) => `research.${error}`));
-    }
-  }
+  errors.push(...researchErrors(state.research));
   if (state.current_task !== null && typeof state.current_task !== 'string') {
     errors.push('current_task must be a string or null');
   }
@@ -518,17 +530,7 @@ export function validateState(state) {
   if (!isPlainObject(state.evidence)) {
     errors.push('evidence must be an object');
   } else {
-    // M-5: Validate evidence entry structure
-    for (const [id, entry] of Object.entries(state.evidence)) {
-      if (!isPlainObject(entry)) {
-        errors.push(`evidence["${id}"] must be an object`);
-        continue;
-      }
-      if (typeof entry.scope !== 'string' || entry.scope.length === 0) {
-        errors.push(`evidence["${id}"].scope must be a non-empty string`);
-      }
-      errors.push(...evidenceFieldErrors(entry, `evidence["${id}"]`));
-    }
+    errors.push(...evidenceEntryErrors(state.evidence));
   }
   // M-4: Cross-field check — current_phase ≤ total_phases (skip degenerate 0-phase case)
   if (Number.isFinite(state.current_phase) && Number.isFinite(state.total_phases)
