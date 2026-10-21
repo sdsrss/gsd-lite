@@ -304,6 +304,22 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       }
     }
 
+    // A phase or task patch is merged by its id, so one that is not an object
+    // has nothing to merge by. null threw a TypeError below, which reached the
+    // caller as "Cannot read properties of null", and a string was spread into
+    // a phase of single-character keys for validateState to refuse.
+    if (Array.isArray(updates.phases)) {
+      for (const [i, newPhase] of updates.phases.entries()) {
+        if (!isPlainObject(newPhase)) {
+          return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `phases[${i}] must be an object with an id` };
+        }
+        const j = Array.isArray(newPhase.todo) ? newPhase.todo.findIndex((task) => !isPlainObject(task)) : -1;
+        if (j !== -1) {
+          return { error: true, code: ERROR_CODES.INVALID_INPUT, message: `phases[${i}].todo[${j}] must be an object with an id` };
+        }
+      }
+    }
+
     // Validate lifecycle transitions before merging
     if (updates.phases && Array.isArray(updates.phases)) {
       for (const newPhase of updates.phases) {
