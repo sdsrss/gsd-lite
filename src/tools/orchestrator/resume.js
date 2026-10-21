@@ -1,4 +1,4 @@
-import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask } from '../state/index.js';
+import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask, workflowModeForReview } from '../state/index.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 import { getGitHead, getGsdDir, getProjectRoot } from '../../utils.js';
 import { join } from 'node:path';
@@ -298,7 +298,10 @@ async function resumeAwaitingClear(state, basePath, _depth = 0) {
     };
   }
 
-  const updates = { workflow_mode: 'executing_task' };
+  // Back to what the /clear interrupted. Persisting executing_task dropped an
+  // interrupted review — the next task was dispatched instead — and cleared an
+  // awaiting_user hold the user had not answered.
+  const updates = { workflow_mode: workflowModeForReview(state.current_review) };
   if (health !== null) {
     updates.context = {
       ...state.context,
@@ -872,11 +875,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           success: true,
           action: 'await_manual_intervention',
           workflow_mode: state.workflow_mode,
-          resume_to: state.current_review?.scope === 'phase'
-            ? 'reviewing_phase'
-            : state.current_review?.scope === 'task'
-              ? 'reviewing_task'
-              : 'executing_task',
+          resume_to: workflowModeForReview(state.current_review),
           current_review: state.current_review || null,
           current_task: state.current_task || null,
           message: 'Project is paused. Confirm to resume execution.',

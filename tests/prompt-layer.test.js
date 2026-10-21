@@ -219,6 +219,19 @@ describe('prompt layer — commands', () => {
     }
   });
 
+  it('resuming a paused project writes the resume_to the server reports', () => {
+    // Both texts said to write executing_task, which dropped a review that was
+    // in progress when the project was paused; resume_to is the mode the
+    // saved current_review belongs to (tests/interrupted-review-return.test.js).
+    const resume = section(read('commands/resume.md'), '### `paused_by_user`');
+    const row = read('workflows/execution-flow.md').split('\n').find((l) => l.startsWith('| `paused_by_user` |')) ?? '';
+    assert.ok(row, 'premise: the action table has no paused_by_user row');
+    for (const [where, text] of [['commands/resume.md', resume], ['execution-flow.md', row]]) {
+      assert.match(text, /`resume_to`|resume_to\b/, `${where} does not resume to resume_to: ${text}`);
+      assert.doesNotMatch(text, /workflow_mode = executing_task|workflow_mode: "executing_task"/, `${where} still resumes a paused project to executing_task`);
+    }
+  });
+
   it('no command wraps its rules in a pressure tag (token check)', () => {
     // The orchestration rules have reasons; the tag only raised the volume.
     const offenders = mdFiles('commands').filter((f) => read(f).includes('EXTREMELY-IMPORTANT'));

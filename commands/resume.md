@@ -100,7 +100,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 - 上下文已通过 /clear 清理
 - 再次验证上下文健康度 ≥ 40%，不足则要求再次 /clear
-- 验证通过后从 `current_phase` + `current_task` 恢复调度
+- 验证通过后服务端恢复到 /clear 之前的模式：被打断的审查回到审查，调试中的回到执行，等你决定的 hold 回到 `awaiting_user`，其余从 `current_phase` + `current_task` 继续调度。按响应里的 `action` 走
 
 ---
 
@@ -120,7 +120,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 - 展示当前进度摘要 (从 canonical fields 推导)
 - 询问用户: "项目已暂停。是否继续执行？"
-- 用户确认 → 更新 `workflow_mode = executing_task` → 恢复调度
+- 用户确认 → `state-update` 把 `workflow_mode` 设为响应里的 `resume_to` (暂停前的模式；一律写 `executing_task` 会丢掉暂停时进行中的审查) → 恢复调度
 - 用户拒绝 → 保持暂停状态
 
 ---

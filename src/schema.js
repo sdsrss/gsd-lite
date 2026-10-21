@@ -44,7 +44,7 @@ const WORKFLOW_TRANSITIONS_BASE = {
   reviewing_task:           ['executing_task', 'reviewing_phase', 'awaiting_clear', 'paused_by_user', 'failed'],
   reviewing_phase:          ['executing_task', 'awaiting_clear', 'paused_by_user', 'completed', 'failed'],
   awaiting_user:            ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user', 'awaiting_clear', 'planning'],
-  awaiting_clear:           ['executing_task', 'paused_by_user'],
+  awaiting_clear:           ['executing_task', 'reviewing_task', 'reviewing_phase', 'paused_by_user'],
   paused_by_user:           ['executing_task', 'awaiting_clear', 'reviewing_task', 'reviewing_phase'],
   reconcile_workspace:      ['executing_task', 'paused_by_user'],
   replan_required:          ['executing_task', 'paused_by_user'],
