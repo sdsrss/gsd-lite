@@ -62,6 +62,18 @@ const SHAPES = [
     setup: (dir) => checkpointTask(dir, 1, '1.1'),
   },
   {
+    // R-03: no preflight override may clear this hold. The guard only looked
+    // at awaiting_user, so set aside by a /clear or a pause, a drift flag
+    // raised meanwhile replaced it (pre-tag review).
+    label: 'an L3 task held for human confirmation, with a drift flag raised meanwhile',
+    mode: 'awaiting_user',
+    review: { scope: 'task', scope_id: '1.1', stage: 'human_confirmation', pending_tasks: ['1.1'], security_implications: [] },
+    setup: async (dir) => {
+      await checkpointTask(dir, 1, '1.1');
+      await update({ updates: { phases: [{ id: 1, phase_handoff: { direction_ok: false } }] }, basePath: dir });
+    },
+  },
+  {
     label: 'a phase review out of retries',
     mode: 'awaiting_user',
     review: { scope: 'phase', scope_id: 1, stage: 'review_retry_exhausted', retry_count: 6 },
