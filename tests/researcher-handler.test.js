@@ -10,6 +10,7 @@ import { handleResearcherResult } from '../src/tools/orchestrator/index.js';
 function makeValidResearcherResult(overrides = {}) {
   return {
     decision_ids: ['decision:jwt'],
+    blocked: false,
     volatility: 'low',
     expires_at: '2027-01-01T00:00:00Z',
     sources: [{ id: 'src-1', type: 'documentation', ref: 'https://example.com/jwt' }],

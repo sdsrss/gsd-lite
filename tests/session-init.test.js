@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, lstatSync, readFileSync, symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -368,12 +368,20 @@ describe('session init starts the updater able to use a proxy', () => {
     assert.deepEqual(await spawnedEnv({}, { proxy: 'http://127.0.0.1:9', throttled: true }), { value: null, refused: null });
   });
 
-  // Started with the switch on, Node exits before running a line on each of
-  // these, and the updater recorded nothing, every session. Found across two
-  // pre-tag reviews; the second list is the one a restated parser missed.
+  // Started with the switch on, Node exits before running a line on a value
+  // it refuses, and the updater recorded nothing, every session. These were
+  // found across two pre-tag reviews. Which of them a Node refuses changes
+  // between its versions (socks5:// did within 24.x), so each is checked
+  // against this Node's own answer rather than a list of Node's rules.
+  const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(https?|all|no)_proxy$/i.test(k) && k !== 'NODE_USE_ENV_PROXY'));
+  const refusedHere = (proxy) => spawnSync(process.execPath, ['-e', ''], { env: { ...cleanEnv, HTTPS_PROXY: proxy, NODE_USE_ENV_PROXY: '1' }, stdio: 'ignore' }).status !== 0;
+  it('premise: a value without a scheme is refused by every Node that reads the switch', { skip: !reads && 'this Node does not read NODE_USE_ENV_PROXY' }, () => {
+    assert.equal(refusedHere('proxy.corp:3128'), true);
+  });
   for (const proxy of ['proxy.corp:3128', 'socks5h://127.0.0.1:1080', 'http://user:p%ss@127.0.0.1:9', 'http://127.0.0.1:9/proxy', 'http://127.0.0.1:9/?x=1', 'http://127.0.0.1:9/#frag']) {
-    it(`does not turn it on for a proxy Node refuses (${proxy})`, async () => {
-      assert.deepEqual(await spawnedEnv({}, { proxy }), { value: null, refused: reads ? '1' : null });
+    it(`turns it on only if this Node starts with it (${proxy})`, async () => {
+      const refused = reads && refusedHere(proxy);
+      assert.deepEqual(await spawnedEnv({}, { proxy }), { value: reads && !refused ? '1' : null, refused: refused ? '1' : null });
     });
   }
 
@@ -386,7 +394,9 @@ describe('session init starts the updater able to use a proxy', () => {
 
 // The real updater, started by the real hook, records a check for every proxy
 // value — the property the list above stands for. A version far ahead of any
-// release keeps it from installing anything.
+// release keeps it from installing anything. fetch is replaced by a preload
+// that fails at once: a value Node refuses routes the check direct, and
+// without the stub that was a real request to api.github.com from the suite.
 describe('the updater session-init starts records a check whatever the proxy value', () => {
   for (const proxy of ['http://127.0.0.1:9', 'proxy.corp:3128', 'http://user:p%ss@127.0.0.1:9', 'http://127.0.0.1:9/proxy']) {
     it(proxy, async () => {
@@ -402,12 +412,15 @@ describe('the updater session-init starts records a check whatever the proxy val
         cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
         cpSync(AUTO_UPDATE, join(claudeDir, 'hooks', 'gsd-auto-update.cjs'));
         cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
-        const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, HTTPS_PROXY: proxy };
+        const offline = join(root, 'offline-fetch.cjs');
+        await writeFile(offline, "globalThis.fetch = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }); };\n");
+        const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, HTTPS_PROXY: proxy, NODE_OPTIONS: `--require=${offline}` };
         for (const key of ['NODE_USE_ENV_PROXY', 'PLUGIN_AUTO_UPDATE', 'https_proxy', 'http_proxy', 'HTTP_PROXY', 'no_proxy', 'NO_PROXY', 'GSD_TEST_PLUGIN_ROOT']) delete env[key];
         execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], { cwd: root, env, encoding: 'utf8', timeout: 8000 });
         for (let i = 0; i < 200 && !existsSync(statePath); i++) await new Promise((r) => setTimeout(r, 50));
         const state = JSON.parse(await readFile(statePath, 'utf8'));
         assert.ok(state.lastCheck, `a check was recorded: ${JSON.stringify(state)}`);
+        assert.match(state.checkFailure?.reason ?? '', /^ECONNREFUSED/, 'the check ran offline, on the stub');
       } finally {
         // The detached updater may still be finishing its write.
         for (let i = 0; i < 40 && existsSync(join(claudeDir, 'gsd', 'runtime', 'update-state.lock')); i++) await new Promise((r) => setTimeout(r, 50));

@@ -287,6 +287,7 @@ describe('round3 — full orchestration cycles', () => {
       const res = await mcp.call('orchestrator-handle-researcher-result', {
         result: {
           decision_ids: ['D-arch-01'],
+          blocked: false,
           volatility: 'low',
           expires_at: expiresAt,
           sources: [source],

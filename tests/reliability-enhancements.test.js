@@ -97,6 +97,7 @@ describe('H4: research write atomicity sentinel', () => {
       basePath: tempDir,
       result: {
         decision_ids: ['d1'],
+        blocked: false,
         volatility: 'low',
         expires_at: new Date(Date.now() + 86400000).toISOString(),
         sources: [{ id: 's1', type: 'docs', ref: 'https://example.com' }],

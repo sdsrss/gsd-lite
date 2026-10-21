@@ -105,6 +105,7 @@ describe('reviewer result contract', () => {
 describe('researcher result contract', () => {
   const validResult = {
     decision_ids: ['decision:jwt-rotation'],
+    blocked: false,
     volatility: 'medium',
     expires_at: '2099-03-16T10:30:00Z',
     sources: [{ id: 'src1', type: 'Context7', ref: 'docs' }],

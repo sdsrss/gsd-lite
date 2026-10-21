@@ -201,6 +201,7 @@ describe('server tool handling', () => {
         basePath: tempDir,
         result: {
           decision_ids: ['decision:jwt-rotation'],
+          blocked: false,
           volatility: 'medium',
           expires_at: '2099-03-16T10:30:00Z',
           sources: [{ id: 'src1', type: 'Context7', ref: 'Next.js auth docs' }],
