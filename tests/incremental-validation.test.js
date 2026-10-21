@@ -644,4 +644,44 @@ describe('update() never writes a state that validateState refuses', () => {
     assert.equal(res.error, true, JSON.stringify(res));
     assert.match(res.message, /passed must be a boolean/);
   });
+
+  // The property above skips a throw, since a throw writes nothing. Over MCP
+  // a throw still reaches the caller, as "Tool execution failed: Cannot read
+  // properties of null (reading 'id')", which names neither the field nor
+  // the entry. Asked of every canonical field.
+  it('answers every malformed update with an error instead of throwing', async () => {
+    const statePath = join(dir, '.gsd', 'state.json');
+    const entries = [null, 0, 'x', [], true];
+    const PATCHES = {
+      phases: [...entries.map((entry) => [entry]), ...entries.map((entry) => [{ id: 1, todo: [entry] }]), [{ id: 2, todo: [null] }]],
+    };
+    const thrown = [];
+    for (const field of CANONICAL_FIELDS) {
+      for (const value of [...GENERIC, ...(PATCHES[field] ?? [])]) {
+        await writeFile(statePath, original);
+        try {
+          await update({ updates: { [field]: value }, basePath: dir });
+        } catch (err) {
+          thrown.push(`${field} = ${JSON.stringify(value)}: ${err.message}`);
+        }
+      }
+    }
+    assert.deepEqual(thrown, []);
+  });
+
+  for (const [label, phases, where] of [
+    ['a phase', [null], 'phases[0]'],
+    ['a task', [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }, null] }], 'phases[0].todo[1]'],
+    ['a task in a new phase', [{ id: 2, todo: ['x'] }], 'phases[0].todo[0]'],
+  ]) {
+    it(`refuses ${label} patch that is not an object, naming the entry and writing nothing`, async () => {
+      const statePath = join(dir, '.gsd', 'state.json');
+      await writeFile(statePath, original);
+      const res = await update({ updates: { phases }, basePath: dir });
+      assert.equal(res.code, 'INVALID_INPUT', JSON.stringify(res));
+      assert.ok(res.message.includes(`${where} must be an object`), res.message);
+      assert.equal(await readFile(statePath, 'utf8'), original);
+    });
+  }
+
 });
