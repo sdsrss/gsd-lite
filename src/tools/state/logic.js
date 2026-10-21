@@ -8,6 +8,7 @@ import {
   DEP_GATES,
   TASK_LIFECYCLE,
   isDepGateAllowed,
+  nextSuspendedModes,
   validateResearchArtifacts,
   validateResearchDecisionIndex,
   validateResearcherResult,
@@ -677,6 +678,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
 
     if (state.workflow_mode === 'research_refresh_needed') {
       const resumed = inferWorkflowModeAfterResearch(state, { invalidated: invalidated.length > 0 });
+      state.suspended_modes = nextSuspendedModes(state.suspended_modes, state.workflow_mode, resumed.workflow_mode);
       state.workflow_mode = resumed.workflow_mode;
       state.current_review = resumed.current_review;
     }

@@ -24,9 +24,13 @@ const MAX_PHASE_REVIEW_RETRY = 5;
 // which then resumed execution. Any mode not listed waits until the project is
 // back to executing, and a mode added later is left alone by default.
 const REFRESH_MODES = ['executing_task', 'reviewing_task', 'reviewing_phase', 'research_refresh_needed'];
-// The modes an awaiting_user hold can be carried in: itself, and the two that
-// set the workflow aside and restore it from current_review.
-const HOLD_CARRIER_MODES = ['awaiting_user', 'awaiting_clear', 'paused_by_user'];
+// The modes preflight may override: the ones about to execute or review, and
+// the three holds whose own handling expects the check to run again
+// (reconcile_workspace's branch in resume.js relies on it, see M10 there).
+// Named as the set allowed, like REFRESH_MODES: any mode not listed — a
+// pause, planning, a decision owed, a /clear — waits until it is back to
+// work, and a mode added later is left alone by default.
+const PREFLIGHT_MODES = ['executing_task', 'reviewing_task', 'reviewing_phase', 'reconcile_workspace', 'replan_required', 'research_refresh_needed'];
 
 // R-17: the former RESULT_CONTRACTS reference block was embedded in dispatch
 // responses as `result_contract` and then unconditionally stripped by the server
@@ -134,17 +138,21 @@ async function evaluatePreflight(state, basePath) {
     return { override: null };
   }
 
-  // R-03 (audit H3): an active L3 human-confirmation hold must be resolved by an
-  // explicit user confirm/reject (handled before preflight in resume). No
-  // preflight hint (dirty-phase rollback, research expiry, drift, git/plan
-  // reconcile) may override it — an override persists current_review: null,
-  // silently clearing the hold and leaving the L3 task re-sweepable into a
-  // later phase review with no gate. Mirrors the skipDirectionDrift guard below.
-  // The hold is as active while a /clear or a pause has set it aside, and
-  // either one restores it (workflowModeForReview); looking only at
-  // awaiting_user let a drift or HEAD check replace it there.
-  if (HOLD_CARRIER_MODES.includes(state.workflow_mode)
-      && state.current_review?.stage === 'human_confirmation') {
+  // Nothing here may override a mode in which somebody owes an answer, or one
+  // that resume is about to leave for the mode it interrupted (PREFLIGHT_MODES
+  // names the ones it may). Every override
+  // persists a new workflow_mode, and a dirty-phase rollback also writes
+  // executing_task and current_review: null — which unpaused a paused project,
+  // ended a plan revision, and cleared a decision held in awaiting_user (an L3
+  // confirmation, exhausted review retries), all server-side. Each of these
+  // returns to work by its own path, and the next resume checks then:
+  //   paused_by_user  — the user said stop; nothing changes until they resume
+  //   planning        — the plan files are being edited; that is not drift
+  //   awaiting_user   — the decision comes first (R-03: an L3 confirmation
+  //                     cleared by an override left the task re-sweepable
+  //                     into a later phase review with no gate)
+  //   awaiting_clear  — resume restores the interrupted mode and resumes again
+  if (!PREFLIGHT_MODES.includes(state.workflow_mode)) {
     return { override: null };
   }
 
@@ -212,28 +220,24 @@ async function evaluatePreflight(state, basePath) {
     }
   }
 
-  const skipDirectionDrift = state.workflow_mode === 'awaiting_user'
-    && state.current_review?.stage === 'direction_drift';
-  if (!skipDirectionDrift) {
-    const driftPhase = getDirectionDriftPhase(state);
-    if (driftPhase) {
-      hints.push({
+  const driftPhase = getDirectionDriftPhase(state);
+  if (driftPhase) {
+    hints.push({
+      workflow_mode: 'awaiting_user',
+      action: 'awaiting_user',
+      updates: {
         workflow_mode: 'awaiting_user',
-        action: 'awaiting_user',
-        updates: {
-          workflow_mode: 'awaiting_user',
-          current_task: null,
-          current_review: {
-            scope: 'phase',
-            scope_id: driftPhase.id,
-            stage: 'direction_drift',
-            summary: `Direction drift detected for phase ${driftPhase.id}`,
-          },
+        current_task: null,
+        current_review: {
+          scope: 'phase',
+          scope_id: driftPhase.id,
+          stage: 'direction_drift',
+          summary: `Direction drift detected for phase ${driftPhase.id}`,
         },
-        drift_phase: { id: driftPhase.id, name: driftPhase.name },
-        message: `Direction drift detected for phase ${driftPhase.id}; user decision required before resuming`,
-      });
-    }
+      },
+      drift_phase: { id: driftPhase.id, name: driftPhase.name },
+      message: `Direction drift detected for phase ${driftPhase.id}; user decision required before resuming`,
+    });
   }
 
   // Dirty-phase detection — rollback current_phase to earliest phase

@@ -1,4 +1,4 @@
-import { ERROR_CODES, phaseReviewSatisfied, read, selectRunnableTask, workflowModeForReview } from '../state/index.js';
+import { ERROR_CODES, phaseReviewSatisfied, read, resumeTarget, selectRunnableTask } from '../state/index.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 import { getGitHead, getGsdDir, getProjectRoot } from '../../utils.js';
 import { join } from 'node:path';
@@ -298,10 +298,11 @@ async function resumeAwaitingClear(state, basePath, _depth = 0) {
     };
   }
 
-  // Back to what the /clear interrupted. Persisting executing_task dropped an
-  // interrupted review — the next task was dispatched instead — and cleared an
-  // awaiting_user hold the user had not answered.
-  const updates = { workflow_mode: workflowModeForReview(state.current_review) };
+  // Back to what the /clear interrupted (suspended_modes). Persisting
+  // executing_task dropped an interrupted review — the next task was
+  // dispatched instead — cleared an awaiting_user hold the user had not
+  // answered, and resumed a paused project outright.
+  const updates = { workflow_mode: resumeTarget(state) };
   if (health !== null) {
     updates.context = {
       ...state.context,
@@ -521,6 +522,12 @@ async function resumeExecutingTask(state, basePath, projectRoot) {
     message: 'No runnable task found in current phase',
   };
 }
+
+// The holds the orchestrator releases with its own state-update, by the
+// action table (workflows/execution-flow.md): it needs to be told where to.
+// awaiting_clear is released by resume itself; awaiting_user by the decision
+// it is waiting on.
+const SELF_RELEASED_HOLDS = ['paused_by_user', 'reconcile_workspace', 'replan_required', 'research_refresh_needed'];
 
 async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_tasks, confirm_review, recovery } = {}) {
   if (_depth >= MAX_RESUME_DEPTH) {
@@ -875,7 +882,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           success: true,
           action: 'await_manual_intervention',
           workflow_mode: state.workflow_mode,
-          resume_to: workflowModeForReview(state.current_review),
+          resume_to: resumeTarget(state),
           current_review: state.current_review || null,
           current_task: state.current_task || null,
           message: 'Project is paused. Confirm to resume execution.',
@@ -962,6 +969,15 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           message: `workflow_mode "${state.workflow_mode}" is not yet supported by the orchestrator skeleton`,
         };
     }
+  }
+
+  // A hold the orchestrator releases itself says where to: the mode it
+  // interrupted, which the release writes back. Read fresh, since a preflight
+  // override may have just entered the hold. Writing executing_task instead
+  // is what dropped interrupted reviews, plan revisions and pauses.
+  if (result?.success && result.resume_to === undefined && SELF_RELEASED_HOLDS.includes(result.workflow_mode)) {
+    const fresh = await read({ basePath });
+    if (!fresh.error && fresh.workflow_mode === result.workflow_mode) result.resume_to = resumeTarget(fresh);
   }
 
   // Attach display-ready summary to all successful responses

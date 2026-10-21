@@ -2,7 +2,11 @@
 
 import { join, dirname } from 'node:path';
 import { isPlainObject, readJson, withFileLock } from '../../utils.js';
-import { migrateState } from '../../schema.js';
+import { migrateState, workflowModeForReview } from '../../schema.js';
+
+// Moved to schema.js, which validates transitions with them; re-exported so
+// the state module's callers keep one import.
+export { resumeTarget, workflowModeForReview } from '../../schema.js';
 
 export const RESEARCH_FILES = ['STACK.md', 'ARCHITECTURE.md', 'PITFALLS.md', 'SUMMARY.md'];
 export const MAX_EVIDENCE_ENTRIES = 200;
@@ -121,28 +125,6 @@ export async function loadState(statePath) {
     return { error: { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: CORRUPT_STATE_MESSAGE } };
   }
   return { state: migrateState(result.data) };
-}
-
-// The stages a review in progress carries (agents/reviewer.md); a phase review
-// may carry none. Any other stage is a hold the user owes a decision on
-// (human_confirmation, review_retry_exhausted, direction_drift, and whatever
-// is added later), so it is this list that is named, not the holds.
-const REVIEW_STAGES = ['spec', 'quality'];
-
-/**
- * The workflow_mode a saved current_review belongs to. Three paths set the
- * mode aside and come back to it from current_review alone: a /clear
- * (awaiting_clear), a pause (paused_by_user's resume_to) and a research
- * refresh. Each worked it out on its own: the /clear path dropped an
- * interrupted review and dispatched the next task, a pause while debugging
- * reported resume_to: reviewing_task, and only the refresh read the stage.
- */
-export function workflowModeForReview(review) {
-  if (!review || review.stage === 'debugging') return 'executing_task';
-  if (review.stage != null && !REVIEW_STAGES.includes(review.stage)) return 'awaiting_user';
-  if (review.scope === 'phase') return 'reviewing_phase';
-  if (review.scope === 'task') return 'reviewing_task';
-  return 'executing_task';
 }
 
 /**
