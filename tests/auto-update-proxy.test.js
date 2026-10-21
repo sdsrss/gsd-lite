@@ -295,8 +295,8 @@ describe('repeated check failures are recorded and announced', () => {
     };
   }
 
-  const check = (updater, latest) => updater.checkForUpdate({
-    force: true, install: false, notify: true,
+  const check = (updater, latest, { notify = true } = {}) => updater.checkForUpdate({
+    force: true, install: false, notify,
     fetchLatestRelease: async () => latest,
     getCurrentVersion: () => '0.3.0',
   });
@@ -340,6 +340,41 @@ describe('repeated check failures are recorded and announced', () => {
     } finally {
       await ctx.cleanup();
     }
+  });
+
+  // `gsd update --force` checks without notifying. Its failure counts toward
+  // the streak but does not stand for the notice nobody was shown.
+  it('a failure nobody was told about does not use up the notice', async () => {
+    const ctx = await manualInstall();
+    try {
+      const failure = { error: 'ECONNREFUSED' };
+      await check(ctx.updater, failure);
+      await check(ctx.updater, failure);
+      await check(ctx.updater, failure, { notify: false });
+      assert.equal(await ctx.notification(), null, 'premise: the third failure was the CLI\'s');
+      await check(ctx.updater, failure);
+      assert.equal((await ctx.notification())?.count, 4, 'the next background check announces it');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  // Within a day of the last check `gsd update` is throttled; it used to say
+  // only that, with the failure on record unmentioned.
+  it('a throttled gsd update still says the last check failed and why', async () => {
+    const ctx = await manualInstall();
+    const lines = [];
+    const log = console.log;
+    try {
+      await check(ctx.updater, { error: 'HTTP 502' });
+      console.log = (...args) => lines.push(args.join(' '));
+      await ctx.updater.checkForUpdate({ install: false, verbose: true, fetchLatestRelease: async () => assert.fail('throttled'), getCurrentVersion: () => '0.3.0' });
+    } finally {
+      console.log = log;
+      await ctx.cleanup();
+    }
+    assert.ok(lines.some((l) => l.startsWith('Throttled')), JSON.stringify(lines));
+    assert.ok(lines.includes('The last check failed (1 in a row): HTTP 502'), JSON.stringify(lines));
   });
 
   it('says why in verbose mode, which is what gsd update prints', async () => {
