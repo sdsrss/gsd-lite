@@ -2,6 +2,73 @@
 
 All notable changes to this project are documented here.
 
+## [0.17.2] - 2026-10-21
+
+Patch: the update check works behind a proxy and says why when it fails,
+auto-update stops writing Claude Code's plugin cache, and a refused state
+write leaves nothing behind. One call that used to be accepted is now refused;
+it is listed under **Now refused** at the end.
+
+- **The update check goes through the proxy set in the environment.** Node's
+  `fetch` ignores `HTTPS_PROXY` / `HTTP_PROXY` unless it is told to use them,
+  so behind a mandatory proxy every check timed out after 3 seconds and
+  recorded nothing: an install could stay on an old version for weeks without
+  a word. The check started at SessionStart now runs with
+  `NODE_USE_ENV_PROXY=1` when a proxy variable is set, you have not set
+  `NODE_USE_ENV_PROXY` yourself, and this Node accepts the value (it is asked
+  by starting Node with it; a value Node refuses, such as `host:port` without
+  a scheme or `socks5h://`, is not passed on, since Node would exit before
+  the check ran). `gsd update` turns the proxy on in-process on Node 24.14+ /
+  25.4+. Node 20, and Node 22 before 22.21, have no way for `fetch` to use a
+  proxy; there the failure reason says so.
+
+- **A failing update check says why.** `update-state.json` keeps the failure
+  streak: when it started, how many checks in a row failed, and the reason,
+  built only from an error code, an HTTP status, a timeout or the proxy route
+  (never the raw error, which can carry a proxy password). From the third
+  failure in a row SessionStart shows one line with the reason, then every
+  seventh failure after that; a successful check clears it. A throttled
+  `gsd update` names the last failure, and `/gsd:doctor` reads the streak
+  from the third failure on.
+
+- **Auto-update no longer writes Claude Code's plugin cache.** On a plugin
+  install it says to run `claude plugin update`, as it already did on most
+  paths; the one path that still ran `npm install` into
+  `plugins/cache/gsd/` and rewrote `installed_plugins.json` (`gsd update
+  --force` from a git checkout with the plugin installed) is gone. In that
+  same case the updater took the checkout for a dev install and ran
+  `install.js`, which deleted older cache versions and cleared `.orphaned_at`;
+  it reads the plugin registry first now, the way `install.js` does.
+
+- **A refused state write leaves no evidence archive behind.** When the
+  evidence store was full, `state-update` and `phase-complete` moved old
+  entries to `evidence-archive.json` before validating the write, so a write
+  that was then refused still wrote the archive, and repeating it pushed
+  entries that had really been archived out of the capped file. The archive
+  is written only after the write validates, just before `state.json`.
+
+- **A SessionStart notice prints a version only if it is one.** The update
+  notices matched their version fields by prefix, so a value that only began
+  like a version printed the rest, newlines included, into the session.
+
+- **Docs.** The README says the update check uses the environment's proxy and
+  reports failures. `references/evidence-spec.md` describes the archive as
+  written after validation, capped at 1000 entries.
+
+- **Internal:** `scripts/gate-replay.js` reads each test's result rather than
+  the summary counts. A test cancelled because a hook failed, a test behind a
+  failing top-level `before`, and a todo or skipped test are no result; a
+  test or suite that timed out is a failure; a `describe` that threw
+  registered no tests. It used to call replays with cancelled tests VACUOUS,
+  and one with a failing todo DISCRIMINATIVE. The replay tree's
+  `node_modules` is a real directory, so `install.js`'s copy into it works.
+
+- **Now refused.** Accepted by 0.17.1:
+  - A phase patch whose `phase_review` or `phase_handoff` is not an object
+    (`null` included): `INVALID_INPUT` naming the field. 0.17.1 accepted
+    `null`, and spread a string into the field (`"ok"` became
+    `{"0":"o","1":"k",…}`).
+
 ## [0.17.1] - 2026-10-21
 
 Patch: fixes for what 0.17.0's pre-tag reviews left open, for states and
