@@ -121,12 +121,17 @@ function updaterEnv(env = process.env, { version = process.versions.node, due = 
   if (!PROXY_VARS.some((key) => env[key]) || env.NODE_USE_ENV_PROXY !== undefined || !nodeReadsProxyEnvAtStartup(version) || !due()) {
     return env;
   }
-  return probe(env) ? { ...env, NODE_USE_ENV_PROXY: '1' } : { ...env, GSD_PROXY_ENV_REFUSED: '1' };
+  const accepted = probe(env);
+  if (accepted === null) return env;
+  return accepted ? { ...env, NODE_USE_ENV_PROXY: '1' } : { ...env, GSD_PROXY_ENV_REFUSED: '1' };
 }
 
-function nodeAcceptsProxyEnv(env) {
-  const started = spawnSync(process.execPath, ['-e', ''], { env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'ignore', timeout: 3000 });
-  return started.status === 0;
+// true: Node starts with the switch on; false: it exits with an error;
+// null: no answer in time. Node refuses a value only after its preloads have
+// run, so a slow start is not a refusal, and is not read as one.
+function nodeAcceptsProxyEnv(env, { timeout = 3000 } = {}) {
+  const started = spawnSync(process.execPath, ['-e', ''], { env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'ignore', timeout });
+  return started.status === null ? null : started.status === 0;
 }
 
 /** Would the updater check now, rather than exit at once? */
@@ -853,6 +858,7 @@ module.exports = {
   compareVersions,
   describeFetchFailure,
   envProxyRoute,
+  nodeAcceptsProxyEnv,
   nodeReadsProxyEnvAtStartup,
   updaterEnv,
   requiresSignature,
