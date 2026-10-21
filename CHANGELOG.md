@@ -5,10 +5,11 @@ All notable changes to this project are documented here.
 ## [0.17.1] - 2026-10-21
 
 Patch: fixes for what 0.17.0's pre-tag reviews left open, for states and
-results the server mishandled, and two network requests every install made
-for nothing. **Nothing here changes what the tools do for a project that was
-already working.** One thing to know if you used 0.17.0's `state-update` to
-write research by hand: see the second point.
+results the server mishandled, and registry requests that runtime dependency
+installs made for nothing. A project on the documented path sees no change but
+the fixes. Calls that used to be accepted and are now refused, and error codes
+that changed, are listed under **Now refused** at the end. If you used 0.17.0's
+`state-update` to write research by hand, read the second point.
 
 - **Leaving a review and coming back returns to the review.** A `/clear` while
   a task was under review resumed by dispatching the *next* task, and the
@@ -18,8 +19,11 @@ write research by hand: see the second point.
   return out from `current_review` the same way: a review in progress comes back
   as that review, debugging as execution, and a hold that is waiting on you
   (an L3 confirmation, exhausted review retries, direction drift) as
-  `awaiting_user`. An L3 confirmation carried through a `/clear` or a pause is no
-  longer overridden by a plan or HEAD change found on resume. Resolving a
+  `awaiting_user`. One exception: a refresh that sends tasks back for
+  revalidation drops the interrupted review, since what it reviewed may have to
+  be redone. `awaiting_clear` may now go straight to `reviewing_task` and
+  `reviewing_phase`. An L3 confirmation carried through a `/clear` or a pause is
+  no longer overridden by a plan or HEAD change found on resume. Resolving a
   direction drift with `phase-complete` (`direction_ok: true`) on a phase that is
   not the last one now ends the hold; it used to stay, and every resume reported
   the drift again.
@@ -29,35 +33,57 @@ write research by hand: see the second point.
   decision entry of `null`, a `decision_index` that is not an object, an evidence
   `passed` that is not a boolean, a `total_phases` that disagrees with the plan),
   after which every write validated in full failed on it. Those are refused now,
-  and every answer is checked against the full validator. A state already holding
-  such research gets an error that ends with the way out, `state-update`
-  (`research: null`), which discards the record (tasks' `research_basis` then no
-  longer resolves). A research refresh over such a record replaces it instead of
-  throwing. A phase or task patch that is not an object (`phases: [null]`), a
-  phase patch without a numeric id, and evidence that is not an object are
-  refused naming the entry; several of these used to crash the tool call with
-  a message that named neither.
+  and the fast path's answer is checked against the full validator. A state
+  already holding such research gets an error that ends with the way out,
+  `state-update` (`research: null`), which discards the record (tasks'
+  `research_basis` then no longer resolves). A research refresh over such a
+  record replaces it instead of throwing. A `null` phase or task patch, a phase
+  id such as `"("`, and a `null` evidence entry once the evidence store is full
+  used to crash the tool call with a message that named neither field nor
+  entry; they are refused naming it now.
 
 - **Research on record is not replaced by a refresh that found nothing.** A
-  refresh result with no decisions, or the researcher's `[BLOCKED]` fallback
-  written with a leading space, in lower case, bold, in full-width brackets and
-  the like, was stored over real research: every decision on record was replaced
-  and the tasks citing them were sent back. Both are refused now and the research
-  stays; the refusal names how to retry or give the research up.
+  refresh result with no decisions was stored over real research, replacing
+  every decision on record and sending the tasks citing them back; so was the
+  researcher's `[BLOCKED]` fallback whenever it was not written exactly that way.
+  Both are refused now and the research stays; the refusal names how to retry or
+  give the research up. The fallback is recognised behind whitespace, zero-width
+  characters, `*`, `_` or backticks, in any case, in full-width or lenticular
+  brackets, and with spaces inside the brackets. Other drift (a list marker in
+  front, `BLOCKED:` without brackets, round brackets) is still read as a
+  conclusion. The tool description of `orchestrator-handle-researcher-result`
+  now says a result with no decisions is refused too.
 
-- **Installs make two kinds of registry request fewer.** The runtime dependency
-  install in `install.js` (with a lockfile), the plugin launcher's first-start
-  install and auto-update's cache install asked the registry for a security audit
-  whose output nobody saw. It was the only request a cached `npm ci` made, and a
-  slow proxy could hold it past the 60 s the launcher allows the MCP server to
-  start. They now pass `--no-audit --no-fund`, like install.js's other branch
-  already did. The runtime `package.json` written to `~/.claude/gsd/` no longer
-  lists devDependencies, which an npx install resolved for nothing: 11 of its
-  nested install's 13 registry requests. The installed dependencies are the same.
+- **Runtime dependency installs skip requests nobody needed.** The install in
+  `install.js` when a lockfile is present, the plugin launcher's first-start
+  install and auto-update's plugin-cache install asked the registry for a
+  security audit whose output nobody saw. It was the only request a cached
+  `npm ci` made, and a slow proxy could hold the launcher's install past the
+  60 s it allows before the MCP server gives up starting. All three now pass
+  `--no-audit --no-fund`, as `install.js`'s other branch already did. The
+  runtime `package.json` written to `~/.claude/gsd/` no longer lists
+  devDependencies, which an npx install resolved for nothing: 11 registry
+  requests for biome's metadata. The installed dependencies are the same.
+  Auto-update's plugin-cache install still resolves them.
 
 - **Docs.** `workflows/research.md` no longer lists two "expire immediately"
-  triggers that nothing implemented; `commands/resume.md` and the state diagram
-  describe the returns above.
+  triggers that nothing implemented. `commands/resume.md`,
+  `workflows/execution-flow.md` and the state diagram describe the returns
+  above, and resume a pause to the `resume_to` the server reports.
+
+- **Now refused.** Each was accepted by 0.17.0, or answered with a different
+  code:
+  - A phase patch that is not an object or has no numeric id (`phases: ["abc"]`,
+    `[{id: "1"}]`, `[{name: "x"}]`): `INVALID_INPUT` naming the entry, where
+    0.17.0 gave `VALIDATION_FAILED` or crashed.
+  - `state-update` writes the full validator refuses, listed in the second
+    point: `VALIDATION_FAILED`.
+  - `phase-complete` while the workflow is in `reviewing_phase` on a phase
+    that is not the last one: `VALIDATION_FAILED`. 0.17.0 completed the phase
+    and left a review of it behind. The documented flow calls `phase-complete`
+    from `executing_task` or a direction-drift hold only.
+  - A researcher summary starting with a bracketed `[blocked]` or `[Blocked]`
+    is now read as the blocked fallback, so over real research it is refused.
 
 ## [0.17.0] - 2026-10-21
 
