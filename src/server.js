@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { init, read, update, phaseComplete, patchPlan } from './tools/state/index.js';
 import { shippedDocPath } from './utils.js';
@@ -48,6 +48,35 @@ const server = new Server(
   { name: 'gsd', version: PKG_VERSION },
   { capabilities: { tools: {} } }
 );
+
+/**
+ * Is this the copy an npx install registered in settings.json, with gsd
+ * switched off by `/plugin disable`? That registration is out of the plugin
+ * system's reach, so it kept serving every tool after the user turned gsd off.
+ * Only the runtime copy at <config>/gsd/ stands down — the plugin's own server
+ * is not started while the plugin is disabled, and a repository checkout is
+ * never one to silence. The helper is shared with the hooks: loaded from the
+ * npx install's hooks/lib, or from beside this file in a checkout or the
+ * plugin; if neither loads, the server serves, as before.
+ */
+function _npxCopyTurnedOff() {
+  const claudeDir = process.env.CLAUDE_CONFIG_DIR || _path.join(_os.homedir(), '.claude');
+  const realish = (p) => { try { return _fs.realpathSync(p); } catch { return p; } };
+  const here = realish(fileURLToPath(import.meta.url));
+  if (!here.startsWith(realish(_path.join(claudeDir, 'gsd')) + _path.sep)) return false;
+  for (const helper of [
+    _path.join(claudeDir, 'hooks', 'lib', 'hook-registry.cjs'),
+    _path.join(_path.dirname(here), '..', 'hooks', 'lib', 'hook-registry.cjs'),
+  ]) {
+    try {
+      return _require(helper).pluginDisabled(claudeDir, process.cwd()) === true;
+    } catch { /* next candidate */ }
+  }
+  return false;
+}
+let _turnedOff;
+const turnedOff = () => (_turnedOff ??= _npxCopyTurnedOff());
+const TURNED_OFF_MESSAGE = 'GSD-Lite is turned off: the gsd plugin is disabled. This server is the copy `npx gsd-lite install` registered, and it serves nothing while the plugin is off. Enable gsd from /plugin to use it.';
 
 const TOOLS = [
   {
@@ -267,7 +296,7 @@ const TOOLS = [
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOLS,
+  tools: turnedOff() ? [] : TOOLS,
 }));
 
 // R-10 (audit M8): whitelist of top-level argument keys each tool declares.
@@ -418,6 +447,9 @@ export async function handleToolCall(name, args) {
 }
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (turnedOff()) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: true, message: TURNED_OFF_MESSAGE }, null, 2) }], isError: true };
+  }
   const { name, arguments: args } = request.params;
   // R-10 (audit M8): sanitize at the external JSON-RPC boundary — strip any
   // undeclared key (notably `basePath`) so a remote caller cannot steer the
