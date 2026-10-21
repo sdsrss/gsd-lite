@@ -100,7 +100,7 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
 
 - 上下文已通过 /clear 清理
 - 再次验证上下文健康度 ≥ 40%，不足则要求再次 /clear
-- 验证通过后服务端恢复到 /clear 之前的模式：被打断的审查回到审查，调试中的回到执行，等你决定的 hold 回到 `awaiting_user`，其余从 `current_phase` + `current_task` 继续调度。按响应里的 `action` 走
+- 验证通过后服务端按 `current_review` 恢复模式 (不记得 /clear 之前是哪个模式)：被打断的审查回到审查，调试中的回到执行，等你决定的 hold 回到 `awaiting_user`，其余从 `current_phase` + `current_task` 继续调度。按响应里的 `action` 走
 
 ---
 
