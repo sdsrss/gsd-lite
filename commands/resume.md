@@ -148,9 +148,9 @@ STEP 1 的 `orchestrator-resume` 已经做完全部六项（`evaluatePreflight`�
   - 哪些 phases/*.md 被修改
 - 让用户选择:
   - a) 确认变更兼容，继续执行 (更新 plan_version)
-  - b) 重新规划 (回到 /gsd:start 或 /gsd:prd 的计划阶段)
+  - b) 修订计划：在这个状态下直接用 `state-patch` 改计划 (以及 `.gsd/` 下的计划文件)
   - c) 回退文件变更
-- 选 a) 时 `workflow_mode` 写响应里的 `resume_to` (被这次核对打断的模式)
+- 选 a) 或改完 b) 后，`workflow_mode` 写响应里的 `resume_to` (被这次核对打断的模式)；离开这个状态时服务端把当前的计划文件记为新的基线
 
 ---
 

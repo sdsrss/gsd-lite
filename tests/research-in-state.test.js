@@ -366,6 +366,25 @@ describe('a store lands whole or changes nothing', () => {
       assert.equal((await read({ basePath: dir })).research.blocked, true);
     });
 
+    it('keeps the flag of a record written back with the same decisions and the flag left out', async () => {
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+      await handleResearcherResult({ ...payload({ 'decision:x': { summary: '来源都不可用', source: 'none' } }, { blocked: true }), basePath: dir });
+      const { blocked, ...research } = (await read({ basePath: dir })).research;
+      assert.equal(blocked, true, 'premise');
+      const res = await update({ updates: { research: { ...research, expires_at: future(2) } }, basePath: dir });
+      assert.ok(res.success, JSON.stringify(res));
+      assert.equal((await read({ basePath: dir })).research.blocked, true);
+    });
+
+    it('says a record with no decisions holds none', async () => {
+      await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+      await handleResearcherResult({ ...payload(REAL), basePath: dir });
+      const { research } = await read({ basePath: dir });
+      const res = await update({ updates: { research: { ...research, decision_index: {}, blocked: true } }, basePath: dir });
+      assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+      assert.match(res.message, /it holds no decisions/);
+    });
+
     it('keeps the flag of the record on file written back with the same decisions', async () => {
       // A blocked result need not use the tag; its record is blocked because
       // the result said so, and an edit that leaves the decisions alone

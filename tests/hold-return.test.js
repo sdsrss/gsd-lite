@@ -409,6 +409,51 @@ describe('the holds the server releases itself', () => {
     });
   }
 
+  // A pause over a refresh: a blocked result refused while paused named
+  // research_refresh_needed as the way out, and research given up under the
+  // pause sent the researcher again once the pause released (pre-ship review).
+  it('research given up during a pause over a refresh is not refreshed again', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
+    for (const mode of ['research_refresh_needed', 'paused_by_user']) await update({ updates: { workflow_mode: mode }, basePath: dir });
+    const blocked = { ...research, result: { ...research.result, blocked: true } };
+    const refused = await handleResearcherResult({ ...blocked, basePath: dir });
+    assert.equal(refused.code, 'VALIDATION_FAILED', JSON.stringify(refused));
+    const way = refused.message.match(/state-update \(research: null, workflow_mode: "(\w+)"\)/);
+    assert.equal(way?.[1], 'paused_by_user', refused.message);
+    assert.ok((await update({ updates: { research: null, workflow_mode: way[1] }, basePath: dir })).success);
+    const paused = await resumeWorkflow({ basePath: dir });
+    assert.equal(paused.resume_to, 'research_refresh_needed', JSON.stringify(paused));
+    await update({ updates: { workflow_mode: paused.resume_to }, basePath: dir });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.notEqual(res.action, 'dispatch_researcher', JSON.stringify(res));
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'executing_task');
+  });
+
+  for (const [label, path, mode, stack] of [
+    ['releases a blocked-task hold to the plan revision it interrupted', ['planning', 'awaiting_user'], 'planning', []],
+    ['leaves a pause alone', ['paused_by_user'], 'paused_by_user', ['executing_task']],
+  ]) {
+    it(`unblocking a task by hand ${label}`, async (t) => {
+      const dir = await createTempDir();
+      t.after(() => removeTempDir(dir));
+      await initProject(dir);
+      for (const m of path) await update({ updates: { workflow_mode: m }, basePath: dir });
+      const statePath = join(dir, '.gsd', 'state.json');
+      const raw = JSON.parse(await readFile(statePath, 'utf8'));
+      Object.assign(raw.phases[0].todo[0], { lifecycle: 'blocked', blocked_reason: 'needs a key' });
+      await writeFile(statePath, JSON.stringify(raw));
+      const res = await resumeWorkflow({ basePath: dir, unblock_tasks: [raw.phases[0].todo[0].id] });
+      assert.deepEqual(res.unblocked, [raw.phases[0].todo[0].id], JSON.stringify(res));
+      const after = await read({ basePath: dir });
+      assert.equal(after.workflow_mode, mode);
+      assert.deepEqual(after.suspended_modes, stack);
+      assert.equal(after.phases[0].todo[0].lifecycle, 'pending');
+    });
+  }
+
   it('blocked tasks that unblock return to the review they interrupted, review and all', async (t) => {
     // A phase review need carry no stage, so awaiting_user over one is the
     // blocked-task hold, not a decision held at a stage.

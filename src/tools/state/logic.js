@@ -638,7 +638,10 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     }
     // The way out names the mode the refresh interrupted (suspended_modes);
     // executing_task, which it used to name, dropped a review in progress.
-    const giveUp = `give up the expired research with state-update (research: null, workflow_mode: "${resumeTarget(state)}"), after which tasks' research_basis no longer resolves`;
+    // Outside the refresh hold (a pause over it) the project stays where it
+    // is; the refresh under it is released on resume once research is null.
+    const giveUpMode = state.workflow_mode === 'research_refresh_needed' ? resumeTarget(state) : state.workflow_mode;
+    const giveUp = `give up the expired research with state-update (research: null, workflow_mode: "${giveUpMode}"), after which tasks' research_basis no longer resolves`;
     if (recordHasResearch && blocked) {
       return {
         error: true,

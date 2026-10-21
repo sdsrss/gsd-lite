@@ -990,21 +990,23 @@ export function researchBlockedByTag(research) {
 /**
  * The flag of a research record written through state-update. With no result
  * behind it, it is read from its decisions, except that the record on file,
- * written back with its decisions and flag unchanged, keeps the flag
- * storeResearch gave it. storeResearch decides by the flag alone, so one out
+ * written back with its decisions unchanged, keeps the flag storeResearch
+ * gave it (whether the write repeats the flag or leaves it out). storeResearch decides by the flag alone, so one out
  * of step with the decisions let a blocked refresh replace real research, or
  * refused the one an offline project needs: a flag given that disagrees is
  * refused, not overridden. Returns { blocked } or { error }.
  */
 export function handWrittenResearchBlocked(next, previous) {
   const tagged = researchBlockedByTag(next);
-  if (!('blocked' in next) || next.blocked === tagged) return { blocked: tagged };
-  if (isPlainObject(previous) && previous.blocked === next.blocked
-      && isDeepStrictEqual(next.decision_index, previous.decision_index)) {
-    return { blocked: next.blocked };
-  }
+  const sameDecisions = isPlainObject(previous) && typeof previous.blocked === 'boolean'
+    && isDeepStrictEqual(next.decision_index, previous.decision_index);
+  if (!('blocked' in next)) return { blocked: sameDecisions ? previous.blocked : tagged };
+  if (next.blocked === tagged || (sameDecisions && next.blocked === previous.blocked)) return { blocked: next.blocked };
+  const holds = Object.keys(isPlainObject(next.decision_index) ? next.decision_index : {}).length === 0
+    ? 'it holds no decisions'
+    : tagged ? 'every decision is written as the [BLOCKED] placeholder' : 'it holds a decision that is not the [BLOCKED] placeholder';
   return {
-    error: `research.blocked is ${next.blocked}, but ${tagged ? 'every decision is written as the [BLOCKED] placeholder' : 'it holds a decision that is not the [BLOCKED] placeholder'}. Leave blocked out to have it read from the decisions; the record on file keeps its own flag only while its decisions are unchanged`,
+    error: `research.blocked is ${next.blocked}, but ${holds}. Leave blocked out to have it read from the decisions; the record on file keeps its own flag only while its decisions are unchanged`,
   };
 }
 

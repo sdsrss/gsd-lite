@@ -605,10 +605,20 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
       };
     }
     if (patches.length > 0) {
+      // Unblocking answers the blocked-task hold (awaiting_user): release it
+      // to what it interrupted. In execution it continues as before; anywhere
+      // else only the tasks change, and a pause still waits for its own
+      // confirmation. It wrote executing_task from any mode.
+      let modeUpdates = {};
+      if (state.workflow_mode === 'awaiting_user') {
+        const back = resumeTarget(state);
+        const reviewing = back === 'reviewing_task' || back === 'reviewing_phase';
+        modeUpdates = { workflow_mode: back, current_task: null, current_review: reviewing ? state.current_review : null };
+      } else if (state.workflow_mode === 'executing_task') {
+        modeUpdates = { current_task: null, current_review: null };
+      }
       const persistError = await persist(basePath, {
-        workflow_mode: 'executing_task',
-        current_task: null,
-        current_review: null,
+        ...modeUpdates,
         phases: [{ id: phase.id, todo: patches }],
       });
       if (persistError) return persistError;
@@ -955,6 +965,14 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
         break;
       case 'research_refresh_needed': {
         const expiredResearch = collectExpiredResearch(state);
+        // The research was given up (research: null) while a hold over the
+        // refresh waited, such as a pause: back to what the refresh
+        // interrupted, rather than a researcher sent for research nobody wants.
+        if (!state.research) {
+          const persistError = await persist(basePath, { workflow_mode: resumeTarget(state) });
+          if (persistError) return persistError;
+          return resumeWorkflow({ basePath, _depth: _depth + 1 });
+        }
         result = {
           success: true,
           action: 'dispatch_researcher',
