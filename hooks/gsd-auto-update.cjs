@@ -59,6 +59,92 @@ const LOCK_STALE_MS = 10_000;
 const LOCK_RETRY_MS = 50;
 const LOCK_MAX_RETRIES = 100;
 
+// A failed check is announced from the third in a row, then once every seven
+// (checks run at most daily): one failure is a blip, a streak is a stopped
+// updater, and a daily notice would be noise the user learns to skip.
+const CHECK_FAILURES_BEFORE_NOTICE = 3;
+const CHECK_FAILURE_NOTICE_EVERY = 7;
+
+// ── Proxy ──────────────────────────────────────────────────
+// Node's built-in fetch ignores HTTPS_PROXY unless the process opts in, so on a
+// network that reaches GitHub only through a proxy every check failed after
+// FETCH_TIMEOUT_MS and said nothing — an install stopped updating for good
+// (measured 2026-10-21). Two ways in, per the Node docs: NODE_USE_ENV_PROXY=1
+// read at startup (fetch: v22.21.0+, v24.0.0+), which gsd-session-init.cjs sets
+// on the child it spawns; and http.setGlobalProxyFromEnv() at runtime
+// (v24.14.0+, v25.4.0+), for `gsd update`, which nobody started that way.
+const PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'];
+
+function nodeReadsProxyEnvAtStartup(version = process.versions.node) {
+  const [major, minor] = String(version).replace(/^v/, '').split('.').map(Number);
+  return major >= 24 || (major === 22 && minor >= 21);
+}
+
+/**
+ * How fetch in this process reaches the network, turning the runtime switch on
+ * when that is the only way to the proxy the environment names.
+ * @returns {'direct'|'startup'|'runtime'|'opted-out'|'unsupported'}
+ */
+function envProxyRoute({ env = process.env, version = process.versions.node, http = require('node:http') } = {}) {
+  if (!PROXY_VARS.some((key) => env[key])) return 'direct';
+  // Any value but 1 is the user's own choice, and Node reads it as off.
+  if (env.NODE_USE_ENV_PROXY !== undefined && env.NODE_USE_ENV_PROXY !== '1') return 'opted-out';
+  if (env.NODE_USE_ENV_PROXY === '1' && nodeReadsProxyEnvAtStartup(version)) return 'startup';
+  if (typeof http.setGlobalProxyFromEnv === 'function') {
+    http.setGlobalProxyFromEnv(env);
+    return 'runtime';
+  }
+  return 'unsupported';
+}
+
+let proxyRoute = null;
+function useEnvProxy() {
+  proxyRoute ??= envProxyRoute();
+  return proxyRoute;
+}
+
+/**
+ * The reason a release could not be fetched, for update-state.json, `gsd
+ * update` and a SessionStart notice that reaches the model. Built only from
+ * values this module chose — a status number, an error code of the usual
+ * shape, the route — never from error text: a proxy URL can carry credentials.
+ */
+function describeFetchFailure({ status, err } = {}, { route = proxyRoute ?? 'direct', version = process.versions.node } = {}) {
+  let what;
+  if (Number.isInteger(status)) what = `HTTP ${status}`;
+  else if (err?.name === 'AbortError' || err?.name === 'TimeoutError') what = `no response within ${FETCH_TIMEOUT_MS / 1000}s`;
+  else if (err instanceof SyntaxError) what = 'unreadable response';
+  else {
+    const code = err?.cause?.code ?? err?.code;
+    what = typeof code === 'string' && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : 'network error';
+  }
+  const set = 'a proxy is set in the environment';
+  switch (route) {
+    case 'startup':
+    case 'runtime':
+      return `${what} (through the proxy set in the environment)`;
+    case 'opted-out':
+      return `${what} (${set}, but NODE_USE_ENV_PROXY keeps Node from using it)`;
+    case 'unsupported':
+      return nodeReadsProxyEnvAtStartup(version)
+        ? `${what} (${set}, but Node v${version} uses it only when started with NODE_USE_ENV_PROXY=1)`
+        : `${what} (${set}, and Node v${version}'s fetch cannot use one: it needs v22.21+ or v24+)`;
+    default:
+      return what;
+  }
+}
+
+function recordCheckFailure(previous, reason, now) {
+  const count = Number.isInteger(previous?.count) && previous.count > 0 ? previous.count + 1 : 1;
+  const since = count > 1 && typeof previous?.since === 'string' ? previous.since : now;
+  return { since, count, reason };
+}
+
+function shouldAnnounceCheckFailure(count) {
+  return count >= CHECK_FAILURES_BEFORE_NOTICE
+    && (count - CHECK_FAILURES_BEFORE_NOTICE) % CHECK_FAILURE_NOTICE_EVERY === 0;
+}
+
 // ── Orphan Detection ───────────────────────────────────────
 // Mirrors gsd-session-init.cjs Phase 0. When the plugin was removed via
 // /plugin uninstall but install.js-written state (hook files, runtime dir,
@@ -132,15 +218,26 @@ async function checkForUpdate(options = {}) {
       if (verbose) console.log('Checking GitHub for latest release...');
       const token = getGitHubToken();
       const latest = await fetchLatestReleaseImpl(token);
-      if (!latest) {
+      if (!latest || latest.error) {
         if (latest === false) state.rateLimited = true; // 403 rate-limited
-        saveState({ ...state, lastCheck: new Date().toISOString() });
-        if (verbose) console.log('Could not fetch latest release');
+        const reason = latest === false
+          ? 'GitHub API rate limit (HTTP 403)'
+          : (typeof latest?.error === 'string' && latest.error) || 'no release information';
+        // Recording only lastCheck is what made a stopped updater invisible:
+        // the next check was throttled a day out and nothing said why.
+        const now = new Date().toISOString();
+        const checkFailure = recordCheckFailure(state.checkFailure, reason, now);
+        saveState({ ...state, lastCheck: now, checkFailure });
+        if (notify && shouldAnnounceCheckFailure(checkFailure.count)) {
+          writeNotification({ kind: 'check_failed', since: checkFailure.since, count: checkFailure.count, reason });
+        }
+        if (verbose) console.log(`Could not fetch latest release: ${reason}`);
         return null;
       }
 
-      // Successful fetch — clear rate-limit back-off
+      // Successful fetch — clear rate-limit back-off and any failure streak
       state.rateLimited = false;
+      delete state.checkFailure;
       const currentVersion = getCurrentVersionImpl(installMode);
       if (verbose) console.log(`Current: v${currentVersion} — Latest: v${latest.version}`);
 
@@ -345,8 +442,11 @@ function getGitHubToken() {
 }
 
 // ── GitHub API ─────────────────────────────────────────────
+// Returns the release, false for a 403 (rate limit), or { error } naming why
+// nothing came back (describeFetchFailure).
 async function fetchLatestRelease(token) {
   const url = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+  useEnvProxy();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -363,10 +463,10 @@ async function fetchLatestRelease(token) {
     });
 
     if (res.status === 403) return false; // rate-limited — caller sets flag
-    if (!res.ok) return null;
+    if (!res.ok) return { error: describeFetchFailure({ status: res.status }) };
 
     const data = await res.json();
-    if (!data.tag_name) return null;
+    if (!data.tag_name) return { error: 'the latest release has no tag' };
     // R-11: prefer the CI-published deterministic npm-pack asset (gsd-lite-X.Y.Z.tgz).
     // Its bytes — and therefore its SHA-256 — are fixed at publish time, so the
     // `sha256:` in the release body is enforceable. GitHub's source tarball_url has
@@ -378,7 +478,7 @@ async function fetchLatestRelease(token) {
           && typeof a.browser_download_url === 'string')
       : null;
     const downloadUrl = asset ? asset.browser_download_url : data.tarball_url;
-    if (!downloadUrl) return null;
+    if (!downloadUrl) return { error: 'the latest release has nothing to download' };
     // The published SHA-256 (a line `sha256: <64 hex>` in the release body) is the
     // hash of the asset; when present the updater enforces it before running
     // install.js; when absent it proceeds (legacy releases). Take the LAST match:
@@ -403,8 +503,8 @@ async function fetchLatestRelease(token) {
       checksum: checksumMatch ? checksumMatch[1].toLowerCase() : null,
       signature: sigMatch ? sigMatch[1] : null,
     };
-  } catch {
-    return null;
+  } catch (err) {
+    return { error: describeFetchFailure({ err }) };
   } finally {
     clearTimeout(timeout);
   }
@@ -489,6 +589,7 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
     fetchImpl = fetch,
   } = opts;
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
+  if (fetchImpl === fetch) useEnvProxy();
 
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -687,6 +788,9 @@ module.exports = {
   fetchLatestRelease,
   getCurrentVersion,
   compareVersions,
+  describeFetchFailure,
+  envProxyRoute,
+  nodeReadsProxyEnvAtStartup,
   requiresSignature,
   getInstallMode,
   isDevMode,

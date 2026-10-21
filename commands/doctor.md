@@ -100,6 +100,7 @@ Check for update-related information:
   - `available` (with `from`, `to`, `action: "plugin_update"`): INFO "Update available: v{from} → v{to}" — a plugin install is updated by the plugin system, not by gsd: `/plugin` → **Installed** → gsd → **Update now**, or `claude plugin update gsd@gsd` from a shell
   - `updated` (with `from`, `to`): INFO "Auto-updated v{from} → v{to}; restart Claude Code to load it"
   - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `gsd update` (or `npx gsd-lite update`) to see why
+  - `check_failed` (with `count`, `since`, `reason`): WARN "Update checks failing: {count} in a row since {since} — {reason}". When the reason mentions a proxy, it names the fix itself (start Node with NODE_USE_ENV_PROXY=1, or a newer Node)
   - The SessionStart hook prints this file and then deletes it, so it is usually absent. Absence is normal: record nothing for it.
 - If cannot determine: record INFO "Update status unavailable"
 

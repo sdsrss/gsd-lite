@@ -315,6 +315,14 @@ setTimeout(() => process.exit(0), 4000).unref();
         // so this is informational rather than an emergency — but a user whose
         // updates have been failing for a month should get to know.
         console.log(`⚠️  GSD-Lite update to v${safeSemver(notif.to)} failed; still on v${safeSemver(notif.from)}. Run gsd update to see why.`);
+      } else if (notif.kind === 'check_failed') {
+        // The updater builds the reason from codes and numbers it chose, but
+        // this line reaches the model, so it is held to a plain character set
+        // here as well rather than trusted for having come from our own file.
+        const safeReason = String(notif.reason ?? '').replace(/[^\w .,:;()=+'/-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || 'unknown reason';
+        const since = /^\d{4}-\d{2}-\d{2}/.test(String(notif.since ?? '')) ? String(notif.since).slice(0, 10) : 'an earlier session';
+        const count = Number.isInteger(notif.count) && notif.count > 0 ? notif.count : '?';
+        console.log(`⚠️  GSD-Lite could not check for updates (${count} attempts since ${since}): ${safeReason}`);
       }
       fs.unlinkSync(notifPath);
     }
@@ -322,12 +330,17 @@ setTimeout(() => process.exit(0), 4000).unref();
 
   // ── Phase 5: Spawn background auto-update (non-blocking) ──
   // Detached child handles check + download + install; throttled by shouldCheck()
+  //
+  // NODE_USE_ENV_PROXY=1 lets the child's fetch use HTTPS_PROXY, which Node
+  // reads only at startup (v22.21+, v24+). Without it every check on a network
+  // that requires a proxy failed, silently, every day. It does nothing when no
+  // proxy is set, and a value the user chose comes after it and wins.
   try {
     const { spawn } = require('node:child_process');
     const child = spawn(
       process.execPath,
       [path.join(__dirname, 'gsd-auto-update.cjs')],
-      { detached: true, stdio: 'ignore' },
+      { detached: true, stdio: 'ignore', env: { NODE_USE_ENV_PROXY: '1', ...process.env } },
     );
     child.unref();
   } catch { /* silent — never block session start */ }
