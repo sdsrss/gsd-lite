@@ -616,7 +616,7 @@ describe('update() never writes a state that validateState refuses', () => {
     const statePath = join(dir, '.gsd', 'state.json');
     await writeFile(statePath, original);
     const index = { 'decision:a': { summary: 'A', source: 'docs' } };
-    const result = { decision_ids: ['decision:a'], volatility: 'medium', expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), sources: [] };
+    const result = { decision_ids: ['decision:a'], blocked: false, volatility: 'medium', expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), sources: [] };
     const artifacts = { 'STACK.md': 's', 'ARCHITECTURE.md': 'a', 'PITFALLS.md': 'p', 'SUMMARY.md': 'm' };
     assert.ok((await storeResearch({ result, decision_index: index, artifacts, basePath: dir })).success, 'premise: research is on record');
     const { research } = JSON.parse(await readFile(statePath, 'utf8'));

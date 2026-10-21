@@ -282,6 +282,7 @@ describe('TC5: storeResearch rejects invalid artifacts', () => {
       basePath: dir,
       result: {
         decision_ids: ['d_test'],
+        blocked: false,
         volatility: 'medium',
         expires_at: '2026-06-01T00:00:00Z',
         sources: [{ id: 's1', type: 'docs', ref: 'React docs' }],
@@ -331,6 +332,7 @@ describe('TC6: storeResearch transitions workflow_mode from research_refresh_nee
       basePath: dir,
       result: {
         decision_ids: ['d_test'],
+        blocked: false,
         volatility: 'medium',
         expires_at: '2099-06-01T00:00:00Z',
         sources: [{ id: 's1', type: 'docs', ref: 'React docs' }],
@@ -396,6 +398,7 @@ describe('TC7: handleResearcherResult end-to-end stores research and resumes wor
       basePath: dir,
       result: {
         decision_ids: ['d_framework'],
+        blocked: false,
         volatility: 'high',
         expires_at: '2027-06-01T00:00:00Z',
         sources: [{ id: 's2', type: 'docs', ref: 'Updated framework docs' }],

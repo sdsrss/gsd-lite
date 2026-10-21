@@ -819,6 +819,7 @@ describe('Simulation 8: Research lifecycle', () => {
     const result = await handleResearcherResult({
       result: {
         decision_ids: ['d1'],
+        blocked: false,
         volatility: 'medium',
         expires_at: expiresAt,
         sources: [{ id: 's1', type: 'docs', ref: 'https://example.com' }],

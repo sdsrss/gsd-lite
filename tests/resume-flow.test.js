@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update } from '../src/tools/state/index.js';
@@ -214,6 +214,7 @@ describe('resume flow matrix', () => {
         basePath: tempDir,
         result: {
           decision_ids: ['decision:jwt-rotation'],
+          blocked: false,
           volatility: 'medium',
           expires_at: '2099-03-16T10:30:00Z',
           sources: [{ id: 'src1', type: 'Context7', ref: 'Next.js auth docs' }],
@@ -240,15 +241,11 @@ describe('resume flow matrix', () => {
     }, { research: true });
   });
 
+  // Paused from the review, the way a pause happens: the review was the mode.
   it('paused_by_user with phase review returns resume_to=reviewing_phase', async () => {
     await withProject('resume-paused-review-phase', async (tempDir) => {
-      await update({
-        updates: {
-          workflow_mode: 'paused_by_user',
-          current_review: { scope: 'phase', scope_id: 1 },
-        },
-        basePath: tempDir,
-      });
+      await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: tempDir });
+      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: tempDir });
       const result = await resumeWorkflow({ basePath: tempDir });
       assert.equal(result.action, 'await_manual_intervention');
       assert.equal(result.resume_to, 'reviewing_phase');
@@ -257,16 +254,25 @@ describe('resume flow matrix', () => {
 
   it('paused_by_user with task review returns resume_to=reviewing_task', async () => {
     await withProject('resume-paused-review-task', async (tempDir) => {
-      await update({
-        updates: {
-          workflow_mode: 'paused_by_user',
-          current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' },
-        },
-        basePath: tempDir,
-      });
+      await update({ updates: { workflow_mode: 'reviewing_task', current_review: { scope: 'task', scope_id: '1.1', stage: 'spec' } }, basePath: tempDir });
+      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: tempDir });
       const result = await resumeWorkflow({ basePath: tempDir });
       assert.equal(result.action, 'await_manual_intervention');
       assert.equal(result.resume_to, 'reviewing_task');
+    });
+  });
+
+  // A pause recorded before suspended_modes existed has no stack: the way
+  // back is still worked out from current_review.
+  it('a pause written before suspended_modes falls back to current_review', async () => {
+    await withProject('resume-paused-legacy', async (tempDir) => {
+      const statePath = join(tempDir, '.gsd', 'state.json');
+      const raw = JSON.parse(await readFile(statePath, 'utf8'));
+      delete raw.suspended_modes;
+      Object.assign(raw, { workflow_mode: 'paused_by_user', current_review: { scope: 'phase', scope_id: 1 } });
+      await writeFile(statePath, JSON.stringify(raw));
+      const result = await resumeWorkflow({ basePath: tempDir });
+      assert.equal(result.resume_to, 'reviewing_phase');
     });
   });
 

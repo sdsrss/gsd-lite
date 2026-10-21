@@ -20,6 +20,7 @@ describe('research output persistence', () => {
         basePath: tempDir,
         result: {
           decision_ids: ['decision:jwt-rotation'],
+          blocked: false,
           volatility: 'medium',
           expires_at: '2099-03-16T10:30:00Z',
           sources: [{ id: 'src1', type: 'Context7', ref: 'Next.js auth docs' }],
@@ -83,6 +84,7 @@ describe('research output persistence', () => {
         basePath: tempDir,
         result: {
           decision_ids: ['decision:jwt'],
+          blocked: false,
           volatility: 'medium',
           expires_at: '2099-03-16T10:30:00Z',
           sources: [{ id: 'src1', type: 'Context7', ref: 'Auth docs' }],
@@ -102,6 +104,7 @@ describe('research output persistence', () => {
         basePath: tempDir,
         result: {
           decision_ids: ['decision:jwt'],
+          blocked: false,
           volatility: 'high',
           expires_at: '2099-04-01T10:30:00Z',
           sources: [{ id: 'src2', type: 'Context7', ref: 'Updated auth docs' }],
