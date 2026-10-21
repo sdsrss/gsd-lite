@@ -545,13 +545,40 @@ describe('repo gates — scripts/sync-versions.js has no dry-run to mistake', ()
 // (2026-10-21). Asked of every npm install the package runs, not of the one
 // that failed.
 describe('repo gates — no npm install the package runs asks for an audit', () => {
+  // The npm installs in a source text: a quoted command string (any quote, so
+  // template literals count), or an argument array that starts with the
+  // subcommand, whatever the command was called through. Comments name these
+  // commands too, so whole-line comments go first; a block comment is stripped
+  // only from the start of a line, since a string like 'phases/*.md' would
+  // otherwise open one and swallow the code after it (pre-tag review).
+  function npmInstallCalls(src) {
+    const code = src.replace(/^\s*\/\*[\s\S]*?\*\//gm, '').replace(/^\s*\/\/.*$/gm, '');
+    return [
+      ...[...code.matchAll(/['"`]npm (?:ci|install|i)\b[^'"`]*['"`]/g)].map((m) => m[0]),
+      ...[...code.matchAll(/\[\s*['"`](?:ci|install|i)['"`][^\]]*\]/g)].map((m) => m[0]),
+    ];
+  }
+
+  it('finds each form an npm install can be written in', () => {
+    for (const [label, src] of [
+      ['a command string', "execSync('npm ci --omit=dev')"],
+      ['npm i', 'execSync("npm i --omit=dev")'],
+      ['a template literal', 'execSync(`npm install --omit=dev`)'],
+      ['a command held in a variable', "spawnSync(npmBin, ['install', '--omit=dev'])"],
+      ['code after a string holding /*', "const glob = 'phases/*.md';\nexecSync('npm install')\n// */"],
+    ]) {
+      assert.equal(npmInstallCalls(src).length, 1, `${label}: ${JSON.stringify(npmInstallCalls(src))}`);
+    }
+    assert.deepEqual(npmInstallCalls("// a later manual 'npm install' in ~/.claude/gsd\n/**\n * 'npm ci' here\n */"), [], 'comments are not calls');
+  });
+
   it('every npm install or ci in the published code passes --no-audit and --no-fund', () => {
     const files = [];
     const walk = (rel) => {
       const full = join(repoRoot, rel);
       if (!existsSync(full)) return;
-      if (!/\.[cm]?js$/.test(rel) && rel.includes('.')) return;
       if (/\.[cm]?js$/.test(rel)) { files.push(rel); return; }
+      if (rel.includes('.')) return;
       for (const entry of readdirSync(full, { withFileTypes: true })) {
         const child = `${rel}/${entry.name}`;
         if (entry.isDirectory()) walk(child);
@@ -559,15 +586,7 @@ describe('repo gates — no npm install the package runs asks for an audit', () 
       }
     };
     for (const entry of JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).files) walk(entry.replace(/\/$/, ''));
-    const commands = [];
-    for (const rel of files) {
-      // Comments name these commands too, so they go first.
-      const code = readFileSync(join(repoRoot, rel), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-      for (const m of code.matchAll(/['"]npm (?:ci|install)\b[^'"]*['"]/g)) commands.push(`${rel}: ${m[0]}`);
-      for (const m of code.matchAll(/\(\s*['"]npm['"]\s*,\s*\[([^\]]*)\]/g)) {
-        if (/['"](?:ci|install)['"]/.test(m[1])) commands.push(`${rel}: ${m[0]}`);
-      }
-    }
+    const commands = files.flatMap((rel) => npmInstallCalls(readFileSync(join(repoRoot, rel), 'utf8')).map((call) => `${rel}: ${call}`));
     assert.ok(commands.length >= 4, `premise: the scan finds the package's npm installs, found ${JSON.stringify(commands)} in ${files.length} files`);
     assert.deepEqual(commands.filter((c) => !c.includes('--no-audit') || !c.includes('--no-fund')), []);
   });
