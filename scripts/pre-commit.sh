@@ -64,7 +64,13 @@ if [ -n "$STAGED_TESTS" ] || [ -n "$STAGED_CLAUDE" ] || [ -n "$STAGED_CODE" ]; t
   TEST_OUT=$(npm test --silent 2>&1) && TEST_RC=0 || TEST_RC=$?
   printf '%s\n' "$TEST_OUT" | tail -5
   if [ "$TEST_RC" -ne 0 ]; then
-    echo -e "${RED}Tests failed. Fix before committing.${NC}"
+    # The tail is the last failure's stack, and for a child process that timed
+    # out that is node:net frames with no test name: three e2e-install failures
+    # were blamed on it unconfirmed. Name the failures and keep the whole run.
+    TEST_LOG="$(git rev-parse --git-dir)/pre-commit-tests.log"
+    printf '%s\n' "$TEST_OUT" > "$TEST_LOG"
+    printf '%s\n' "$TEST_OUT" | grep '✖' | sort -u | head -20
+    echo -e "${RED}Tests failed. Fix before committing.${NC} Full output: $TEST_LOG"
     exit 1
   fi
 
