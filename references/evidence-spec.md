@@ -142,6 +142,7 @@ _pruneEvidenceFromState(state, currentPhase)
 _writeEvidenceArchive(gsdDir, toArchive)
   -> 读取现有 evidence-archive.json (不存在则 {})
   -> Object.assign(archive, toArchive) 合并
+  -> 超过 MAX_ARCHIVE_ENTRIES (1000) 条时丢掉最早的条目
   -> writeJson(archivePath, archive) 写入归档文件
   -> 紧接着写 state.json
 ```
@@ -158,7 +159,7 @@ _writeEvidenceArchive(gsdDir, toArchive)
 
 - 归档是追加式的: 新归档条目与已有归档 merge
 - 归档后 state.evidence 中的对应条目被移除
-- 归档文件持久保存，不会被自动清理
+- 归档文件持久保存，不随 phase 推进清理；超过 MAX_ARCHIVE_ENTRIES (1000) 条时丢掉最早归档的条目
 
 ## Evidence 来源
 
