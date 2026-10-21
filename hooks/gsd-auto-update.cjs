@@ -432,15 +432,22 @@ function isDevMode() {
 }
 
 function getInstallMode() {
-  if (isDevMode()) return 'dev';
   // Check if installed as a Claude Code plugin (installed_plugins.json has gsd entry)
   // Hook files live at ~/.claude/hooks/ so pluginRoot (=__dirname/..) equals claudeDir,
   // but that doesn't mean it's a manual install — check the plugin registry first.
+  //
+  // First of all, and with install.js's own test (isInstalledAsPlugin): a
+  // plugin install is updated by `claude plugin update`, and install.js —
+  // which this runs for every other mode — prunes plugins/cache/gsd and
+  // clears .orphaned_at whenever it finds the record. Checked after dev mode,
+  // or as `?.[0]`, the two disagreed and the updater ran install.js against
+  // an installed plugin's cache.
   try {
     const pluginsFile = path.join(claudeDir, 'plugins', 'installed_plugins.json');
     const plugins = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'));
-    if (plugins.plugins?.['gsd@gsd']?.[0]) return 'plugin';
+    if (plugins.plugins?.['gsd@gsd']) return 'plugin';
   } catch { /* fall through */ }
+  if (isDevMode()) return 'dev';
   return path.resolve(pluginRoot) === path.resolve(claudeDir)
     ? 'manual'
     : 'plugin';
