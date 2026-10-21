@@ -19,7 +19,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as schema from '../src/schema.js';
 import * as stateApi from '../src/tools/state/index.js';
-import { resumeWorkflow } from '../src/tools/orchestrator/index.js';
+import { handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
 import { checkpointTask, createTempDir, initProject, acceptTask, completePhase, removeTempDir, read, update } from './e2e-helpers.js';
 
 const { WORKFLOW_MODES, WORKFLOW_TRANSITIONS, validateState, migrateState } = schema;
@@ -57,7 +57,9 @@ describe('the stack rule', () => {
     });
   }
 
-  it('keeps at most MAX_SUSPENDED_MODES, dropping the oldest', () => {
+  // Trimming dropped the oldest entry, which is the work mode at the bottom;
+  // unwound, a long chain ended in a hold (pre-tag review).
+  it('keeps at most MAX_SUSPENDED_MODES, dropping the oldest hold and keeping the work at the bottom', () => {
     const holds = schema.HOLD_MODES;
     let stack = [];
     let from = 'executing_task';
@@ -67,7 +69,8 @@ describe('the stack rule', () => {
       from = to;
     }
     assert.equal(stack.length, schema.MAX_SUSPENDED_MODES);
-    assert.notEqual(stack[0], 'executing_task', 'the oldest entry went first');
+    assert.equal(stack[0], 'executing_task');
+    assert.ok(!stack.slice(1).includes('executing_task'));
   });
 });
 
@@ -371,5 +374,108 @@ describe('giving up a refused research refresh', () => {
     assert.equal(after.workflow_mode, 'reviewing_task');
     assert.deepEqual(after.current_review, review);
     assert.deepEqual(after.suspended_modes, []);
+  });
+});
+
+// Two holds are released by the server, not by a state-update of resume_to:
+// a stored research refresh, and blocked tasks that unblock themselves. Both
+// wrote a fixed mode (pre-tag review), which the property test above could
+// not see — it releases every hold with update().
+describe('the holds the server releases itself', () => {
+  const research = {
+    result: { decision_ids: ['decision:a'], blocked: false, volatility: 'medium', expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), sources: [{ id: 's1', type: 'docs', ref: 'https://example.com/docs' }] },
+    decision_index: { 'decision:a': { summary: 'A', source: 'docs' } },
+    artifacts: { 'STACK.md': '# Stack\n', 'ARCHITECTURE.md': '# Architecture\n', 'PITFALLS.md': '# Pitfalls\n', 'SUMMARY.md': '# Summary\n' },
+  };
+
+  for (const [label, path, back, stack] of [
+    ['planning', ['planning'], 'planning', []],
+    ['a pause over execution', ['paused_by_user'], 'paused_by_user', ['executing_task']],
+    ['a /clear over execution', ['awaiting_clear'], 'awaiting_clear', ['executing_task']],
+  ]) {
+    it(`a stored refresh returns to ${label}`, async (t) => {
+      const dir = await createTempDir();
+      t.after(() => removeTempDir(dir));
+      await initProject(dir);
+      for (const mode of [...path, 'research_refresh_needed']) {
+        const res = await update({ updates: { workflow_mode: mode }, basePath: dir });
+        assert.ok(res.success, `entering ${mode}: ${JSON.stringify(res)}`);
+      }
+      const stored = await handleResearcherResult({ ...research, basePath: dir });
+      assert.equal(stored.action, 'research_stored', JSON.stringify(stored));
+      const after = await read({ basePath: dir });
+      assert.equal(after.workflow_mode, back);
+      assert.deepEqual(after.suspended_modes, stack);
+    });
+  }
+
+  it('blocked tasks that unblock return to the plan revision they interrupted', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    await update({ updates: { workflow_mode: 'planning' }, basePath: dir });
+    await update({ updates: { workflow_mode: 'awaiting_user' }, basePath: dir });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.equal(res.workflow_mode, 'planning', JSON.stringify(res));
+    assert.deepEqual((await read({ basePath: dir })).suspended_modes, []);
+  });
+});
+
+describe('what resume says to write is a write that validates', () => {
+  it('a review cleared during a pause is not the way back', async (t) => {
+    // current_review cleared by hand while paused over a task review: the
+    // stack still says reviewing_task, which needs that review.
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    await checkpointTask(dir, 1, '1.1');
+    await update({ updates: { workflow_mode: 'reviewing_task', current_review: { scope: 'task', scope_id: '1.1', stage: 'quality' } }, basePath: dir });
+    await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+    await update({ updates: { current_review: null }, basePath: dir });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.equal(res.resume_to, 'executing_task', JSON.stringify(res));
+    const released = await update({ updates: { workflow_mode: res.resume_to }, basePath: dir });
+    assert.ok(released.success, JSON.stringify(released));
+  });
+});
+
+describe('the guidance names the mode to write', () => {
+  const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+
+  it('reconcile and replan holds tell the orchestrator to write resume_to, not executing_task', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    git(dir, 'init', '-q');
+    git(dir, 'config', 'user.email', 'fixture@example.invalid');
+    git(dir, 'config', 'user.name', 'fixture');
+    await writeFile(join(dir, 'a.txt'), '1');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-qm', 'one');
+    await initProject(dir);
+    await checkpointTask(dir, 1, '1.1');
+    const head = git(dir, 'rev-parse', '--short', 'HEAD');
+    await update({ updates: { git_head: head, workflow_mode: 'reviewing_task', current_review: { scope: 'task', scope_id: '1.1', stage: 'quality' } }, basePath: dir });
+    for (const hold of ['reconcile_workspace', 'replan_required']) {
+      await update({ updates: { workflow_mode: hold }, basePath: dir });
+      const res = await resumeWorkflow({ basePath: dir });
+      assert.equal(res.workflow_mode, hold, JSON.stringify(res));
+      assert.equal(res.resume_to, 'reviewing_task');
+      assert.doesNotMatch(res.guidance, /executing_task/, res.guidance);
+      assert.match(res.guidance, /reviewing_task/, res.guidance);
+      await update({ updates: { workflow_mode: res.resume_to }, basePath: dir });
+    }
+  });
+
+  it('planning says how to finish the revision, not to start planning over', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    await update({ updates: { workflow_mode: 'planning' }, basePath: dir });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.equal(res.workflow_mode, 'planning');
+    for (const text of [res.guidance, res.message]) {
+      assert.doesNotMatch(text, /gsd:start|gsd:prd|state-init/, text);
+      assert.match(text, /state-patch/, text);
+    }
   });
 });

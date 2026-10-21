@@ -48,7 +48,8 @@ export const TERMINAL_MODES = ['completed', 'failed'];
 export const HOLD_MODES = WORKFLOW_MODES.filter((mode) => !WORK_MODES.includes(mode) && !TERMINAL_MODES.includes(mode));
 
 // How many interrupted modes suspended_modes keeps. A real chain is two or
-// three deep (a /clear over a pause over work); past this the oldest goes.
+// three deep (a /clear over a pause over work); past this the oldest hold
+// goes, and the bottom entry, the work everything interrupted, stays.
 export const MAX_SUSPENDED_MODES = 8;
 
 /**
@@ -70,7 +71,10 @@ export function nextSuspendedModes(stack, from, to) {
   if (current.length > 0 && to === current.at(-1)) {
     return WORK_MODES.includes(to) ? [] : current.slice(0, -1);
   }
-  if (HOLD_MODES.includes(to)) return [...current, from].slice(-MAX_SUSPENDED_MODES);
+  if (HOLD_MODES.includes(to)) {
+    const pushed = [...current, from];
+    return pushed.length > MAX_SUSPENDED_MODES ? [pushed[0], ...pushed.slice(1 - MAX_SUSPENDED_MODES)] : pushed;
+  }
   return [];
 }
 
@@ -104,10 +108,17 @@ export function workflowModeForReview(review) {
   return 'executing_task';
 }
 
-/** Where releasing the current hold goes back to. */
+/**
+ * Where releasing the current hold goes back to. A review mode comes back
+ * only with the review it was running: with current_review cleared during
+ * the hold, writing it would not validate, and current_review says where to
+ * go instead.
+ */
 export function resumeTarget(state) {
   const top = Array.isArray(state?.suspended_modes) ? state.suspended_modes.at(-1) : undefined;
-  return top ?? workflowModeForReview(state?.current_review);
+  const byReview = workflowModeForReview(state?.current_review);
+  if (top === undefined || ((top === 'reviewing_task' || top === 'reviewing_phase') && top !== byReview)) return byReview;
+  return top;
 }
 
 const WORKFLOW_TRANSITIONS_BASE = {

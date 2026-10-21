@@ -761,10 +761,14 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
         if (autoUnblock.error) return autoUnblock;
 
         if (autoUnblock.blockers.length === 0) {
+          // Back to what the hold interrupted (a plan revision, a review in
+          // progress), where executing_task used to be written whatever it was.
+          const back = resumeTarget(state);
+          const reviewing = back === 'reviewing_task' || back === 'reviewing_phase';
           const persistError = await persist(basePath, {
-            workflow_mode: 'executing_task',
+            workflow_mode: back,
             current_task: null,
-            current_review: null,
+            current_review: reviewing ? state.current_review : null,
           });
           if (persistError) return persistError;
           // Recursive call adds its own summary
@@ -893,8 +897,10 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           success: true,
           action: 'await_manual_intervention',
           workflow_mode: state.workflow_mode,
-          guidance: 'Plan is being revised. Run /gsd:start or /gsd:prd to continue planning, or state-update workflow_mode back to executing_task when ready.',
-          message: 'Project is in planning mode (plan revision). Finish the plan then set workflow_mode back to executing_task.',
+          // /gsd:start and /gsd:prd start a project: on this one they offer to
+          // resume (back here) or to start over, discarding its progress.
+          guidance: 'Plan is being revised. Change the plan with state-patch, then state-update workflow_mode to executing_task; the revised plan files are recorded as the new baseline then.',
+          message: 'Project is in planning mode (plan revision). Revise the plan with state-patch, then set workflow_mode to executing_task.',
         };
         break;
       case 'reconcile_workspace': {
@@ -918,14 +924,14 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
         let reconGuidance;
         if (bothKnown && state.git_head === reconGitHead) {
           reconMessage = `Git HEAD matches the saved value (${reconGitHead}); the recorded divergence is resolved`;
-          reconGuidance = 'Workspace and saved git_head agree. Set workflow_mode to executing_task via state-update to resume, or paused_by_user to stop here';
+          reconGuidance = `Workspace and saved git_head agree. Set workflow_mode to ${resumeTarget(state)} (resume_to) via state-update to resume, or paused_by_user to stop here`;
         } else {
           // getGitHead collapses "not a git repo", "no commits yet", "git
           // missing" and "timed out" into null, so an absent side is not evidence
           // of a difference — it is evidence that no comparison happened.
           const unknown = !reconGitHead ? 'the current workspace HEAD' : 'the saved git_head';
           reconMessage = `Git HEAD could not be compared: ${unknown} could not be read (saved=${state.git_head ?? 'none'}, current=${reconGitHead ?? 'none'})`;
-          reconGuidance = 'Verify the workspace yourself, record the current HEAD with git_head via state-update if there is one, then set workflow_mode to executing_task';
+          reconGuidance = `Verify the workspace yourself, record the current HEAD with git_head via state-update if there is one, then set workflow_mode to ${resumeTarget(state)} (resume_to)`;
         }
         result = {
           success: true,
@@ -943,7 +949,7 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
           success: true,
           action: 'replan_required',
           workflow_mode: state.workflow_mode,
-          guidance: 'Plan files modified since last session. Review changes, update the plan if needed, then set workflow_mode to executing_task via state-update',
+          guidance: `Plan files modified since last session. Review changes, update the plan if needed, then set workflow_mode to ${resumeTarget(state)} (resume_to) via state-update`,
           message: 'Plan artifacts modified since last session; review and re-align before resuming',
         };
         break;

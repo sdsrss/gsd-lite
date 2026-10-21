@@ -91,7 +91,7 @@ Blocked 任务:
 
 | workflow_mode | 建议 |
 |---|---|
-| planning | "仍在计划阶段，运行 /gsd:start 或 /gsd:prd 重新启动计划" |
+| planning | "正在修订计划：用 state-patch 改计划，改完把 workflow_mode 设回 executing_task 再 /gsd:resume" |
 | executing_task | "自动执行中，等待完成" |
 | reviewing_task | "L2 审查进行中" |
 | reviewing_phase | "L1 阶段审查进行中" |

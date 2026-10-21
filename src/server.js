@@ -133,7 +133,7 @@ const TOOLS = [
         fields: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional field names to return (returns all if omitted). A name that is not readable is rejected with INVALID_INPUT naming it, rather than silently dropped — readable names are the canonical fields plus `_version`. A readable name that is absent from this state is listed in the response\'s `_absent` array and omitted as a key, so an absent field is distinguishable from one that is present and empty; `_absent` is omitted entirely when nothing was missing.',
+          description: 'Optional field names to return (returns all if omitted). A name that is not readable is rejected with INVALID_INPUT naming it, rather than silently dropped — readable names are the canonical fields plus `_version` and `suspended_modes` (the modes the holds in force interrupted, most recent last; written only by the server). A readable name that is absent from this state is listed in the response\'s `_absent` array and omitted as a key, so an absent field is distinguishable from one that is present and empty; `_absent` is omitted entirely when nothing was missing.',
         },
       },
     },

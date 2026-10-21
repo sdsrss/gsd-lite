@@ -186,7 +186,7 @@
 | `replan_required` | 同上表 `replan_required` 行：核对 `drift_phase` 指出的计划改动，确认无误后 `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 |
 | `awaiting_clear` | 上下文不足。执行 /clear 后重新 /gsd:resume |
 | `paused_by_user` | 项目已暂停。向用户确认是否恢复;确认 → `state-update({updates: {workflow_mode: <响应里的 resume_to>}})` → 继续循环 (`resume_to` 是服务端记下的、被暂停打断的模式：规划中回到规划，审查中回到审查，等你决定的回到等待，其余回到执行) |
-| `planning` | 计划尚未落地。完成计划并调用 `state-init` |
+| `planning` | 计划修订中 (失败后选了重新规划，或暂停、/clear、核对之后回到规划)。向用户展示响应的 `guidance` 并停止：用 `state-patch` 改计划，改完后 `state-update({updates: {workflow_mode: "executing_task"}})`，再 /gsd:resume。项目已经存在，计划只在原地修订 |
 | `awaiting_user` | 有 `current_review.stage` 的 hold（如 `review_retry_exhausted`）。展示 `current_review` 与 `recovery_options`，等待用户选择;用户决定后 `orchestrator-resume recovery:'retry_failed'\|'skip_failed'\|'replan'` |
 | 其他 | 展示信息并停止 |
 
