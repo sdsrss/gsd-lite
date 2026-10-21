@@ -79,3 +79,37 @@ describe('git sandbox: no background writer races fixture teardown (#9)', () => 
     });
   });
 });
+
+// A pre-commit hook in a linked worktree runs the suite with git's own
+// repository variables exported, and GIT_DIR there is absolute. Every fixture
+// that ran git in its temp dir then ran it against the real repository: one
+// hook run left the shared .git/config with core.bare = true and the
+// worktree's index holding a single file (2026-10-21). In the main checkout
+// GIT_DIR is the relative `.git`, which happens to resolve inside each temp
+// dir, so nothing showed there. The preload drops the variables that point
+// git at a repository, an index or an object store.
+describe('git sandbox: the suite never inherits a repository from the hook that ran it', () => {
+  it('a fixture\'s git writes its own repository, not the one GIT_DIR named', () => {
+    const outer = mkdtempSync(join(tmpdir(), 'gsd-gitsandbox-outer-'));
+    const fixture = mkdtempSync(join(tmpdir(), 'gsd-gitsandbox-fixture-'));
+    try {
+      assert.equal(spawnSync('git', ['init', '-q', outer]).status, 0);
+      const env = {
+        ...process.env,
+        GIT_DIR: join(outer, '.git'),
+        GIT_INDEX_FILE: join(outer, '.git', 'index'),
+        GIT_WORK_TREE: outer,
+      };
+      const script = "require('node:child_process').execFileSync('git', ['init', '-q', '.']);"
+        + "require('node:child_process').execFileSync('git', ['config', 'core.bare', 'true']);";
+      const run = spawnSync(process.execPath, ['--require', join(HERE, 'git-sandbox.cjs'), '-e', script], { cwd: fixture, env, encoding: 'utf-8' });
+      assert.equal(run.status, 0, run.stderr);
+      const outerBare = spawnSync('git', ['config', '--file', join(outer, '.git', 'config'), 'core.bare'], { encoding: 'utf-8' }).stdout.trim();
+      assert.equal(outerBare, 'false', 'the repository GIT_DIR named was written');
+      assert.equal(existsSync(join(fixture, '.git')), true, 'the fixture got its own repository');
+    } finally {
+      rmSync(outer, { recursive: true, force: true });
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});

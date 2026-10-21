@@ -1,6 +1,6 @@
 /**
  * Environment isolation for the test suite, preloaded by the npm test scripts
- * (`node --require ./tests/git-sandbox.cjs --test …`). Two things:
+ * (`node --require ./tests/git-sandbox.cjs --test …`). Three things:
  *
  * 1. GIT_CONFIG_GLOBAL → tests/gitconfig, so every git the suite spawns runs
  *    with gc.auto=0. Without it `git commit` forks `git maintenance run --auto
@@ -25,6 +25,16 @@ const os = require('node:os');
 const path = require('node:path');
 
 process.env.GIT_CONFIG_GLOBAL = path.join(__dirname, 'gitconfig');
+
+// 3. No repository inherited from whatever ran the suite. A pre-commit hook
+//    exports git's repository variables, and in a linked worktree GIT_DIR is
+//    absolute: every fixture that ran git in its temp dir ran it against the
+//    real repository instead, which once left .git/config with core.bare =
+//    true and the worktree's index holding one file. These are the variables
+//    in git's "Repository locations" that point it somewhere else.
+for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE']) {
+  delete process.env[key];
+}
 
 // The test runner spawns a child per test file with this same preload, so only
 // the process that created the directory owns it — the children inherit the
