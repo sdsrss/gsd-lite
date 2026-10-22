@@ -919,25 +919,72 @@ describe('a state an older version wrote since', () => {
     assert.ok((await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir })).success, 'writeState still writes it');
   });
 
-  it('only the modules that may write files can reach a filesystem write', async () => {
+  // Who can write at all, read deny-by-default: utils.js holds the writers,
+  // and any other module may name a fs module only in a static import of
+  // functions that cannot write a file's content, and may load no module at
+  // run time. The gate this replaces listed the import shapes that write and
+  // missed one after another (`{ promises as fsp }`, a default import beside
+  // named ones, a template literal), and let two modules write unchecked; a
+  // rename into state.json there passed every test (delta review). It is a
+  // check against writing around writeState by accident, not a sandbox: a
+  // specifier built at run time and loaded through server.js's createRequire
+  // gets past it.
+  const NO_WRITE = new Set(['access', 'accessSync', 'existsSync', 'lstat', 'lstatSync', 'readFile', 'readFileSync', 'readdir', 'readdirSync', 'realpathSync', 'stat', 'statSync', 'unlink', 'unlinkSync']);
+  function writeReach(source, { mayLoad = false } = {}) {
+    const why = [];
+    const specifiers = source.match(/(['"`])(?:node:)?fs(?:\/promises)?\1/g)?.length ?? 0;
+    const imports = [...source.matchAll(/import\s*\{([^}]*)\}\s*from\s*(['"])(?:node:)?fs(?:\/promises)?\2/g)];
+    if (specifiers !== imports.length) why.push('names a fs module outside a static named import');
+    for (const [, names] of imports) {
+      for (const name of names.split(',').map((entry) => entry.trim().split(/\s+as\s+/)[0]).filter(Boolean)) {
+        if (!NO_WRITE.has(name)) why.push(`imports ${name}`);
+      }
+    }
+    if (!mayLoad && /\bgetBuiltinModule\b|\bprocess\.binding\b|\bimport\s*\(|\bcreateRequire\b|\brequire\s*\(/.test(source)) why.push('loads a module at run time');
+    return why;
+  }
+
+  it('the write gate sees every way a module can get a write, and passes reads', () => {
+    for (const shape of [
+      "import { writeFile } from 'node:fs/promises';",
+      "import { rename as mv } from 'fs/promises';",
+      "import {\n  readFile,\n  writeFileSync,\n} from 'node:fs';",
+      "import { promises as fsp } from 'node:fs';",
+      "import fsp, { stat } from 'node:fs/promises';",
+      "import * as fs from 'node:fs';",
+      'import fs from "fs";',
+      "const fs = require('fs');",
+      "const { writeFile } = await import('node:fs/promises');",
+      'const fs = await import(`node:fs/promises`);',
+      "const fs = process.getBuiltinModule('node:fs');",
+      "import { createRequire } from 'node:module';\nconst load = createRequire(import.meta.url);",
+    ]) {
+      assert.notDeepEqual(writeReach(shape), [], `the gate passes: ${shape}`);
+    }
+    for (const shape of [
+      "import { readFile, stat } from 'node:fs/promises';",
+      'import { realpathSync as real, existsSync } from "node:fs";',
+      "import { stat, unlink } from 'node:fs/promises';\nimport { join } from 'node:path';",
+    ]) {
+      assert.deepEqual(writeReach(shape), [], shape);
+    }
+  });
+
+  it('only utils.js can write a file, and its writers refuse state.json', async (t) => {
     const root = new URL('../src/', import.meta.url);
-    const files = (await readdir(root, { recursive: true })).filter((f) => f.endsWith('.js'));
+    const files = (await readdir(root, { recursive: true })).filter((f) => /\.[cm]?js$/.test(f));
     assert.ok(files.length > 10, 'premise: the source tree was read');
-    // utils.js holds the writers (and the guard above); logic.js commits the
-    // research documents itself; server.js takes the whole fs module to read
-    // version files. Any other module that can write goes past the guard.
-    const MAY_WRITE = ['utils.js', 'tools/state/logic.js', 'server.js'];
-    const WRITES = /\b(writeFile|writeFileSync|rename|renameSync|appendFile|appendFileSync|copyFile|copyFileSync|cp|cpSync|open|openSync|createWriteStream|truncate|truncateSync|symlink|symlinkSync|link|linkSync)\b/;
-    const FS = "(?:node:)?fs(?:/promises)?";
     const reach = [];
     for (const file of files) {
-      const source = await readFile(new URL(file, root), 'utf8');
-      const named = [...source.matchAll(new RegExp(String.raw`import\s*\{([^}]*)\}\s*from\s*['"]${FS}['"]`, 'g'))].map((m) => m[1]);
-      const whole = new RegExp(String.raw`import\s+(?:\*\s+as\s+)?\w+\s+from\s*['"]${FS}['"]|require\(\s*['"]${FS}['"]\s*\)|import\(\s*['"]${FS}['"]`).test(source);
-      if (whole || named.some((names) => WRITES.test(names))) reach.push(file);
+      const why = writeReach(await readFile(new URL(file, root), 'utf8'), { mayLoad: file === 'server.js' });
+      if (file === 'utils.js') assert.notDeepEqual(why, [], 'premise: the gate sees the writers');
+      else if (why.length > 0) reach.push(`${file}: ${why.join(', ')}`);
     }
-    assert.ok(reach.includes('utils.js'), 'premise: the writers were found');
-    assert.deepEqual(reach.filter((file) => !MAY_WRITE.includes(file)), []);
+    assert.deepEqual(reach, []);
+    const utils = await import('../src/utils.js');
+    const dir = await project(t);
+    await assert.rejects(utils.writeFilesTogether([{ path: join(dir, 'a.md'), content: 'a' }, { path: statePath(dir), content: '{}' }]), /state\.json is written through writeState only/);
+    await assert.rejects(readFile(join(dir, 'a.md')), { code: 'ENOENT' }, 'a refused batch wrote part of itself');
     // writeStateFile, the guard's one way past, is writeState's alone.
     const callers = [];
     for (const file of files) {

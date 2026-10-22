@@ -1,8 +1,8 @@
 // Automation/business logic functions
 
 import { dirname, join } from 'node:path';
-import { writeFile, rename, unlink, open, stat } from 'node:fs/promises';
-import { ensureDir, getStatePath, fsyncDir, isPlainObject, shippedDocPath } from '../../utils.js';
+import { unlink, stat } from 'node:fs/promises';
+import { ensureDir, getStatePath, isPlainObject, shippedDocPath, writeAtomic, writeFilesTogether } from '../../utils.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 import {
   DEP_GATES,
@@ -746,43 +746,18 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // A marker already here is an earlier write that stopped partway; this
     // attempt failing must not be what clears it.
     const earlierMarker = await stat(sentinelPath).then(() => true, () => false);
-    await writeFile(sentinelPath, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
+    await writeAtomic(sentinelPath, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
 
-    // Atomic multi-file write: write all artifacts first, then rename in batch
+    // All documents or none (R-13, audit M5): each written and fsync'd before
+    // any is renamed in, and the directory fsync'd after.
     const normalizedArtifacts = normalizeResearchArtifacts(artifacts);
-    const tmpSuffix = `.${process.pid}-${Date.now()}.tmp`;
-    const tmpPaths = [];
-    let renamed = 0;
     try {
-      for (const fileName of RESEARCH_FILES) {
-        const finalPath = join(researchDir, fileName);
-        const tmpFile = finalPath + tmpSuffix;
-        tmpPaths.push({ tmp: tmpFile, final: finalPath });
-        // R-13 (audit M5): fsync each artifact's data before renaming it in.
-        const fh = await open(tmpFile, 'w');
-        try {
-          await fh.writeFile(normalizedArtifacts[fileName], 'utf-8');
-          await fh.sync();
-        } finally {
-          await fh.close();
-        }
-      }
-      // All writes succeeded + fsync'd — rename in batch, then fsync the dir so
-      // the renames themselves survive a power loss.
-      for (const { tmp, final: finalPath } of tmpPaths) {
-        await rename(tmp, finalPath);
-        renamed += 1;
-      }
-      await fsyncDir(researchDir);
+      await writeFilesTogether(RESEARCH_FILES.map((fileName) => ({ path: join(researchDir, fileName), content: normalizedArtifacts[fileName] })));
     } catch (err) {
-      // Cleanup any temp files on failure
-      for (const { tmp } of tmpPaths) {
-        try { await unlink(tmp); } catch {}
-      }
       // The marker exists for exactly this: once a document has been renamed
       // in, the research directory no longer matches state.json. Removing it
       // here left that disagreement with nothing to report it.
-      if (renamed === 0 && !earlierMarker) {
+      if (!err.renamed && !earlierMarker) {
         try { await unlink(sentinelPath); } catch {}
       }
       throw err;

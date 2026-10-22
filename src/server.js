@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { init, read, update, phaseComplete, patchPlan } from './tools/state/index.js';
@@ -10,7 +11,6 @@ const _require = createRequire(import.meta.url);
 const PKG_VERSION = _require('../package.json').version;
 
 // Version drift detection: warn when running code differs from disk or plugin cache
-const _fs = _require('node:fs');
 const _path = _require('node:path');
 const _os = _require('node:os');
 function _checkVersionDrift() {
@@ -29,8 +29,8 @@ function _checkVersionDrift() {
     // versions differed.
     const claudeDir = process.env.CLAUDE_CONFIG_DIR || _path.join(_os.homedir(), '.claude');
     const pluginsFile = _path.join(claudeDir, 'plugins', 'installed_plugins.json');
-    if (!isNpxRuntimeCopy(claudeDir) && _fs.existsSync(pluginsFile)) {
-      const plugins = JSON.parse(_fs.readFileSync(pluginsFile, 'utf8'));
+    if (!isNpxRuntimeCopy(claudeDir) && existsSync(pluginsFile)) {
+      const plugins = JSON.parse(readFileSync(pluginsFile, 'utf8'));
       const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
       if (gsdEntry?.version && gsdEntry.version !== PKG_VERSION) {
         return `⚠️ GSD server running v${PKG_VERSION} but plugin registry has v${gsdEntry.version}. Run /mcp to restart.`;
@@ -54,7 +54,7 @@ const server = new Server(
 
 /** Is this server the npx install's runtime copy, at <config>/gsd/? */
 function isNpxRuntimeCopy(claudeDir) {
-  const realish = (p) => { try { return _fs.realpathSync(p); } catch { return p; } };
+  const realish = (p) => { try { return realpathSync(p); } catch { return p; } };
   return realish(fileURLToPath(import.meta.url)).startsWith(realish(_path.join(claudeDir, 'gsd')) + _path.sep);
 }
 

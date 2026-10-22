@@ -119,9 +119,12 @@ still pending when the event loop ran dry (which does not say which test hung,
 so there is no verdict), and stops a replay that has not finished in 30
 minutes, removing its worktree. The server's general file writers refuse `state.json`, which
 only `writeState` writes (it records the writing version, which is how a state
-an older version wrote since is recognised); a test pins which modules can
-reach a filesystem write at all. This replaces gates that read the source for
-writers going around `writeState` and kept missing one more shape. The
+an older version wrote since is recognised). Only `src/utils.js` writes
+files: every other module imports from the fs modules only functions that
+cannot write a file's content, by name, and loads no module at run time; a
+test holds that, and holds itself against each import shape that can write.
+This replaces gates that listed the shapes of writers going around
+`writeState` and kept missing one more. The
 e2e install tests run a registry step once more when it runs out its budget
 (single requests through a proxy stall), and say so; no assertion changed.
 The 0.18.0 heading's date said 2026-10-21; it was tagged on 2026-10-22.

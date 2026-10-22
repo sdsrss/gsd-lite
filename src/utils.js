@@ -335,6 +335,42 @@ export async function writeAtomic(filePath, content) {
   await writeFileDurable(filePath, content);
 }
 
+/**
+ * Write several files as one: each to a temp file, fsync'd, then all renamed
+ * in, and their directories fsync'd. A failure while writing replaces none of
+ * them; one during the renames leaves those done in place, and the error says
+ * how many (`renamed`).
+ */
+export async function writeFilesTogether(files) {
+  for (const { path: filePath } of files) refuseStateFile(filePath);
+  const staged = [];
+  let renamed = 0;
+  try {
+    for (const { path: filePath, content } of files) {
+      const tmp = tmpPath(filePath);
+      staged.push({ tmp, filePath });
+      const fh = await open(tmp, 'w');
+      try {
+        await fh.writeFile(content, 'utf-8');
+        await fh.sync();
+      } finally {
+        await fh.close();
+      }
+    }
+    for (const { tmp, filePath } of staged) {
+      await rename(tmp, filePath);
+      renamed += 1;
+    }
+    for (const dir of new Set(staged.map(({ filePath }) => dirname(filePath)))) await fsyncDir(dir);
+  } catch (err) {
+    for (const { tmp } of staged.slice(renamed)) {
+      try { await unlink(tmp); } catch {}
+    }
+    err.renamed = renamed;
+    throw err;
+  }
+}
+
 /** writeState's own way to write state.json, durably; nothing else calls it. */
 export async function writeStateFile(filePath, state) {
   await writeFileDurable(filePath, JSON.stringify(state, null, 2) + '\n');
