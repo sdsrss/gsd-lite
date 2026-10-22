@@ -42,7 +42,10 @@ Check if GSD hooks are registered in Claude settings:
   - Any path present: StatusLine = registered
 - Determine the install mode first — hooks are registered in a different place
   for each, and checking only one reports a healthy install as broken:
-  - **Plugin**: `~/.claude/plugins/installed_plugins.json` lists `gsd@gsd`, and
+  - **Plugin**: `~/.claude/plugins/installed_plugins.json` lists `gsd@gsd` with
+    a record that applies to this project (no `scope`, `user` or `managed`
+    scope, or `project` / `local` scope whose `projectPath` is this project;
+    a record for another project serves that project only), and
     `enabledPlugins["gsd@gsd"]` is not `false` in `~/.claude/settings.json` or
     the project's `.claude/settings.json` / `settings.local.json`. Claude Code
     loads the three hooks from `hooks/hooks.json` in the plugin cache; nothing

@@ -295,8 +295,9 @@ function realish(p) {
 }
 
 /**
- * Is the gsd plugin installed for every project: at user scope, or in a
- * record from before Claude Code had scopes? install.js asks to decide what it
+ * Is the gsd plugin installed for every project: at user scope, at managed
+ * scope (installed by policy; such a record names no project), or in a record
+ * from before Claude Code had scopes? install.js asks to decide what it
  * installs and whether to register the MCP server; the updater asks to decide
  * whether to run install.js. They must give the same answer. A project or
  * local install serves the project it names only, so it is no reason for the
@@ -308,7 +309,7 @@ function pluginInstalledForUser(claudeDir) {
   try {
     const record = JSON.parse(fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8')).plugins?.['gsd@gsd'];
     const entries = Array.isArray(record) ? record : record ? [record] : [];
-    return entries.some((entry) => entry !== null && typeof entry === 'object' && (!entry.scope || entry.scope === 'user'));
+    return entries.some((entry) => entry !== null && typeof entry === 'object' && (!entry.scope || entry.scope === 'user' || entry.scope === 'managed'));
   } catch {
     return false;
   }

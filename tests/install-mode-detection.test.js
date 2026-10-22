@@ -11,23 +11,32 @@
 //   installed at project or local scope serves the project it names, and the
 //   npx install then removed its own user-scope MCP registration, leaving
 //   every other project with no gsd tools and no message.
+//
+// The delta review after those repairs found two more: a symlinked
+// <config>/hooks alone (a dotfiles layout) still read as a plugin install, and
+// a plugin installed by policy (`managed` scope, which applies to every
+// project) was no longer counted as one.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-function home(t, { linked = false } = {}) {
+function home(t, { linked = false, linkedHooks = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'gsd-install-mode-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const real = join(root, 'real-home');
   mkdirSync(join(real, '.claude'), { recursive: true });
   const homeDir = linked ? join(root, 'home') : real;
   if (linked) symlinkSync(real, homeDir, 'dir');
+  if (linkedHooks) {
+    mkdirSync(join(root, 'dotfiles', 'claude-hooks'), { recursive: true });
+    symlinkSync(join(root, 'dotfiles', 'claude-hooks'), join(real, '.claude', 'hooks'), 'dir');
+  }
   return { root, home: homeDir, claudeDir: join(homeDir, '.claude') };
 }
 
@@ -70,9 +79,22 @@ const userMcp = (claudeDir) => {
   }
 };
 
+// Records of a plugin that serves every project. Claude Code 2.1.308's
+// installed_plugins.json schema has the scopes managed, user, project and
+// local; a managed record (a plugin installed by policy) has no projectPath.
+const PLUGIN_FOR_EVERY_PROJECT = [
+  ['at user scope', { scope: 'user', version: '0.19.0' }],
+  ['at managed scope (by policy)', { scope: 'managed', version: '0.19.0' }],
+  ['in a record with no scope (older Claude Code)', { version: '0.19.0' }],
+];
+
 describe('install mode, as the updater reads it', () => {
   it('an npx install under a symlinked config directory is the npx install', (t) => {
     assert.equal(updaterMode(home(t, { linked: true })), 'manual');
+  });
+
+  it('an npx install whose hooks directory alone is a symlink is the npx install', (t) => {
+    assert.equal(updaterMode(home(t, { linkedHooks: true })), 'manual');
   });
 
   it('a plugin installed at project scope does not make the npx install a plugin install', (t) => {
@@ -87,7 +109,7 @@ describe('install mode, as the updater reads it', () => {
     assert.equal(updaterMode(ctx), 'manual');
   });
 
-  for (const [label, entry] of [['at user scope', { scope: 'user', version: '0.19.0' }], ['in a record with no scope (older Claude Code)', { version: '0.19.0' }]]) {
+  for (const [label, entry] of PLUGIN_FOR_EVERY_PROJECT) {
     it(`a plugin installed ${label} is the plugin install`, (t) => {
       const ctx = home(t);
       writePlugins(ctx.claudeDir, [entry]);
@@ -109,11 +131,56 @@ describe('install mode, as install.js reads it', { timeout: 180000 }, () => {
     assert.equal(readFileSync(join(ctx.claudeDir, 'gsd', '.install-mode'), 'utf8').trim(), 'manual');
   });
 
-  it('a plugin installed at user scope is the plugin install', (t) => {
+  for (const [label, entry] of PLUGIN_FOR_EVERY_PROJECT) {
+    it(`a plugin installed ${label} is the plugin install`, (t) => {
+      const ctx = home(t);
+      writePlugins(ctx.claudeDir, [entry]);
+      install(ctx);
+      assert.equal(userMcp(ctx.claudeDir), undefined);
+      assert.equal(existsSync(join(ctx.claudeDir, 'commands', 'gsd', 'start.md')), false, 'the plugin serves the commands');
+      assert.equal(readFileSync(join(ctx.claudeDir, 'gsd', '.install-mode'), 'utf8').trim(), 'plugin');
+    });
+  }
+});
+
+// The server's health check warns when the plugin's record names another
+// version than the one running: the plugin was updated, restart the server.
+// That is the plugin's server's question. Asked by the npx install's copy, the
+// first release whose npx server Claude Code actually starts, it warned beside
+// any plugin record of another version, such as one installed at project
+// scope for another project (delta review).
+describe("the server's version check reads the plugin's record for the plugin's server only", () => {
+  async function health(serverPath, claudeDir) {
+    const saved = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = claudeDir;
+    try {
+      const { handleToolCall } = await import(pathToFileURL(serverPath).href);
+      return await handleToolCall('health', {});
+    } finally {
+      if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved;
+    }
+  }
+
+  function withOtherPluginVersion(t) {
     const ctx = home(t);
-    writePlugins(ctx.claudeDir, [{ scope: 'user', version: '0.19.0' }]);
-    install(ctx);
-    assert.equal(userMcp(ctx.claudeDir), undefined);
-    assert.equal(readFileSync(join(ctx.claudeDir, 'gsd', '.install-mode'), 'utf8').trim(), 'plugin');
+    writePlugins(ctx.claudeDir, [{ scope: 'project', projectPath: join(ctx.root, 'some-project'), version: '0.0.1' }]);
+    return ctx;
+  }
+
+  it("the npx install's copy does not warn about the plugin's version", async (t) => {
+    const ctx = withOtherPluginVersion(t);
+    const runtime = join(ctx.claudeDir, 'gsd');
+    cpSync(join(PROJECT_ROOT, 'src'), join(runtime, 'src'), { recursive: true });
+    cpSync(join(PROJECT_ROOT, 'package.json'), join(runtime, 'package.json'));
+    mkdirSync(join(runtime, 'node_modules'));
+    for (const entry of readdirSync(join(PROJECT_ROOT, 'node_modules'))) symlinkSync(join(PROJECT_ROOT, 'node_modules', entry), join(runtime, 'node_modules', entry));
+    const result = await health(join(runtime, 'src', 'server.js'), ctx.claudeDir);
+    assert.equal(result.status, 'ok', JSON.stringify(result));
+    assert.equal(result.warning, undefined);
+  });
+
+  it('any other copy still does', async (t) => {
+    const result = await health(join(PROJECT_ROOT, 'src', 'server.js'), withOtherPluginVersion(t).claudeDir);
+    assert.match(String(result.warning), /plugin registry has v0\.0\.1/);
   });
 });

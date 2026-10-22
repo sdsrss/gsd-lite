@@ -479,10 +479,13 @@ function getInstallMode() {
   // an installed plugin's cache.
   if (pluginInstalledForUser(claudeDir)) return 'plugin';
   if (isDevMode()) return 'dev';
-  // Real paths on both sides: pluginRoot comes from __dirname, which Node
-  // resolves through symlinks, and claudeDir is as given. Under a symlinked
-  // ~/.claude the npx install read as a plugin install and was never updated.
-  return realish(pluginRoot) === realish(claudeDir)
+  // The npx install's copy is the one in <config>/hooks. Compared as real
+  // paths, this file's directory to that one: __dirname is resolved through
+  // symlinks and claudeDir is as given, so under a symlinked ~/.claude, or a
+  // symlinked ~/.claude/hooks alone (whose target can have any name), the npx
+  // install read as a plugin install and was never updated.
+  const hooksDir = process.env.GSD_TEST_PLUGIN_ROOT ? path.join(pluginRoot, 'hooks') : __dirname;
+  return realish(hooksDir) === realish(path.join(claudeDir, 'hooks'))
     ? 'manual'
     : 'plugin';
 }
