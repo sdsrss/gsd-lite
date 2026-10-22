@@ -186,7 +186,14 @@ try {
       error ??= lines[j].match(/^\s*error: (.+)$/)?.[1] ?? null;
     }
     const skipped = / # (SKIP|TODO)\b/.test(m[3]);
-    results.push({ ok: m[2] === 'ok', name: m[3].replace(/ # (SKIP|TODO)\b.*$/, '').trim(), type, failureType, error, skipped });
+    results.push({ ok: m[2] === 'ok', name: m[3].replace(/ # (SKIP|TODO)\b.*$/, '').trim(), type, failureType, error, skipped, indent: m[1].length });
+  }
+  // A suite's result follows its children's, one level out, so a result's
+  // parent is the next one less indented. A TODO or SKIP suite makes what it
+  // holds the same: Node 20 does not mark a todo suite's tests themselves.
+  for (let i = results.length - 1; i >= 0; i--) {
+    const parent = results.slice(i + 1).find((r) => r.indent < results[i].indent);
+    if (parent?.skipped) results[i].skipped = true;
   }
   // The verdict is read from each result's failureType, not from the summary
   // counts, because Node's counts do not say what ran: a test that timed out
@@ -197,20 +204,34 @@ try {
   //   - cancelledByParent never ran, and hookFailed is the hook's result
   //     (before or after the body — TAP does not say which), not the test's;
   //   - a timeout is a red, a test's or a whole suite's (its tests are then
-  //     reported as cancelled);
-  //   - a describe whose callback threw registered none of its tests.
+  //     reported as cancelled), and so is a test still pending when the event
+  //     loop ran dry: the same hang, which Node 20 and 22 report as
+  //     cancelledByParent where 24 and later report the timeout;
+  //   - a describe whose callback threw registered none of its tests, and a
+  //     suite whose before or after hook failed is the hook's result, as a
+  //     test's hook is.
   // `type` is absent on a bare result line, and on every test result under
   // Node 20; keep those rather than dropping a real failure over a missing
   // diagnostic.
   const NO_RESULT = ['cancelledByParent', 'hookFailed'];
+  const DRAINED = /Promise resolution is still pending but the event loop has already resolved/;
+  const hung = (r) => r.failureType === 'cancelledByParent' && DRAINED.test(r.error ?? '');
   const leafResults = results.filter((r) => r.type !== 'suite' && !r.skipped);
-  const suiteResults = results.filter((r) => r.type === 'suite');
-  const failing = [
-    ...leafResults.filter((r) => !r.ok && !NO_RESULT.includes(r.failureType)).map((r) => r.name),
-    ...suiteResults.filter((r) => r.failureType === 'testTimeoutFailure').map((r) => r.name),
-  ];
-  const noResult = leafResults.filter((r) => !r.ok && NO_RESULT.includes(r.failureType));
+  const suiteResults = results.filter((r) => r.type === 'suite' && !r.skipped);
+  const failingTests = leafResults.filter((r) => !r.ok && (!NO_RESULT.includes(r.failureType) || hung(r))).map((r) => r.name);
+  const timedOutSuites = suiteResults.filter((r) => r.failureType === 'testTimeoutFailure').map((r) => r.name);
+  const failing = [...failingTests, ...timedOutSuites];
+  const noResult = leafResults.filter((r) => !r.ok && NO_RESULT.includes(r.failureType) && !hung(r));
   const brokenSuites = suiteResults.filter((r) => r.failureType === 'testCodeFailure');
+  const suiteHookFailures = suiteResults.filter((r) => r.failureType === 'hookFailed');
+  // Counted apart, each against its own kind: a suite is not one of the
+  // tests it holds, and "1/3 failed" read as a test where a suite timed out.
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const noResultParts = [
+    noResult.length > 0 && `${noResult.length} of ${plural(tests, 'test', 'tests')} have no result of their own`,
+    brokenSuites.length > 0 && `${plural(brokenSuites.length, 'suite threw while declaring its tests', 'suites threw while declaring their tests')}`,
+    suiteHookFailures.length > 0 && `${plural(suiteHookFailures.length, 'suite\'s hook failed', 'suites\' hooks failed')}`,
+  ].filter(Boolean);
   const passing = leafResults.filter((r) => r.ok).map((r) => r.name);
   const hookFailures = results.filter((r) => !r.ok && r.failureType === 'hookFailed');
   const printWhy = () => {
@@ -229,7 +250,7 @@ try {
   // `VACUOUS — 1/1 passed`, which tells the reader their gate is worthless when
   // the truth is that they typed the wrong path. A script whose whole thesis is
   // verdicts that look real and are not does not get to have one.
-  const didNotLoad = failing.filter((name) => opts.files.includes(name));
+  const didNotLoad = failingTests.filter((name) => opts.files.includes(name));
   const declaredNothing = passing.filter((name) => opts.files.includes(name));
   // Message first, error code second: the code matches node's own `throw new
   // ERR_MODULE_NOT_FOUND(` line in the stack, which names the class and not the
@@ -247,7 +268,7 @@ try {
     console.log('file, which is indistinguishable from a suite that passed. Nothing was');
     console.log('gated, so there is no vacuity result to give. Check the path is a test file.');
     exitCode = 2;
-  } else if (tests === 0 || didNotLoad.length) {
+  } else if ((tests === 0 && noResultParts.length === 0) || didNotLoad.length) {
     console.log(`INCONCLUSIVE — ${didNotLoad.join(', ') || 'the file'} did not load against ${baseSha}.`);
     if (loadError) console.log(`  ${loadError.trim()}`);
     console.log('\nNode reports an unloadable file as one failing test named after the file, so');
@@ -256,17 +277,21 @@ try {
     console.log('parent rather than a distant branch point.');
     exitCode = 2;
   } else if (failing.length > 0) {
-    console.log(`DISCRIMINATIVE — ${failing.length}/${tests} failed on ${baseSha}:\n`);
+    const red = [
+      failingTests.length > 0 && `${failingTests.length}/${tests} failed`,
+      timedOutSuites.length > 0 && plural(timedOutSuites.length, 'suite timed out', 'suites timed out'),
+    ].filter(Boolean).join(' and ');
+    console.log(`DISCRIMINATIVE — ${red} on ${baseSha}:\n`);
     for (const name of [...new Set(failing)]) console.log(`  ✖ ${name}`);
-    if (noResult.length > 0 || brokenSuites.length > 0) {
-      console.log(`\n  (${noResult.length} more have no result of their own: a hook, an enclosing suite or its declaration failed)`);
+    if (noResultParts.length > 0) {
+      console.log(`\n  (also: ${noResultParts.join('; ')})`);
       printWhy();
     }
     console.log('\nRead the failures before believing them. A test that goes red on the base tree');
     console.log('for an unrelated reason — a missing import, a helper added by the same commit —');
     console.log('is indistinguishable from one that earns its place, except by reading it.');
-  } else if (noResult.length > 0 || brokenSuites.length > 0) {
-    console.log(`INCONCLUSIVE — ${noResult.length} of ${tests} tests have no result of their own on ${baseSha}: a hook, an enclosing suite or a suite's declaration failed.`);
+  } else if (noResultParts.length > 0) {
+    console.log(`INCONCLUSIVE — ${noResultParts.join('; ')} on ${baseSha}.`);
     printWhy();
     console.log('\nA test whose setup or teardown failed, or that was never declared, was neither');
     console.log('passed nor failed. The rest passing says nothing about these. Replay against a');

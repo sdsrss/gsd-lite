@@ -174,7 +174,8 @@ describe('slow suite', { timeout: 300 }, () => {
 ` });
     const { code, out } = repo.replay('tests/slowsuite.test.js');
     assert.equal(code, 0, out);
-    assert.match(out, /DISCRIMINATIVE — 1\/1 failed/);
+    // Not "1/1 failed": that was the suite counted as one of its own tests.
+    assert.match(out, /DISCRIMINATIVE — 1 suite timed out/);
     assert.match(out, /✖ slow suite/);
   });
 
@@ -189,8 +190,82 @@ it('other', () => {});
 ` });
     const { code, out } = repo.replay('tests/collect.test.js');
     assert.equal(code, 2, out);
-    assert.match(out, /INCONCLUSIVE/);
+    assert.match(out, /INCONCLUSIVE — 1 suite threw while declaring its tests/);
+    assert.doesNotMatch(out, /\b0 of \d+ tests/, 'no test lacks a result; the suite does');
     assert.match(out, /needs the fix to collect/);
+  });
+
+  // Third pre-tag review of 0.17.2 (left open then, fixed in 0.19.0).
+  it('reports a failing suite-level after() as a hook failure, not as a vacuous pass', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/suite-teardown.test.js': `${HEADER}
+describe('suite', () => {
+  after(() => { if (require('../src.cjs') !== 2) throw new Error('teardown needs the fix'); });
+  it('x', () => {});
+});
+` });
+    const { code, out } = repo.replay('tests/suite-teardown.test.js');
+    assert.equal(code, 2, out);
+    assert.match(out, /INCONCLUSIVE/);
+    assert.match(out, /a hook failed in "suite": .*teardown needs the fix/);
+  });
+
+  it('says a describe threw, rather than "0 of 1 tests have no result", when that is all that happened', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/only-collect.test.js': `${HEADER}
+describe('needs the fix to collect', () => {
+  if (require('../src.cjs') !== 2) throw new Error('collection needs the fix');
+  it('a', () => {});
+});
+` });
+    const { code, out } = repo.replay('tests/only-collect.test.js');
+    assert.equal(code, 2, out);
+    assert.match(out, /INCONCLUSIVE — 1 suite threw while declaring its tests/);
+    assert.doesNotMatch(out, /\b0 of \d+ tests/);
+    assert.match(out, /"needs the fix to collect" threw while declaring its tests: .*collection needs the fix/);
+  });
+
+  it('counts a suite that timed out apart from the tests it holds', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/slow-three.test.js': `${HEADER}
+describe('slow suite', { timeout: 300 }, () => {
+  it('waits', () => (require('../src.cjs') === 2 ? undefined : new Promise((resolve) => setTimeout(resolve, 2000))));
+  it('b', () => {});
+  it('c', () => {});
+});
+` });
+    const { code, out } = repo.replay('tests/slow-three.test.js');
+    assert.equal(code, 0, out);
+    assert.match(out, /DISCRIMINATIVE — 1 suite timed out/);
+    assert.doesNotMatch(out, /\b1\/3 failed/, 'a suite counted as one of the three tests');
+    assert.match(out, /✖ slow suite/);
+  });
+
+  // A hang with nothing pending lets the event loop drain before the timeout:
+  // Node 20 and 22 report the test as cancelled with this error, 24 and later
+  // as the timeout it is. Red on every version, then.
+  it('counts a test still pending when the event loop ran dry as a failure', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/drained.test.js': `${HEADER}
+it('hangs', { timeout: 500 }, () => (require('../src.cjs') === 2 ? undefined : new Promise(() => {})));
+` });
+    const { code, out } = repo.replay('tests/drained.test.js');
+    assert.equal(code, 0, out);
+    assert.match(out, /DISCRIMINATIVE — 1\/1 failed/);
+    assert.match(out, /✖ hangs/);
+  });
+
+  it('does not count a todo suite that timed out as a red', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/todo-suite.test.js': `${HEADER}
+describe('later', { todo: true, timeout: 300 }, () => {
+  it('waits', () => (require('../src.cjs') === 2 ? undefined : new Promise((resolve) => setTimeout(resolve, 2000))));
+});
+it('passes', () => {});
+` });
+    const { code, out } = repo.replay('tests/todo-suite.test.js');
+    assert.equal(code, 1, out);
+    assert.match(out, /VACUOUS — 1\/\d+ passed/);
   });
 
   it('does not call a file whose every test was skipped vacuous', (t) => {
