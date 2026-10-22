@@ -14,8 +14,8 @@
 //      source throws EEXIST — so every Layer A suite was cancelled by (1).
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -59,6 +59,9 @@ function fixtureRepo(t) {
     replay(file, extraEnv = {}) {
       const run = spawnSync(process.execPath, [join(root, 'scripts', 'gate-replay.js'), file], { cwd: root, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 120_000 });
       return { code: run.status, out: `${run.stdout || ''}${run.stderr || ''}` };
+    },
+    start(file, extraEnv = {}) {
+      return spawn(process.execPath, [join(root, 'scripts', 'gate-replay.js'), file], { cwd: root, env: { ...env, ...extraEnv }, stdio: 'ignore' });
     },
   };
 }
@@ -298,6 +301,88 @@ it('waits', () => (require('../src.cjs') === 2 ? undefined : new Promise((resolv
     assert.match(out, /INCONCLUSIVE — the replay did not finish in 3 s/);
     assert.equal(repo.worktrees().length, 1, `a worktree was left: ${repo.worktrees().join(', ')}`);
   });
+
+  // Stopped at the bound, the runner alone was killed: the file process it
+  // started kept running (forever, with a handle open), and what the tests
+  // made in the temp directory stayed there (delta review).
+  const HANGS = `${HEADER}import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+it('hangs', () => {
+  if (require('../src.cjs') === 2) return undefined;
+  const dir = mkdtempSync(join(tmpdir(), 'gsd-replay-leftover-'));
+  writeFileSync(process.env.REPLAY_PROBE, JSON.stringify({ pid: process.pid, dir }));
+  setInterval(() => {}, 1000);
+  return new Promise(() => {});
+});
+`;
+  // Where the hanging test says what it made, in a directory of its own, so
+  // this cleans up after a replay that did not, whatever else is removed first.
+  function probed(t) {
+    const home = mkdtempSync(join(tmpdir(), 'gsd-replay-probe-'));
+    const file = join(home, 'probe.json');
+    t.after(() => {
+      if (existsSync(file)) {
+        const { pid, dir } = JSON.parse(readFileSync(file, 'utf8'));
+        try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
+        rmSync(dir, { recursive: true, force: true });
+      }
+      rmSync(home, { recursive: true, force: true });
+    });
+    return file;
+  }
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  async function gone(pid) {
+    for (let i = 0; i < 20 && alive(pid); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    return !alive(pid);
+  }
+
+  it('a run stopped at its bound leaves no process and nothing in the temp directory', async (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/hangs.test.js': HANGS });
+    const probe = probed(t);
+    const { code, out } = repo.replay('tests/hangs.test.js', { GATE_REPLAY_RUN_TIMEOUT_MS: '3000', REPLAY_PROBE: probe });
+    assert.equal(code, 2, out);
+    assert.match(out, /did not finish in 3 s/);
+    const { pid, dir } = JSON.parse(readFileSync(probe, 'utf8'));
+    assert.ok(await gone(pid), 'the test file\'s process is still running');
+    assert.equal(existsSync(dir), false, `${dir} was left`);
+  });
+
+  it('a replay stopped by a signal stops its run and removes its worktree', async (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/hangs.test.js': HANGS });
+    const probe = probed(t);
+    const child = repo.start('tests/hangs.test.js', { REPLAY_PROBE: probe });
+    const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+    t.after(() => child.kill('SIGKILL'));
+    for (let i = 0; i < 200 && !existsSync(probe); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(existsSync(probe), 'premise: the test started');
+    child.kill('SIGTERM');
+    assert.deepEqual(await exited, { code: 143, signal: null });
+    const { pid, dir } = JSON.parse(readFileSync(probe, 'utf8'));
+    assert.ok(await gone(pid), 'the test file\'s process is still running');
+    assert.equal(existsSync(dir), false, `${dir} was left`);
+    assert.equal(repo.worktrees().length, 1, `a worktree was left: ${repo.worktrees().join(', ')}`);
+  });
+
+  for (const value of ['-1', '0', '1.5', 'thirty']) {
+    it(`refuses a run bound of ${value}`, (t) => {
+      const repo = fixtureRepo(t);
+      repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/a.test.js': `${HEADER}it('a', () => { assert.equal(require('../src.cjs'), 2); });\n` });
+      const { code, out } = repo.replay('tests/a.test.js', { GATE_REPLAY_RUN_TIMEOUT_MS: value });
+      assert.equal(code, 2, out);
+      assert.match(out, /^REFUSED — GATE_REPLAY_RUN_TIMEOUT_MS/m);
+      assert.equal(repo.worktrees().length, 1);
+    });
+  }
 
   it('does not count a todo suite that timed out as a red', (t) => {
     const repo = fixtureRepo(t);

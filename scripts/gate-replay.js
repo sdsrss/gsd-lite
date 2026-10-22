@@ -48,7 +48,7 @@
  * this checkout's packages.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -113,8 +113,68 @@ for (const file of opts.files) {
   }
 }
 
+// The run has a bound. A test that hangs on the base tree with no timeout
+// of its own held the runner, and this replay with it, forever. Past the
+// bound there is no verdict. Not a per-test --test-timeout: Node 22 applies it
+// to each file's process as a whole, so a slow file (e2e-install takes
+// minutes) would read as a red.
+const boundSetting = process.env.GATE_REPLAY_RUN_TIMEOUT_MS;
+const runTimeout = boundSetting === undefined || boundSetting === '' ? 30 * 60_000 : Number(boundSetting);
+if (!Number.isSafeInteger(runTimeout) || runTimeout <= 0) {
+  console.log(`REFUSED — GATE_REPLAY_RUN_TIMEOUT_MS must be a whole number of milliseconds above 0, not "${boundSetting}". Nothing was replayed.`);
+  process.exit(2);
+}
+
 const work = mkdtempSync(join(tmpdir(), 'gsd-gate-replay-'));
 const tree = join(work, 'tree');
+// What the tests make in the temp directory goes here and is removed with the
+// rest: a run stopped at its bound, or a test that does not clean up, left
+// its directories in the system's.
+const scratch = join(work, 'tmp');
+
+// The creating task disposes its own sandbox; a leftover worktree also leaves
+// a registration behind in .git/worktrees that `git worktree list` then shows.
+function cleanup() {
+  try { git('worktree', 'remove', '--force', tree); } catch { /* never registered */ }
+  rmSync(work, { recursive: true, force: true });
+}
+
+// The runner and the file processes it starts run as one process group, and
+// a stop takes the group: killed alone, the runner left each file process
+// running, and one with a handle open ran on for good (delta review).
+let stopRun = () => {};
+function runBounded(command, args, options) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, { ...options, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    const stop = () => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+    };
+    stopRun = stop;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; stop(); }, runTimeout);
+    child.on('error', (err) => { clearTimeout(timer); rejectRun(err); });
+    // Whatever of the group outlives the runner is a file process it left.
+    child.on('exit', () => { clearTimeout(timer); stop(); });
+    child.on('close', () => {
+      stopRun = () => {};
+      resolveRun({ stdout, stderr, timedOut });
+    });
+  });
+}
+
+// Interrupted, the replay stops its run and removes what it made; killed by a
+// signal before, it left its worktree registered (delta review).
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.on(signal, () => {
+    stopRun();
+    cleanup();
+    process.exit(code);
+  });
+}
 
 let exitCode = 0;
 try {
@@ -151,20 +211,13 @@ try {
   // project supports, and nothing said so, because INCONCLUSIVE is a legitimate
   // verdict rather than an error. Surfaced only when a test OF the gate ran it
   // under the CI matrix instead of on one developer's Node.
-  // The run has a bound. A test that hangs on the base tree with no timeout
-  // of its own held the runner, and this replay with it, forever, and a
-  // replay killed by hand left its worktree behind. Past the bound there is
-  // no verdict, and the finally below still removes the worktree. Not a
-  // per-test --test-timeout: Node 22 applies it to each file's process as a
-  // whole, so a slow file (e2e-install takes minutes) would read as a red.
-  // A file process the runner started can outlive the stop.
-  const runTimeout = Number(process.env.GATE_REPLAY_RUN_TIMEOUT_MS) || 30 * 60_000;
-  const run = spawnSync(
+  mkdirSync(scratch);
+  const run = await runBounded(
     process.execPath,
     ['--require', './tests/git-sandbox.cjs', '--test', '--test-reporter=tap', ...opts.files],
-    { cwd: tree, encoding: 'utf8', timeout: runTimeout, killSignal: 'SIGKILL' },
+    { cwd: tree, env: { ...process.env, TMPDIR: scratch, TMP: scratch, TEMP: scratch } },
   );
-  const out = `${run.stdout || ''}${run.stderr || ''}`;
+  const out = `${run.stdout}${run.stderr}`;
 
   const num = (label) => {
     const m = out.match(new RegExp(`^# ${label} (\\d+)$`, 'm'));
@@ -270,7 +323,7 @@ try {
   const loadError = (out.match(/^.*(Cannot find module|Cannot find package|SyntaxError:|ERR_UNKNOWN_FILE_EXTENSION).*$/m)
     || out.match(/^.*ERR_MODULE_NOT_FOUND.*$/m) || [])[0];
 
-  if (run.error?.code === 'ETIMEDOUT') {
+  if (run.timedOut) {
     console.log(`INCONCLUSIVE — the replay did not finish in ${Math.round(runTimeout / 1000)} s on ${baseSha} and was stopped; nothing was judged.`);
     exitCode = 2;
   } else if (tests === null || fail === null) {
@@ -322,10 +375,7 @@ try {
     exitCode = 1;
   }
 } finally {
-  // The creating task disposes its own sandbox; a leftover worktree also leaves
-  // a registration behind in .git/worktrees that `git worktree list` then shows.
-  try { git('worktree', 'remove', '--force', tree); } catch { /* never registered */ }
-  rmSync(work, { recursive: true, force: true });
+  cleanup();
 }
 
 process.exit(exitCode);

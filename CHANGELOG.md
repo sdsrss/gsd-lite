@@ -116,8 +116,10 @@ both config layouts, and has Claude Code start the installed server
 reads a suite's failing `after()`, a describe that threw, a suite timeout and
 a todo suite as what each is, says when Node 20 or 22 reported a hang as tests
 still pending when the event loop ran dry (which does not say which test hung,
-so there is no verdict), and stops a replay that has not finished in 30
-minutes, removing its worktree. The server's general file writers refuse `state.json`, which
+so those tests give no verdict), and stops a replay that has not finished in
+30 minutes (`GATE_REPLAY_RUN_TIMEOUT_MS`) with every process it started; one
+stopped by a signal stops its run too, and either way its worktree and what
+its tests left in the temp directory are removed. The server's general file writers refuse `state.json`, which
 only `writeState` writes (it records the writing version, which is how a state
 an older version wrote since is recognised). Only `src/utils.js` writes
 files: every other module imports from the fs modules only functions that
