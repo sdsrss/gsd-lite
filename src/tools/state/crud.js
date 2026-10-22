@@ -16,6 +16,7 @@ import {
   createInitialState,
   detectCycles,
   handWrittenResearchBlocked,
+  researchErrors,
   settleSuspendedModes,
 } from '../../schema.js';
 import {
@@ -387,12 +388,12 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     const merged = { ...state, ...updates };
     settleSuspendedModes(state, merged);
 
-    // A non-boolean flag, or a decision_index that is not an object, is left
-    // to validation, which names it.
+    // A record validation refuses (a non-boolean flag, a decision_index or a
+    // decision of the wrong shape) is left to validation, which names what is
+    // wrong; read for its flag, a malformed decision was "not the [BLOCKED]
+    // placeholder".
     const research = updates.research;
-    if (isPlainObject(research)
-        && (!('blocked' in research) || typeof research.blocked === 'boolean')
-        && (!('decision_index' in research) || isPlainObject(research.decision_index))) {
+    if (isPlainObject(research) && researchErrors(research).length === 0) {
       const flag = handWrittenResearchBlocked(research, state.research);
       if (flag.error) return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: flag.error };
       merged.research = { ...research, blocked: flag.blocked };

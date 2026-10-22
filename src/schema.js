@@ -327,7 +327,7 @@ export function validateTransition(entity, from, to) {
 // "null or an object" and an evidence entry only for a scope, so state-update
 // wrote what validateState refuses: a decision_index entry of null, which the
 // next research refresh read `.summary` of and threw on.
-function researchErrors(research) {
+export function researchErrors(research) {
   if (research === null) return [];
   if (!isPlainObject(research)) return ['research must be null or an object'];
   const errors = [];
