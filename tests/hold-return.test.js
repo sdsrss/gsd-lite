@@ -490,6 +490,72 @@ describe('the holds the server releases itself', () => {
     assert.deepEqual(after.suspended_modes, []);
   });
 
+  // A refresh that sends tasks back drops the review it interrupted, since
+  // what it reviewed may have to be redone. Stored while a pause sat over the
+  // refresh hold, it kept the review: released, the phase review ran over a
+  // task needing revalidation, passed, and the phase completed without a
+  // review of the redone work (pre-tag review; 0.17.2 did the same).
+  for (const [scope, review, mode] of [
+    ['phase', { scope: 'phase', scope_id: 1 }, 'reviewing_phase'],
+    ['task', { scope: 'task', scope_id: '1.1', stage: 'quality' }, 'reviewing_task'],
+  ]) {
+    it(`a refresh stored under a pause that sends tasks back drops the interrupted ${scope} review`, async (t) => {
+      const dir = await createTempDir();
+      t.after(() => removeTempDir(dir));
+      await stateApi.init({ project: 'p', phases: [{ name: 'A', tasks: [
+        { index: 1, name: 'cites a', research_basis: ['decision:a'] },
+        { index: 2, name: 'b' },
+      ] }], basePath: dir });
+      assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
+      if (scope === 'phase') {
+        await acceptTask(dir, 1, '1.1');
+        await acceptTask(dir, 1, '1.2');
+        await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: dir });
+      } else {
+        await checkpointTask(dir, 1, '1.1');
+      }
+      assert.ok((await update({ updates: { workflow_mode: mode, current_review: review }, basePath: dir })).success, 'premise: reviewing');
+      const statePath = join(dir, '.gsd', 'state.json');
+      const raw = JSON.parse(await readFile(statePath, 'utf8'));
+      raw.research.expires_at = new Date(Date.now() - 86_400_000).toISOString();
+      await writeFile(statePath, JSON.stringify(raw));
+      assert.equal((await resumeWorkflow({ basePath: dir })).action, 'dispatch_researcher', 'premise: the research expired during the review');
+      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+      const revised = { ...research, decision_index: { 'decision:a': { summary: 'A, revised', source: 'docs' } } };
+      const stored = await handleResearcherResult({ ...revised, basePath: dir });
+      assert.deepEqual(stored.invalidated_tasks, ['1.1'], JSON.stringify(stored));
+      const paused = await resumeWorkflow({ basePath: dir });
+      await update({ updates: { workflow_mode: paused.resume_to }, basePath: dir });
+      const res = await resumeWorkflow({ basePath: dir });
+      assert.notEqual(res.action, 'dispatch_reviewer', JSON.stringify(res));
+      const after = await read({ basePath: dir });
+      assert.equal(after.workflow_mode, 'executing_task');
+      assert.equal(after.current_review, null);
+      assert.deepEqual(after.suspended_modes, []);
+    });
+  }
+
+  it('a refresh stored under a decision held over the refresh leaves the decision alone', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await stateApi.init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'cites a', research_basis: ['decision:a'] }] }], basePath: dir });
+    assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
+    await acceptTask(dir, 1, '1.1');
+    await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: dir });
+    const decision = { scope: 'phase', scope_id: 1, stage: 'review_retry_exhausted', retry_count: 6 };
+    for (const updates of [
+      { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } },
+      { workflow_mode: 'research_refresh_needed' },
+      { workflow_mode: 'awaiting_user', current_review: decision },
+      { workflow_mode: 'paused_by_user' },
+    ]) assert.ok((await update({ updates, basePath: dir })).success, JSON.stringify(updates));
+    assert.deepEqual((await read({ basePath: dir })).suspended_modes, ['reviewing_phase', 'research_refresh_needed', 'awaiting_user'], 'premise');
+    const revised = { ...research, decision_index: { 'decision:a': { summary: 'A, revised', source: 'docs' } } };
+    const stored = await handleResearcherResult({ ...revised, basePath: dir });
+    assert.deepEqual(stored.invalidated_tasks, ['1.1'], JSON.stringify(stored));
+    assert.deepEqual((await read({ basePath: dir })).current_review, decision);
+  });
+
   // Each level of resume's recursion went back out through resumeWorkflow,
   // which added the research-commit warning again: nine copies on the
   // deepest chain (delta review of the pre-ship repairs).
@@ -809,11 +875,20 @@ describe('a state an older version wrote since', () => {
     const root = new URL('../src/', import.meta.url);
     const files = (await readdir(root, { recursive: true })).filter((f) => f.endsWith('.js'));
     assert.ok(files.length > 10, 'premise: the source tree was read');
+    // Named as what may be handed statePath, not as the writers to avoid: the
+    // first version matched writeJson( only, and writeAtomic(statePath, …) in
+    // init or phase-complete passed the suite (pre-tag review).
+    const READERS = ['dirname', 'ensureLockPathFromStatePath', 'get', 'set', 'loadState', 'readJson', 'stat', 'writeState'];
     const writers = [];
+    const others = [];
     for (const file of files) {
       const source = await readFile(new URL(file, root), 'utf8');
-      for (const _ of source.matchAll(/writeJson\(\s*statePath\b/g)) writers.push(file);
+      for (const [, callee] of source.matchAll(/\b([A-Za-z_$][\w$]*)\(\s*statePath\b/g)) {
+        if (callee === 'writeJson') writers.push(file);
+        else if (!READERS.includes(callee)) others.push(`${file}: ${callee}`);
+      }
     }
     assert.deepEqual(writers, ['tools/state/constants.js'], 'the one direct write is writeState\'s own');
+    assert.deepEqual(others, [], 'statePath handed to something that is neither writeState nor a reader');
   });
 });
