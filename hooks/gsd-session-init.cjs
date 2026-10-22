@@ -6,6 +6,7 @@
 // 2. Auto-registers statusLine in settings.json if not already configured.
 // 3. (removed — the MCP server is declared inline in plugin.json)
 // 4. Shows notification if a previous background update completed or found a new version.
+//    4b. Says so every session while install.js could not register the MCP server.
 // 5. Spawns background auto-update (detached, non-blocking).
 // 6. Injects GSD project progress into stdout + CLAUDE.md (if active project found).
 // Idempotent: skips if statusLine already points to gsd-statusline, preserves
@@ -331,6 +332,32 @@ setTimeout(() => process.exit(0), 4000).unref();
       fs.unlinkSync(notifPath);
     }
   } catch { /* silent */ }
+
+  // ── Phase 4b: An MCP server the install could not register ──
+  // install.js records a registration that failed (`claude` not on PATH,
+  // `claude mcp add` refused). Without it there are no gsd tools, and an
+  // install the updater ran cannot say so any other way, so this says it
+  // every session until the server is registered. Only the npx install's
+  // copy: under the plugin the plugin serves the server. A marker whose
+  // registration has since been made (the printed command, run by hand) is
+  // cleared without a word.
+  if (!process.env.CLAUDE_PLUGIN_ROOT) {
+    try {
+      const { unregisteredMarkerPath, userRegistration } = require('./lib/mcp-registration.cjs');
+      const markerPath = unregisteredMarkerPath(path.join(claudeDir, 'gsd'));
+      if (fs.existsSync(markerPath)) {
+        if (userRegistration(path.join(claudeDir, 'gsd', 'src', 'server.js')) === 'ours') {
+          fs.rmSync(markerPath, { force: true });
+        } else {
+          const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+          // Our own text and paths, but it reaches the session's context: a
+          // plain character set, as the update notices above.
+          const plain = (s) => String(s ?? '').replace(/[^\w .,:;()=+'"`/&@~-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+          console.log(`⚠️  GSD-Lite's MCP server is not registered with Claude Code, so the gsd tools are not available: ${plain(marker.reason) || 'unknown reason'}. Register it by running \`${plain(marker.command) || 'npx gsd-lite install'}\` in a shell, then restart Claude Code.`);
+        }
+      }
+    } catch { /* silent: a missing helper or an unreadable marker says nothing */ }
+  }
 
   // ── Phase 5: Spawn background auto-update (non-blocking) ──
   // Detached child handles check + download + install; throttled by shouldCheck()

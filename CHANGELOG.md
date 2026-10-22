@@ -27,11 +27,13 @@ under **Now refused** at the end.
   `npx gsd-lite install` that is your shell; for the update, the environment
   Claude Code was started from. When `claude` is not found, or `claude mcp add`
   fails, the installer installs everything else, prints the command to run
-  yourself, says the gsd tools are not available yet, and exits 1; the update
-  reports it as a failed install with that reason. A registration already in
-  place is recognised without calling `claude`, so later updates do not need
-  it. A user-scope server already named `gsd` that starts something else is
-  left as it is and reported, also with exit 1.
+  yourself, says the gsd tools are not available yet, and exits 1. Run by the
+  update it exits 0, since the new version is in place and the update would
+  otherwise report it as still on the old one; instead every session start
+  says the server is not registered, with the reason and the command, until it
+  is. A registration already in place is recognised without calling `claude`,
+  so later updates do not need it. A user-scope server already named `gsd`
+  that starts something else is left as it is and reported the same way.
 - **With both the plugin and the npx install:** nothing changes for the tools;
   the plugin serves them. `npx gsd-lite install` registers no MCP server there
   and removes one an earlier npx install registered, so each tool is listed
@@ -98,9 +100,9 @@ The state format is unchanged.
     `planning` (`VALIDATION_FAILED`, naming the transition). The same change
     without `phases` was already refused; with it, it was written. Releasing
     a hold to the mode it interrupted is allowed either way.
-  - `npx gsd-lite install` exits 1 when the MCP server could not be
-    registered (see above); it exited 0 having registered it nowhere Claude
-    Code reads.
+  - `npx gsd-lite install` run by hand exits 1 when the MCP server could not
+    be registered (see above); it exited 0 having registered it nowhere
+    Claude Code reads.
 
 ## [0.18.0] - 2026-10-22
 
