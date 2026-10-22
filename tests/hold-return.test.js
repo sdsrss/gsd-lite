@@ -465,6 +465,46 @@ describe('the holds the server releases itself', () => {
   // Each hold the server releases itself takes one level of resume's
   // recursion; a stack of them ran out of levels after the write had landed
   // (delta review of the pre-ship repairs).
+  // A refresh stored while a pause sat over the refresh hold left the hold
+  // with nothing to refresh, and releasing the pause sent the researcher
+  // again (pre-ship review, left open then).
+  it('research refreshed during a pause over a refresh is not refreshed again', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    raw.research.expires_at = new Date(Date.now() - 86_400_000).toISOString();
+    await writeFile(statePath, JSON.stringify(raw));
+    assert.equal((await resumeWorkflow({ basePath: dir })).action, 'dispatch_researcher', 'premise: the research expired');
+    await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+    assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: refreshed under the pause');
+    const paused = await resumeWorkflow({ basePath: dir });
+    assert.equal(paused.resume_to, 'research_refresh_needed', JSON.stringify(paused));
+    await update({ updates: { workflow_mode: paused.resume_to }, basePath: dir });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.notEqual(res.action, 'dispatch_researcher', JSON.stringify(res));
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'executing_task');
+    assert.deepEqual(after.suspended_modes, []);
+  });
+
+  // Each level of resume's recursion went back out through resumeWorkflow,
+  // which added the research-commit warning again: nine copies on the
+  // deepest chain (delta review of the pre-ship repairs).
+  it('a resume that recurses reports the research-commit warning once', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    for (const m of ['awaiting_user', 'paused_by_user', 'awaiting_clear']) await update({ updates: { workflow_mode: m }, basePath: dir });
+    await writeFile(join(dir, '.gsd', '.research-commit-pending'), '{}');
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.ok(res.success, JSON.stringify(res));
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'paused_by_user', 'premise: the /clear released through a level of recursion');
+    assert.deepEqual((res.warnings || []).map((w) => w.code), ['RESEARCH_COMMIT_PENDING']);
+  });
+
   it('unblocking by hand under a /clear over a blocked-task hold finishes', async (t) => {
     const dir = await createTempDir();
     t.after(() => removeTempDir(dir));
@@ -678,6 +718,9 @@ describe('a state an older version wrote since', () => {
   it('a pause over a refresh that 0.17.2 sent back into the refresh sends the researcher once', async (t) => {
     const dir = await project(t);
     assert.equal((await handleResearcherResult({ ...research(false, 'Use A'), basePath: dir })).action, 'research_stored', 'premise');
+    const raw = JSON.parse(await readFile(statePath(dir), 'utf8'));
+    raw.research.expires_at = new Date(Date.now() - 86_400_000).toISOString();
+    await writeFile(statePath(dir), JSON.stringify(raw));
     for (const mode of ['research_refresh_needed', 'paused_by_user']) await update({ updates: { workflow_mode: mode }, basePath: dir });
     await olderVersionWrites(dir, { workflow_mode: 'executing_task' });
     await olderVersionWrites(dir, { workflow_mode: 'research_refresh_needed' });

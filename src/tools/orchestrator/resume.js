@@ -8,7 +8,6 @@ import {
   CONTEXT_RESUME_THRESHOLD,
   evaluatePreflight,
   readContextHealth,
-  collectExpiredResearch,
   getCurrentPhase,
   getTaskById,
   getBlockedTasks,
@@ -965,28 +964,15 @@ async function _resumeWorkflow({ basePath = process.cwd(), _depth = 0, unblock_t
         };
         break;
       case 'research_refresh_needed': {
-        const expiredResearch = collectExpiredResearch(state);
-        // The research was given up (research: null) while a hold over the
-        // refresh waited, such as a pause: back to what the refresh
-        // interrupted, rather than a researcher sent for research nobody wants.
-        if (!state.research) {
-          const persistError = await persist(basePath, { workflow_mode: resumeTarget(state) });
-          if (persistError) return persistError;
-          return resumeWorkflow({ basePath, _depth: _depth + 1 });
-        }
-        result = {
-          success: true,
-          action: 'dispatch_researcher',
-          workflow_mode: state.workflow_mode,
-          expired_research: expiredResearch,
-          // The researcher returns the complete decision set and the store
-          // replaces the index with it, so it needs the decisions on record to
-          // keep an id whose conclusion still holds.
-          current_decision_index: state.research?.decision_index || {},
-          guidance: 'Research cache expired. Dispatch researcher sub-agent to refresh, then call orchestrator-handle-researcher-result',
-          message: 'Research has expired and must be refreshed before execution can resume',
-        };
-        break;
+        // While anything is expired, preflight dispatches the researcher from
+        // this hold (REFRESH_MODES), so here nothing is left to refresh: the
+        // research was given up (research: null) or refreshed while a hold
+        // over the refresh waited, such as a pause. Back to what the refresh
+        // interrupted. This branch used to dispatch the researcher again, for
+        // research nobody needed, saying it had expired.
+        const persistError = await persist(basePath, { workflow_mode: resumeTarget(state) });
+        if (persistError) return persistError;
+        return resumeWorkflow({ basePath, _depth: _depth + 1 });
       }
       default:
         return {
@@ -1092,6 +1078,9 @@ export async function resumeWorkflow(args = {}) {
   // Provenance is attached in server.js's dispatchToolCall, the one place
   // every tool response passes. Attached here it covered one of five
   // dispatching tools.
+  // Once, by the outermost call: each level of the recursion comes back out
+  // through here, and every level used to add another copy.
+  if (args._depth) return result;
   return attachResearchWarning(args.basePath ?? process.cwd(), result);
 }
 
