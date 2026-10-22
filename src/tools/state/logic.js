@@ -686,21 +686,26 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       }
     }
 
-    // Back to what the refresh interrupted (suspended_modes), except that a
-    // refresh that sends tasks back drops an interrupted review: what it
-    // reviewed may have to be redone. With another hold (a pause) over the
-    // refresh, what it interrupted is the entry under the refresh hold, and
-    // the review goes the same way; the hold stays, and resumeTarget sends
-    // a review mode whose review is gone to execution. Only a review: a
-    // decision held at a stage is not what was reviewed.
-    const refreshAt = state.suspended_modes.lastIndexOf('research_refresh_needed');
-    const interrupted = state.workflow_mode === 'research_refresh_needed' ? resumeTarget(state)
-      : refreshAt >= 0 ? (state.suspended_modes[refreshAt - 1] ?? workflowModeForReview(state.current_review)) : null;
-    const dropReview = invalidated.length > 0 && (interrupted === 'reviewing_task' || interrupted === 'reviewing_phase')
-      && workflowModeForReview(state.current_review) === interrupted;
-    if (dropReview) state.current_review = null;
+    // A refresh that sends tasks back drops the review in progress: what it
+    // reviewed may have to be redone. The review is current_review, wherever
+    // the workflow stands over it: in the review itself, under the refresh
+    // hold, a pause, a /clear or a stack of them, or under a hold whose stack
+    // an older version's write dropped. Reading it from the stack instead
+    // kept it in every shape but two. A decision held at a stage is not what
+    // was reviewed, and stays.
+    const reviewing = workflowModeForReview(state.current_review);
+    if (invalidated.length > 0 && (reviewing === 'reviewing_task' || reviewing === 'reviewing_phase')) {
+      state.current_review = null;
+      // Its mode cannot stay without it. Holds stay: releasing one into a
+      // review mode whose review is gone goes to execution (resumeTarget).
+      if (state.workflow_mode === reviewing) {
+        state.suspended_modes = nextSuspendedModes(state.suspended_modes, state.workflow_mode, 'executing_task');
+        state.workflow_mode = 'executing_task';
+      }
+    }
+    // The refresh hold itself goes back to what it interrupted.
     if (state.workflow_mode === 'research_refresh_needed') {
-      const next = dropReview ? 'executing_task' : interrupted;
+      const next = resumeTarget(state);
       state.suspended_modes = nextSuspendedModes(state.suspended_modes, state.workflow_mode, next);
       state.workflow_mode = next;
     }
