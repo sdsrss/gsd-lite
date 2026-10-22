@@ -128,7 +128,8 @@ test holds that, and holds itself against each import shape that can write.
 This replaces gates that listed the shapes of writers going around
 `writeState` and kept missing one more. The
 e2e install tests run a registry step once more when it runs out its budget
-(single requests through a proxy stall), and say so; no assertion changed.
+(single requests through a proxy stall), and say so, and a step ends with its
+shell, taking what the shell left running; no assertion changed.
 The 0.18.0 heading's date said 2026-10-21; it was tagged on 2026-10-22.
 
 On Windows, where `claude` may be `claude.cmd`, the installer starts it

@@ -29,8 +29,13 @@ function runGroup(command, { timeout, ...options }) {
     }, timeout);
     // Cleared at exit, not at close: close waits for the pipes to drain, and a
     // step that failed on its own just before its budget ran out would read
-    // as timed out and be retried (pre-tag review).
-    child.on('exit', () => clearTimeout(timer));
+    // as timed out and be retried (pre-tag review). What is left of the group
+    // then is something the step started and did not wait for, holding the
+    // pipes open: it goes, so close follows the exit.
+    child.on('exit', () => {
+      clearTimeout(timer);
+      try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       if (code === 0) return resolvePromise(stdout);
@@ -330,6 +335,27 @@ async function assertMcpServerStarts(serverPath) {
 // ============================================================
 // Layer A: Simulated install (fast CI)
 // ============================================================
+
+// A step ends with its shell, and what the shell left running goes with it.
+// Once the budget's timer was cleared at the shell's exit, a descendant that
+// kept the output open held the step past its budget and was never killed
+// (delta review: `sleep 8 & exit 3` with a 2 s budget ended after 8 s).
+describe('a step run as a process group', () => {
+  it('ends when its shell exits, and kills what the shell left running', async () => {
+    const started = Date.now();
+    const err = await runGroup('sleep 8 & echo "$!" >&2; exit 3', { timeout: 2000 }).then(() => null, (e) => e);
+    const took = Date.now() - started;
+    assert.ok(err, 'premise: the step failed');
+    assert.ok(took < 2000, `the step ended after ${took} ms`);
+    assert.match(err.message, /: exit 3\n/);
+    assert.equal(err.timedOut, false);
+    const pid = Number(err.message.match(/^(\d+)$/m)?.[1]);
+    assert.ok(pid > 0, `premise: the descendant's pid: ${err.message}`);
+    const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    for (let i = 0; i < 20 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(alive(), false, 'the descendant is still running');
+  });
+});
 
 describe('Layer A: manual/npm install E2E', () => {
   let home, claudeDir;
