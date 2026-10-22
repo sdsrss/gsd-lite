@@ -6,10 +6,14 @@
 // It does what the real `claude mcp add -s user` / `claude mcp remove -s user`
 // do to the user config, with the same exit codes and messages (measured on
 // Claude Code 2.1.308): add writes `{type:'stdio',command,args,env:{}}` under
-// the top-level mcpServers of ${CLAUDE_CONFIG_DIR || HOME}/.claude.json and
-// exits 1 with "already exists" if the name is taken; remove exits 1 when the
-// name is absent. tests/mcp-registration.test.js holds this against the real
-// CLI when one is installed.
+// the top-level mcpServers of the user config and exits 1 with "already
+// exists" if the name is taken; remove exits 1 when the name is absent. The
+// user config is the file the real CLI picks: <config dir>/.config.json when
+// that is non-empty (or empty, writable and alone), else
+// ${CLAUDE_CONFIG_DIR || HOME}/.claude.json. An existing file that is not
+// JSON is left alone, with exit 1: a stand-in must never rewrite a config.
+// tests/mcp-registration.test.js holds this against the real CLI when one is
+// installed.
 //
 // Every call is appended to fake-claude-calls.jsonl beside that file.
 // GSD_FAKE_CLAUDE_FAIL=<subcommand> makes that subcommand fail;
@@ -23,7 +27,21 @@ const path = require('node:path');
 
 const argv = process.argv.slice(2);
 const dir = process.env.CLAUDE_CONFIG_DIR || os.homedir();
-const configPath = path.join(dir, '.claude.json');
+const modern = path.join(dir, '.claude.json');
+const legacy = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.config.json');
+let configPath = modern;
+try {
+  const stat = fs.statSync(legacy);
+  if (stat.isFile() && (stat.size > 0 || ((stat.mode & 0o222) !== 0 && !fs.existsSync(modern)))) configPath = legacy;
+} catch { /* no legacy file */ }
+
+// Only ever a temp config: a fixture that forgot its CLAUDE_CONFIG_DIR or
+// HOME gets an error, not a write into the real ~/.claude.json.
+const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+if (!`${real(dir)}${path.sep}`.startsWith(`${real(os.tmpdir())}${path.sep}`)) {
+  process.stderr.write(`fake claude: refusing a config outside ${os.tmpdir()}: ${dir}\n`);
+  process.exit(2);
+}
 try {
   fs.appendFileSync(path.join(dir, 'fake-claude-calls.jsonl'), `${JSON.stringify({ argv })}\n`);
 } catch { /* no such directory: the call still answers */ }
@@ -34,7 +52,10 @@ function fail(message, code = 1) {
 }
 
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { return {}; }
+  let text;
+  try { text = fs.readFileSync(configPath, 'utf8'); } catch { return {}; }
+  if (text.trim() === '') return {};
+  try { return JSON.parse(text); } catch { return fail(`fake claude: ${configPath} is not JSON; left as it is`); }
 }
 
 function writeConfig(config) {

@@ -13,9 +13,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const _require = createRequire(import.meta.url);
 const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
-const { upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
+const { pluginInstalledForUser, upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
 const { atomicWriteJson } = _require('./hooks/lib/atomic-write.cjs');
-const { recordFailedRegistration, registerMcpServer, unregisterMcpServer } = _require('./hooks/lib/mcp-registration.cjs');
+const { recordFailedRegistration, registerCommand, registerMcpServer, unregisterMcpServer, userConfigPath, userRegistration } = _require('./hooks/lib/mcp-registration.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const SERVER_PATH = join(RUNTIME_DIR, 'src', 'server.js');
@@ -38,16 +38,6 @@ export const HOOK_REGISTRY = [
 ];
 
 function log(msg) { console.log(msg); }
-
-function isInstalledAsPlugin(claudeDir) {
-  try {
-    const pluginsPath = join(claudeDir, 'plugins', 'installed_plugins.json');
-    const data = JSON.parse(readFileSync(pluginsPath, 'utf-8'));
-    return !!data.plugins?.['gsd@gsd'];
-  } catch {
-    return false;
-  }
-}
 
 function registerStatusLine(settings, statuslineScriptPath) {
   const command = `node ${JSON.stringify(statuslineScriptPath)}`;
@@ -287,7 +277,7 @@ export function main() {
   // from ~/.claude/plugins/cache/gsd/gsd/<version>/, so writing user-scope copies at
   // ~/.claude/{commands,agents,workflows,references}/gsd/ produces duplicate slash-command
   // entries and silent drift against the plugin cache.
-  const isPluginInstall = isInstalledAsPlugin(CLAUDE_DIR);
+  const isPluginInstall = pluginInstalledForUser(CLAUDE_DIR);
 
   // 1-4. Commands / agents / workflows / references
   // Only deliver these user-scope copies in non-plugin installs (npx / manual / npm -g),
@@ -551,6 +541,10 @@ export function main() {
         log(`  ! Could not remove this install's user-scope MCP registration: ${removed.reason}.`);
         log(`    With the plugin serving too, every gsd tool is listed twice. Remove it with: ${removed.command}`);
       }
+      if (removed.status === 'unknown') {
+        log(`  ! Could not read ${removed.file} to check for a user-scope registration of this install's server.`);
+        log(`    If \`claude mcp list\` shows gsd besides plugin:gsd:gsd, every tool is listed twice. Remove it with: ${removed.command}`);
+      }
     } else {
       const registered = registerMcpServer(SERVER_PATH);
       if (registered.status === 'already') log('  ✓ MCP server already registered with Claude Code (user scope)');
@@ -593,9 +587,24 @@ export function main() {
       } catch { /* best effort */ }
     }
   } else {
-    log(isPluginInstall
-      ? '  [dry-run] Would remove a user-scope MCP registration of this install\'s server (the plugin serves it)'
-      : `  [dry-run] Would register the MCP server with Claude Code: claude mcp add -s user gsd -- node ${SERVER_PATH}`);
+    // A dry run predicts the real run, from what can be known without running
+    // anything: the settings entry to remove, and whose registration is there.
+    // Whether `claude mcp add` would succeed is the CLI's to say.
+    const settings = readSettingsOrExit(settingsPath);
+    if (settings.mcpServers && typeof settings.mcpServers === 'object' && ('gsd' in settings.mcpServers || 'gsd-lite' in settings.mcpServers)) {
+      log('  [dry-run] Would remove the settings.json MCP entry (Claude Code does not read MCP servers from there)');
+    }
+    const found = userRegistration(SERVER_PATH);
+    if (isPluginInstall) {
+      if (found === 'ours') log('  [dry-run] Would remove the user-scope MCP registration (the plugin serves the MCP server)');
+    } else if (found === 'ours') {
+      log('  [dry-run] MCP server already registered with Claude Code (user scope)');
+    } else if (found === 'other') {
+      mcpFailure = { reason: `a user-scope MCP server named "gsd" already exists in ${userConfigPath()} and it does not start ${SERVER_PATH}; it would be left as it is`, command: registerCommand(SERVER_PATH) };
+      log(`  [dry-run] ✗ MCP server would NOT be registered: ${mcpFailure.reason}`);
+    } else {
+      log(`  [dry-run] Would register the MCP server with Claude Code: ${registerCommand(SERVER_PATH)}`);
+    }
   }
 
   // 9. Prune old plugin cache versions (keep latest 3)
@@ -637,6 +646,13 @@ export function main() {
   // the old version" — false, and its next check would find nothing to retry.
   // The SessionStart hook reports the missing registration instead, from the
   // marker written above.
+  if (DRY_RUN) {
+    log(mcpFailure
+      ? '\n[dry-run] Nothing was changed. The install would leave the MCP server unregistered (see above).'
+      : '\n[dry-run] Nothing was changed.');
+    if (mcpFailure && process.env.PLUGIN_AUTO_UPDATE !== '1') process.exitCode = 1;
+    return;
+  }
   if (mcpFailure) {
     log('\n✗ GSD-Lite is installed except for its MCP server, so the gsd tools are not available yet.');
     log(`  ${mcpFailure.reason}.`);

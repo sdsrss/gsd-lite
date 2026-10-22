@@ -157,7 +157,9 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
     const result = run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add:exists' } });
     assert.equal(result.status, 1, result.output);
     assert.match(result.stdout, /already exists, in a config this installer did not read; it was left as it is/);
-    assert.ok(result.stdout.includes('claude mcp remove gsd -s user && claude mcp add -s user gsd -- node'), result.stdout);
+    // One command per step: PowerShell 5.1 has no `&&`.
+    assert.match(result.stdout, /to replace it, run claude mcp remove gsd -s user first/);
+    assert.ok(result.stdout.includes(`    claude mcp add -s user gsd -- node ${ctx.serverPath}`), result.stdout);
   });
 
   it('a dry run calls nothing and says what it would run', async (t) => {
@@ -165,7 +167,50 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
     const result = run('install.js', ctx, { args: ['--dry-run'] });
     assert.equal(result.status, 0, result.output);
     assert.ok(result.stdout.includes(`Would register the MCP server with Claude Code: claude mcp add -s user gsd -- node ${ctx.serverPath}`), result.stdout);
+    assert.match(result.stdout, /\[dry-run\] Nothing was changed\./);
+    assert.doesNotMatch(result.stdout, /installed successfully/);
     assert.deepEqual(await claudeCalls(ctx.claudeDir), []);
+  });
+
+  // A dry run predicts the real run, which fails here.
+  it('a dry run over a user-scope gsd that is not ours says the install would fail, and exits 1', async (t) => {
+    const ctx = await claudeHome(t);
+    await writeFile(join(ctx.claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { gsd: FOREIGN } }));
+    await writeFile(join(ctx.claudeDir, 'settings.json'), JSON.stringify({ mcpServers: { gsd: { command: 'node', args: [ctx.serverPath] } } }));
+    const result = run('install.js', ctx, { args: ['--dry-run'] });
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.stdout, /\[dry-run\] ✗ MCP server would NOT be registered: a user-scope MCP server named "gsd" already exists/);
+    assert.match(result.stdout, /\[dry-run\] Would remove the settings\.json MCP entry/);
+    assert.doesNotMatch(result.stdout, /installed successfully/);
+    assert.deepEqual(await claudeCalls(ctx.claudeDir), []);
+  });
+
+  // Claude Code keeps its config in <config dir>/.config.json when that file
+  // is non-empty (a layout older installs still have), and `claude mcp add`
+  // writes there. Read from .claude.json alone, every install after the first
+  // failed with "already exists" while the server was connected, and every
+  // session said it was not registered (pre-tag review).
+  it('a config kept in the legacy .config.json is read where the CLI writes it', async (t) => {
+    const ctx = await claudeHome(t);
+    await writeFile(join(ctx.claudeDir, '.config.json'), JSON.stringify({ numStartups: 4 }));
+    assert.equal(run('install.js', ctx).status, 0);
+    assert.deepEqual(JSON.parse(await readFile(join(ctx.claudeDir, '.config.json'), 'utf8')).mcpServers?.gsd?.args, [ctx.serverPath], 'premise: the CLI wrote the legacy file');
+    const second = run('install.js', ctx, { env: { PATH: await pathWithoutClaude(t) } });
+    assert.equal(second.status, 0, second.output);
+    assert.match(second.stdout, /MCP server already registered/);
+    assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED);
+    const removed = run('uninstall.js', ctx);
+    assert.equal(removed.status, 0, removed.output);
+    assert.deepEqual(JSON.parse(await readFile(join(ctx.claudeDir, '.config.json'), 'utf8')).mcpServers, {});
+  });
+
+  it('the stand-in claude refuses a config outside the temp dir', () => {
+    const result = spawnSync(join(FAKE_CLAUDE_DIR, 'claude'), ['mcp', 'add', '-s', 'user', 'gsd', '--', 'node', '/x'], {
+      env: { ...process.env, CLAUDE_CONFIG_DIR: '/nonexistent-gsd-fake-claude-check', HOME: '/nonexistent-gsd-fake-claude-check' },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /refusing a config outside/);
   });
 });
 
@@ -183,7 +228,7 @@ function sessionStart({ home, claudeDir }) {
   return result.stdout;
 }
 
-const NOT_REGISTERED = /GSD-Lite's MCP server is not registered with Claude Code/;
+const NOT_REGISTERED = /GSD-Lite \(tell the user\): its MCP server is not registered with Claude Code/;
 
 // An install the updater runs cannot report a failed registration through its
 // exit code: the updater reads any failure as "update failed, still on the old
@@ -221,6 +266,26 @@ describe('a registration the install could not make is reported every session', 
     spawnSync('claude', ['mcp', 'add', '-s', 'user', 'gsd', '--', 'node', ctx.serverPath], { env: { ...process.env, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir } });
     assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED);
     assert.equal(existsSync(marker), false);
+  });
+
+  // Checked every session, not only after a failure the install saw: a
+  // registration removed since, or one an install cut off before it got there.
+  it('a registration missing for any reason is reported, with the command', async (t) => {
+    const ctx = await claudeHome(t);
+    assert.equal(run('install.js', ctx).status, 0);
+    assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED, 'premise: registered');
+    spawnSync('claude', ['mcp', 'remove', 'gsd', '-s', 'user'], { env: { ...process.env, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir } });
+    const said = sessionStart(ctx);
+    assert.match(said, NOT_REGISTERED);
+    assert.match(said, /has no registration of it/);
+    assert.ok(said.includes(`claude mcp add -s user gsd -- node ${ctx.serverPath}`), said);
+  });
+
+  it('the reported command keeps a path in any letters', async (t) => {
+    const ctx = await claudeHome(t, 'gsd-mcp-josé-');
+    run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add' } });
+    const said = sessionStart(ctx);
+    assert.ok(said.includes(ctx.serverPath), said);
   });
 
   it('beside the plugin nothing is reported: the plugin serves the server', async (t) => {
@@ -312,6 +377,31 @@ describe('plugin install and uninstall: the registration goes', { timeout: 18000
     assert.deepEqual(await claudeCalls(ctx.claudeDir), []);
   });
 
+  // Whose registration it is was decided after the runtime was deleted, when
+  // a path registered through a symlinked spelling no longer resolves to it.
+  it('uninstall removes a registration made through a symlinked spelling of the config dir', async (t) => {
+    const ctx = await claudeHome(t);
+    const linked = join(ctx.home, 'linked-home');
+    await symlink(ctx.home, linked, 'dir');
+    const viaLink = { home: linked, claudeDir: join(linked, '.claude') };
+    assert.equal(run('install.js', viaLink).status, 0);
+    assert.match(run('install.js', ctx).stdout, /MCP server already registered/, 'premise: the same server under either spelling');
+    const result = run('uninstall.js', ctx);
+    assert.equal(result.status, 0, result.output);
+    assert.match(result.stdout, /MCP server deregistered from Claude Code/);
+    assert.deepEqual((await userConfig(ctx.claudeDir)).mcpServers, {});
+  });
+
+  it('uninstall that cannot read the config says so, and exits 1', async (t) => {
+    const ctx = await claudeHome(t);
+    assert.equal(run('install.js', ctx).status, 0);
+    await writeFile(join(ctx.claudeDir, '.claude.json'), '{ not json');
+    const result = run('uninstall.js', ctx);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.stdout, /Could not read .*\.claude\.json to check for the MCP server registration/);
+    assert.match(result.stdout, /If `claude mcp list` still shows gsd, remove it with: claude mcp remove gsd -s user/);
+  });
+
   it('uninstall with no claude on PATH says the registration is left and how to remove it, exit 1', async (t) => {
     const ctx = await claudeHome(t);
     assert.equal(run('install.js', ctx).status, 0);
@@ -340,40 +430,46 @@ function realClaude() {
   return null;
 }
 
-describe('against the real claude CLI', { timeout: 180000 }, () => {
-  it('install registers a server Claude Code connects to, a second install sees it, uninstall removes it', async (t) => {
-    const claude = realClaude();
-    if (!claude) {
-      t.skip('no claude CLI on PATH');
-      return;
-    }
-    const root = await mkdtemp(join(tmpdir(), 'gsd-mcp-real-'));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    await mkdir(join(root, 'real-home', '.claude'), { recursive: true });
-    await symlink(join(root, 'real-home'), join(root, 'home'), 'dir');
-    const ctx = { home: join(root, 'home'), claudeDir: join(root, 'home', '.claude') };
-    assert.ok(realpathSync(ctx.claudeDir).startsWith(realpathSync(tmpdir())), 'premise: a throwaway config, never the real one');
-    const PATH = (process.env.PATH || '').split(delimiter).filter((dir) => resolve(dir) !== FAKE_CLAUDE_DIR).join(delimiter);
-    const env = { PATH };
-    const list = () => spawnSync(claude, ['mcp', 'list'], {
-      cwd: root,
-      env: { ...process.env, PATH, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir },
-      encoding: 'utf8',
-      timeout: 60000,
-    }).stdout;
+describe('against the real claude CLI', { timeout: 360000 }, () => {
+  // Both config layouts the CLI writes user scope to: .claude.json, and the
+  // legacy <config dir>/.config.json when that is non-empty.
+  for (const layout of ['.claude.json', 'legacy .config.json']) {
+    it(`install registers a server Claude Code connects to, a second install sees it, no session reports it missing, uninstall removes it (${layout})`, async (t) => {
+      const claude = realClaude();
+      if (!claude) {
+        t.skip('no claude CLI on PATH');
+        return;
+      }
+      const root = await mkdtemp(join(tmpdir(), 'gsd-mcp-real-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      await mkdir(join(root, 'real-home', '.claude'), { recursive: true });
+      await symlink(join(root, 'real-home'), join(root, 'home'), 'dir');
+      const ctx = { home: join(root, 'home'), claudeDir: join(root, 'home', '.claude') };
+      assert.ok(realpathSync(ctx.claudeDir).startsWith(realpathSync(tmpdir())), 'premise: a throwaway config, never the real one');
+      if (layout !== '.claude.json') await writeFile(join(ctx.claudeDir, '.config.json'), JSON.stringify({ numStartups: 4 }));
+      const PATH = (process.env.PATH || '').split(delimiter).filter((dir) => resolve(dir) !== FAKE_CLAUDE_DIR).join(delimiter);
+      const env = { PATH };
+      const list = () => spawnSync(claude, ['mcp', 'list'], {
+        cwd: root,
+        env: { ...process.env, PATH, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir },
+        encoding: 'utf8',
+        timeout: 60000,
+      }).stdout;
 
-    const first = run('install.js', ctx, { env });
-    assert.equal(first.status, 0, first.output);
-    assert.match(first.stdout, /MCP server registered with Claude Code \(user scope\)/);
-    const serverPath = join(ctx.claudeDir, 'gsd', 'src', 'server.js');
-    assert.ok(list().includes(`gsd: node ${serverPath} - ✔ Connected`), 'claude mcp list does not show the server connected');
+      const first = run('install.js', ctx, { env });
+      assert.equal(first.status, 0, first.output);
+      assert.match(first.stdout, /MCP server registered with Claude Code \(user scope\)/);
+      const serverPath = join(ctx.claudeDir, 'gsd', 'src', 'server.js');
+      assert.ok(list().includes(`gsd: node ${serverPath} - ✔ Connected`), 'claude mcp list does not show the server connected');
 
-    const second = run('install.js', ctx, { env });
-    assert.equal(second.status, 0, second.output);
-    assert.match(second.stdout, /MCP server already registered/, 'the installer did not read the registration the real CLI wrote');
+      const second = run('install.js', ctx, { env });
+      assert.equal(second.status, 0, second.output);
+      assert.match(second.stdout, /MCP server already registered/, 'the installer did not read the registration the real CLI wrote');
+      assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED);
 
-    const removed = run('uninstall.js', ctx, { env });
-    assert.equal(removed.status, 0, removed.output);
-    assert.doesNotMatch(list(), /^gsd:/m);
-  });
+      const removed = run('uninstall.js', ctx, { env });
+      assert.equal(removed.status, 0, removed.output);
+      assert.doesNotMatch(list(), /^gsd:/m);
+    });
+  }
 });

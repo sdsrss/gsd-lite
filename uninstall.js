@@ -135,6 +135,24 @@ export function main() {
     }
   }
 
+  // The MCP server registration, with Claude Code (install.js registers it at
+  // user scope with `claude mcp add`). Only this install's: a server of the
+  // same name that starts something else is not ours to remove. Decided
+  // before the runtime goes: once server.js is deleted, a registration made
+  // through a symlinked spelling of its path no longer resolves to it.
+  if (typeof unregisterMcpServer !== 'function') {
+    logProblem(
+      'hooks/lib/mcp-registration.cjs not found — the MCP server registration was not checked',
+      'If `claude mcp list` still shows gsd, remove it with: claude mcp remove gsd -s user',
+    );
+  } else {
+    const mcp = unregisterMcpServer(join(RUNTIME_DIR, 'src', 'server.js'));
+    if (mcp.status === 'removed') logRemoved('MCP server deregistered from Claude Code (user scope)');
+    if (mcp.status === 'other') log('  - A user-scope MCP server named gsd starts something else; left as it is');
+    if (mcp.status === 'unknown') logProblem(`Could not read ${mcp.file} to check for the MCP server registration`, `If \`claude mcp list\` still shows gsd, remove it with: ${mcp.command}`);
+    if (mcp.status === 'failed') logProblem(`Could not deregister the MCP server: ${mcp.reason}`, `Remove it by running: ${mcp.command}`);
+  }
+
   log('Removing files...');
 
   removeDir(join(CLAUDE_DIR, 'commands', 'gsd'), 'commands/gsd/');
@@ -284,21 +302,6 @@ export function main() {
         `The hook and MCP entries still point at files this run deleted. Fix the file and run this again: ${settingsPath}`,
       );
     }
-  }
-
-  // The MCP server registration, with Claude Code (install.js registers it at
-  // user scope with `claude mcp add`). Only this install's: a server of the
-  // same name that starts something else is not ours to remove.
-  if (typeof unregisterMcpServer !== 'function') {
-    logProblem(
-      'hooks/lib/mcp-registration.cjs not found — the MCP server registration was not checked',
-      'If `claude mcp list` still shows gsd, remove it with: claude mcp remove gsd -s user',
-    );
-  } else {
-    const mcp = unregisterMcpServer(join(RUNTIME_DIR, 'src', 'server.js'));
-    if (mcp.status === 'removed') logRemoved('MCP server deregistered from Claude Code (user scope)');
-    if (mcp.status === 'other') log('  - A user-scope MCP server named gsd starts something else; left as it is');
-    if (mcp.status === 'failed') logProblem(`Could not deregister the MCP server: ${mcp.reason}`, `Remove it by running: ${mcp.command}`);
   }
 
   // One state, read twice — closing line and exit code. The previous attempt at
