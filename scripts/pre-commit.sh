@@ -63,6 +63,9 @@ if [ -n "$STAGED_TESTS" ] || [ -n "$STAGED_CLAUDE" ] || [ -n "$STAGED_CODE" ]; t
   echo -e "${GREEN}Running tests...${NC}"
   TEST_OUT=$(npm test --silent 2>&1) && TEST_RC=0 || TEST_RC=$?
   printf '%s\n' "$TEST_OUT" | tail -5
+  # A network step the e2e tests ran twice (runNetworkStep) passes quietly
+  # otherwise: the tail above does not reach that line.
+  printf '%s\n' "$TEST_OUT" | grep -F 'running it once more' || true
   if [ "$TEST_RC" -ne 0 ]; then
     # The tail is the last failure's stack, and for a child process that timed
     # out that is node:net frames with no test name: three e2e-install failures

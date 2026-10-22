@@ -27,6 +27,10 @@ function runGroup(command, { timeout, ...options }) {
       timedOut = true;
       try { process.kill(-child.pid, 'SIGKILL'); } catch {}
     }, timeout);
+    // Cleared at exit, not at close: close waits for the pipes to drain, and a
+    // step that failed on its own just before its budget ran out would read
+    // as timed out and be retried (pre-tag review).
+    child.on('exit', () => clearTimeout(timer));
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       if (code === 0) return resolvePromise(stdout);
@@ -46,7 +50,12 @@ function runGroup(command, { timeout, ...options }) {
 // a step that ran out its budget runs once more, after `beforeRetry` (a fresh
 // npm cache: a killed npx can leave a half-built install in its _npx cache
 // that the next npx would reuse). A step that failed any other way is not
-// retried, and a second timeout fails with both.
+// retried, and a second timeout fails with both. What a retry cannot tell
+// apart from a stalled request is a step that hangs now and then for its own
+// reasons (install.js included, which these steps run): one such hang is
+// rescued, two are not, and a rescue is printed (the pre-commit hook passes
+// the line on). The second attempt installs over what the first left, as
+// installing over an install does.
 async function runNetworkStep(command, options, beforeRetry = async () => {}) {
   try {
     return await runGroup(command, options);
