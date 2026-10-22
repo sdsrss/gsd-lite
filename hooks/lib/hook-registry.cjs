@@ -309,7 +309,7 @@ function pluginInstalledForUser(claudeDir) {
   try {
     const record = JSON.parse(fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8')).plugins?.['gsd@gsd'];
     const entries = Array.isArray(record) ? record : record ? [record] : [];
-    return entries.some((entry) => entry !== null && typeof entry === 'object' && (!entry.scope || entry.scope === 'user' || entry.scope === 'managed'));
+    return entries.some((entry) => entry !== null && typeof entry === 'object' && !Array.isArray(entry) && (!entry.scope || entry.scope === 'user' || entry.scope === 'managed'));
   } catch {
     return false;
   }

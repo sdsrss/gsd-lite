@@ -74,7 +74,8 @@ function userRegistration(serverPath, env = process.env) {
     return err.code === 'ENOENT' ? 'absent' : 'unknown';
   }
   const entry = config?.mcpServers?.[SERVER_NAME];
-  if (entry === undefined) return 'absent';
+  // The CLI adds over a null entry as over none.
+  if (entry === undefined || entry === null) return 'absent';
   return Array.isArray(entry?.args) && samePath(entry.args[0], serverPath) ? 'ours' : 'other';
 }
 
@@ -127,7 +128,11 @@ function runClaude(args, env = process.env) {
  * anything: 'already', 'failed' when it leaves the registration to the user,
  * or 'add' when it asks the CLI. A dry run reports this.
  *
- * @returns {{ status: 'already'|'failed'|'add', reason?: string, command: string }}
+ * A failure's `cause` says where its reason came from: 'conflict' and
+ * 'unreadable' from the config file, which the session check reads again
+ * itself, 'cli' from running the CLI, which only this record keeps.
+ *
+ * @returns {{ status: 'already'|'failed'|'add', reason?: string, cause?: 'conflict'|'unreadable'|'cli', command: string }}
  */
 function registrationPlan(serverPath, env = process.env) {
   const command = shellCommand(addArgs(serverPath));
@@ -139,6 +144,7 @@ function registrationPlan(serverPath, env = process.env) {
     return {
       status: 'failed',
       reason: `a user-scope MCP server named "${SERVER_NAME}" already exists in ${userConfigPath(env)} and it does not start ${serverPath}; it is left as it is (to replace it, run ${shellCommand(removeArgs())} first)`,
+      cause: 'conflict',
       command,
     };
   }
@@ -146,7 +152,7 @@ function registrationPlan(serverPath, env = process.env) {
   // and `claude mcp add` resets one it cannot parse and overwrites one it
   // cannot read with only the new server (2.1.308, delta review).
   if (found === 'unknown') {
-    return { status: 'failed', reason: `${userConfigPath(env)} could not be read or parsed, so it is left as it is`, command };
+    return { status: 'failed', reason: `${userConfigPath(env)} could not be read or parsed, so it is left as it is`, cause: 'unreadable', command };
   }
   return { status: 'add', command };
 }
@@ -167,10 +173,11 @@ function registerMcpServer(serverPath, env = process.env) {
     return {
       status: 'failed',
       reason: `\`claude mcp add\` says a user-scope server named "${SERVER_NAME}" already exists, in a config this installer did not read; it was left as it is (\`claude mcp get ${SERVER_NAME}\` shows what it starts; to replace it, run ${shellCommand(removeArgs())} first)`,
+      cause: 'cli',
       command,
     };
   }
-  return { status: 'failed', reason: run.missing ? run.output : `\`claude mcp add\` failed: ${run.output || 'no output'}`, command };
+  return { status: 'failed', reason: run.missing ? run.output : `\`claude mcp add\` failed: ${run.output || 'no output'}`, cause: 'cli', command };
 }
 
 /**
@@ -202,7 +209,7 @@ function unregisteredMarkerPath(runtimeDir) {
 }
 
 function recordFailedRegistration(runtimeDir, failure) {
-  fs.writeFileSync(unregisteredMarkerPath(runtimeDir), `${JSON.stringify({ reason: failure.reason, command: failure.command }, null, 2)}\n`);
+  fs.writeFileSync(unregisteredMarkerPath(runtimeDir), `${JSON.stringify({ reason: failure.reason, cause: failure.cause, command: failure.command }, null, 2)}\n`);
 }
 
 /** The command that registers this install's server, for a user to run. */

@@ -6,7 +6,7 @@
 // the last one holds that stand-in against the real CLI where one is installed.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync } from 'node:fs';
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -290,6 +290,14 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
     assert.equal(userConfigPath({ CLAUDE_CONFIG_DIR: claudeDir }), join(nfc, '.config.json'), 'the CLI reads the NFC spelling');
   });
 
+  // `null` under the name is no server: the CLI adds over it (final review).
+  it('a null entry under the name is no registration', async (t) => {
+    const ctx = await claudeHome(t);
+    await writeFile(join(ctx.claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { gsd: null } }));
+    const { userRegistration } = createRequire(import.meta.url)('../hooks/lib/mcp-registration.cjs');
+    assert.equal(userRegistration(ctx.serverPath, { CLAUDE_CONFIG_DIR: ctx.claudeDir }), 'absent');
+  });
+
   it('the stand-in claude refuses a config outside the temp dir', () => {
     const result = spawnSync(join(FAKE_CLAUDE_DIR, 'claude'), ['mcp', 'add', '-s', 'user', 'gsd', '--', 'node', '/x'], {
       env: { ...process.env, CLAUDE_CONFIG_DIR: '/nonexistent-gsd-fake-claude-check', HOME: '/nonexistent-gsd-fake-claude-check' },
@@ -411,6 +419,69 @@ describe('a registration the install could not make is reported every session', 
     assert.match(said, /starts something else/);
     assert.match(said, /claude mcp remove gsd -s user/);
     assert.doesNotMatch(said, /was not found on PATH/);
+  });
+
+  // A reason recorded for a state that has since gone is not repeated: the
+  // line told the user to remove a server that was already removed, or that a
+  // config they had fixed could not be read (final review).
+  for (const [label, before, after] of [
+    ['a server named gsd that starts something else, since removed', (file) => writeFile(file, JSON.stringify({ mcpServers: { gsd: FOREIGN } })), (file) => writeFile(file, JSON.stringify({ mcpServers: {} }))],
+    ['a config that could not be read, since fixed', async (file) => { await writeFile(file, '{"numStartups":1}'); await chmod(file, 0); }, (file) => chmod(file, 0o600)],
+  ]) {
+    it(`the reason is what is wrong now: ${label}`, async (t) => {
+      if (label.includes('could not be read') && process.getuid?.() === 0) {
+        t.skip('root reads a file whatever its mode');
+        return;
+      }
+      const ctx = await claudeHome(t);
+      const file = join(ctx.claudeDir, '.claude.json');
+      await before(file);
+      const result = run('install.js', ctx);
+      await after(file);
+      assert.match(result.stdout, /✗ MCP server NOT registered/, 'premise: the install failed');
+      const said = sessionStart(ctx);
+      assert.match(said, NOT_REGISTERED);
+      assert.ok(said.includes(`${file} has no registration of it`), said);
+      assert.doesNotMatch(said, /already exists|could not be read/);
+    });
+  }
+
+  // The reason names the config file as it is spelled; the sanitizer for the
+  // CLI's own output dropped # $ [ ] ! from it too.
+  it('the reason names the config file whatever its path holds', async (t) => {
+    const ctx = await claudeHome(t, 'gsd-mcp-u#1$x[2]!-');
+    run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add' } });
+    await writeFile(join(ctx.claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { gsd: FOREIGN } }));
+    const said = sessionStart(ctx);
+    assert.ok(said.includes(`a user-scope MCP server named gsd in ${join(ctx.claudeDir, '.claude.json')} starts something else`), said);
+  });
+
+  // The mode marker was written after the registration, into a runtime the
+  // swap had just replaced whole: an install cut off while `claude mcp add`
+  // ran (the updater stops one at 60 s) left no marker, and no session ever
+  // said the server was missing (final review).
+  it('an install cut off while claude mcp add runs is still reported', async (t) => {
+    const ctx = await claudeHome(t);
+    const bin = await mkdtemp(join(tmpdir(), 'gsd-mcp-slowbin-'));
+    t.after(() => rm(bin, { recursive: true, force: true }));
+    const started = join(ctx.home, 'add-started');
+    await writeFile(join(bin, 'claude'), `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(started)}, String(process.pid));\nsetTimeout(() => {}, 30000);\n`, { mode: 0o755 });
+    const child = spawn(process.execPath, [join(PROJECT_ROOT, 'install.js')], {
+      cwd: ctx.home,
+      env: { ...process.env, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir, PATH: `${bin}${delimiter}${process.env.PATH}` },
+      detached: true,
+      stdio: 'ignore',
+    });
+    const exited = new Promise((resolvePromise) => child.on('exit', resolvePromise));
+    t.after(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } });
+    for (let i = 0; i < 400 && !existsSync(started); i++) await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    assert.ok(existsSync(started), 'premise: the install got to claude mcp add');
+    process.kill(-child.pid, 'SIGKILL');
+    await exited;
+    assert.ok(existsSync(ctx.serverPath), 'premise: the runtime was swapped in');
+    const said = sessionStart(ctx);
+    assert.match(said, NOT_REGISTERED);
+    assert.ok(said.includes(`claude mcp add -s user gsd -- node ${ctx.serverPath}`), said);
   });
 
   it('beside the plugin nothing is reported: the plugin serves the server', async (t) => {
