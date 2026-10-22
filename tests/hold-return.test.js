@@ -535,6 +535,34 @@ describe('the holds the server releases itself', () => {
     });
   }
 
+  // A refresh hold with nothing recorded under it (a state from before 0.18,
+  // or one an older version has written since, left in the refresh hold and
+  // then paused): what it interrupted is read from current_review (delta
+  // review of the repair: nothing pinned it).
+  it('a refresh stored under a pause over a refresh hold that recorded nothing drops the review', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await stateApi.init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'cites a', research_basis: ['decision:a'] }] }], basePath: dir });
+    assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
+    await checkpointTask(dir, 1, '1.1');
+    const review = { scope: 'task', scope_id: '1.1', stage: 'quality' };
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    Object.assign(raw, { workflow_mode: 'research_refresh_needed', current_review: review, suspended_modes: [] });
+    raw.research.expires_at = new Date(Date.now() - 86_400_000).toISOString();
+    await writeFile(statePath, JSON.stringify(raw));
+    await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+    assert.deepEqual((await read({ basePath: dir })).suspended_modes, ['research_refresh_needed'], 'premise');
+    const revised = { ...research, decision_index: { 'decision:a': { summary: 'A, revised', source: 'docs' } } };
+    assert.deepEqual((await handleResearcherResult({ ...revised, basePath: dir })).invalidated_tasks, ['1.1']);
+    assert.equal((await read({ basePath: dir })).current_review, null);
+    const paused = await resumeWorkflow({ basePath: dir });
+    await update({ updates: { workflow_mode: paused.resume_to }, basePath: dir });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.notEqual(res.action, 'dispatch_reviewer', JSON.stringify(res));
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'executing_task');
+  });
+
   it('a refresh stored under a decision held over the refresh leaves the decision alone', async (t) => {
     const dir = await createTempDir();
     t.after(() => removeTempDir(dir));
