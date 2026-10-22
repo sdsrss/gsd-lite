@@ -11,6 +11,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { init, read, update } from '../src/tools/state/index.js';
+import { handleExecutorResult } from '../src/tools/orchestrator/index.js';
 import { HOLD_MODES, WORKFLOW_MODES, validateState } from '../src/schema.js';
 
 async function project(t) {
@@ -84,6 +85,18 @@ describe('the workflow_mode transition table holds on every update path', () => 
     assert.equal(after.phases[0].name, 'P1');
   });
 
+  // The refusal names the move even when the call is wrong in another way
+  // too; the lifecycle check used to answer first (pre-tag review).
+  it('an off-table move carried with another error is refused naming the move', async (t) => {
+    const dir = await project(t);
+    await update({ updates: { workflow_mode: 'reconcile_workspace' }, basePath: dir });
+    const result = await update({ updates: { workflow_mode: 'planning', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'accepted' }] }] }, basePath: dir });
+    assert.equal(result.code, 'VALIDATION_FAILED');
+    assert.match(result.message, /^Validation failed: Invalid workflow_mode transition: 'reconcile_workspace' → 'planning'/);
+    const unknown = await update({ updates: { workflow_mode: 'bogus', phases: [{ id: 1, name: 'renamed' }] }, basePath: dir });
+    assert.match(unknown.message, /Invalid workflow_mode: bogus/, 'an unknown mode is named as unknown, as the fast path names it');
+  });
+
   it('releasing a hold back to what it interrupted stays allowed with phases', async (t) => {
     const dir = await project(t);
     await update({ updates: { workflow_mode: 'planning' }, basePath: dir });
@@ -93,4 +106,32 @@ describe('the workflow_mode transition table holds on every update path', () => 
     assert.ok(!result.error, result.message);
     assert.equal((await read({ basePath: dir })).workflow_mode, 'planning');
   });
+
+  // The table is for the calls a client makes. The server's own result
+  // handlers write the mode the outcome they process calls for, and a result
+  // can arrive after a hold was entered: a second /gsd:resume found the HEAD
+  // the executor had just committed and entered reconcile_workspace. Refused
+  // by the table, the result was lost and the task redone (pre-tag review;
+  // 0.18.0 recorded it). Those writes are taken as 0.18.0 took them.
+  for (const hold of ['reconcile_workspace', 'replan_required', 'planning']) {
+    it(`an executor's result that arrives in ${hold} is recorded`, async (t) => {
+      const dir = await mkdtemp(join(tmpdir(), 'gsd-transition-paths-'));
+      t.after(() => rm(dir, { recursive: true, force: true }));
+      await init({ project: 'late-result', phases: [{ name: 'P1', tasks: [{ name: 'T1', level: 'L2' }] }], basePath: dir });
+      await update({ updates: { current_task: '1.1', phases: [{ id: 1, todo: [{ id: '1.1', lifecycle: 'running' }] }] }, basePath: dir });
+      assert.ok((await update({ updates: { workflow_mode: hold }, basePath: dir })).success, `premise: entered ${hold}`);
+      const result = await handleExecutorResult({
+        basePath: dir,
+        result: {
+          task_id: '1.1', outcome: 'checkpointed', summary: 'done', checkpoint_commit: 'abc1234',
+          files_changed: ['src/a.js'], decisions: [], blockers: [], contract_changed: false,
+          evidence: [{ id: 'ev:test:1.1', scope: 'task:1.1', type: 'test' }],
+        },
+      });
+      assert.ok(result.success, JSON.stringify(result));
+      const task = (await read({ basePath: dir })).phases[0].todo[0];
+      assert.equal(task.lifecycle, 'checkpointed');
+      assert.equal(task.checkpoint_commit, 'abc1234');
+    });
+  }
 });
