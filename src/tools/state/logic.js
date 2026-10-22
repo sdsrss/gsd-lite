@@ -691,18 +691,22 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // wherever the workflow stands over it: in the review itself, under the
     // refresh hold, a pause, a /clear or a stack of them, or under a hold
     // whose stack an older version's write dropped. Reading it from the stack
-    // instead kept it in every shape but two. Only what it reviewed counts:
-    // the task, or a task of the phase. Dropped for a sibling, a task review
-    // never ran. And not a decision owed: a stage that is not a review's, or
-    // anything current_review holds while awaiting_user is in force or
-    // underneath, which resume treats as the decision.
+    // instead kept it in every shape but two. Only what this refresh sent back
+    // counts, and only what the review covers: the task, or a task of the
+    // phase (the current one when it names none, as resume reads it).
+    // Dropped for a sibling, a task review never ran. And not a decision owed:
+    // a stage that is not a review's, or, while awaiting_user is in force or
+    // underneath, a current_review with a stage, which resume asks the user
+    // about. One with none is a review a blocked task interrupted, which
+    // resume returns to.
     const reviewing = workflowModeForReview(state.current_review);
     const review = state.current_review;
-    const sentBack = (task) => task?.lifecycle === 'needs_revalidation';
+    const reviewedPhase = (state.phases || []).find((phase) => phase.id === (review?.scope_id ?? state.current_phase));
     const reviewedSentBack = review?.scope === 'task'
-      ? sentBack((state.phases || []).flatMap((phase) => phase.todo || []).find((task) => task.id === review.scope_id))
-      : (state.phases || []).find((phase) => phase.id === review?.scope_id)?.todo?.some(sentBack) === true;
-    const decisionOwed = state.workflow_mode === 'awaiting_user' || state.suspended_modes.includes('awaiting_user');
+      ? invalidated.includes(review.scope_id)
+      : (reviewedPhase?.todo || []).some((task) => invalidated.includes(task.id));
+    const decisionOwed = Boolean(review?.stage)
+      && (state.workflow_mode === 'awaiting_user' || state.suspended_modes.includes('awaiting_user'));
     if (invalidated.length > 0 && reviewedSentBack && !decisionOwed
         && (reviewing === 'reviewing_task' || reviewing === 'reviewing_phase')) {
       state.current_review = null;

@@ -113,7 +113,7 @@ describe('the workflow_mode transition table holds on every update path', () => 
   // the executor had just committed and entered reconcile_workspace. Refused
   // by the table, the result was lost and the task redone (pre-tag review;
   // 0.18.0 recorded it). Those writes are taken as 0.18.0 took them.
-  for (const hold of ['reconcile_workspace', 'replan_required', 'planning']) {
+  for (const hold of ['reconcile_workspace', 'replan_required', 'planning', 'paused_by_user', 'awaiting_clear', 'awaiting_user', 'research_refresh_needed']) {
     it(`an executor's result that arrives in ${hold} is recorded`, async (t) => {
       const dir = await mkdtemp(join(tmpdir(), 'gsd-transition-paths-'));
       t.after(() => rm(dir, { recursive: true, force: true }));

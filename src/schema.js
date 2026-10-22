@@ -383,9 +383,10 @@ function evidenceEntryErrors(evidence) {
 
 /**
  * The transition whitelist: why moving `state` to workflow_mode `to` is not
- * allowed, or nothing. Every update path asks it — this fast path, and
- * update() for the updates validateState judges (phases, appended decisions,
- * propagation), which sees only the state they produce.
+ * allowed, or nothing. Every path a client's update takes asks it: this fast
+ * path, and update() for the updates validateState judges (phases, appended
+ * decisions, propagation), which sees only the state they produce. The
+ * server's own result handlers do not (update()'s _server_write says why).
  */
 export function workflowTransitionErrors(state, to) {
   const currentMode = state.workflow_mode;
