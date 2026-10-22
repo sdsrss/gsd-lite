@@ -23,25 +23,42 @@ under **Now refused** at the end.
   removes the old `settings.json` entry. The daily update runs this
   installer, so the registration happens on its own once 0.19.0 is installed;
   start a new session afterwards. `claude mcp list` then shows `gsd`.
+- **Not on its own if `~/.claude` (or `CLAUDE_CONFIG_DIR`) is a symlink, or
+  the gsd plugin is installed at project or local scope.** The update check of
+  0.18.0 and earlier takes the npx install for a plugin install in both cases,
+  so it never installs an update and says to run `claude plugin update`: run
+  `npx gsd-lite@latest install` once. From 0.19.0 the check compares real
+  paths, and counts only a plugin installed for every project (user scope, or
+  a record from before Claude Code had scopes).
 - **`claude` has to be on the PATH the installer runs with.** For a manual
   `npx gsd-lite install` that is your shell; for the update, the environment
   Claude Code was started from. When `claude` is not found, or `claude mcp add`
   fails, the installer installs everything else, prints the command to run
   yourself, says the gsd tools are not available yet, and exits 1. Run by the
   update it exits 0, since the new version is in place and the update would
-  otherwise report it as still on the old one; instead every session start
-  says the server is not registered, with the reason and the command, until it
-  is. A registration already in place is recognised without calling `claude`,
-  so later updates do not need it. A user-scope server already named `gsd`
-  that starts something else is left as it is and reported the same way.
+  otherwise report it as still on the old one. Either way, every session start
+  checks the registration while it is missing, whatever removed it, and puts
+  the reason and the command in Claude's context (where gsd's session-start
+  notices go; the line asks Claude to tell you). A registration already in
+  place is recognised without calling `claude`, so later updates do not need
+  it. A user-scope server already named `gsd` that starts something else is
+  left as it is and reported the same way. The registration is read where the
+  CLI writes it: `.claude.json`, or the legacy `<config dir>/.config.json` when
+  that file is not empty.
 - **With both the plugin and the npx install:** nothing changes for the tools;
   the plugin serves them. `npx gsd-lite install` registers no MCP server there
   and removes one an earlier npx install registered, so each tool is listed
   once. If you installed the plugin after an npx install of 0.19.0, run
   `npx gsd-lite install` once more (or `claude mcp remove gsd -s user`), or
-  every gsd tool is listed twice.
+  every gsd tool is listed twice. A plugin installed at project or local scope
+  serves only that project, so beside one the npx install now installs as if
+  there were no plugin, its commands and MCP registration included; 0.18.0
+  skipped them for any plugin record, leaving every other project without
+  them. In the plugin's own project each command and tool is then listed twice.
 - `npx gsd-lite uninstall` removes the registration with `claude mcp remove`,
-  and only this install's: a `gsd` server starting something else stays.
+  and only this install's: a `gsd` server starting something else stays, and
+  a config it cannot read is reported (exit 1). `--dry-run` says what the
+  registration would do and exits 1 where the install would.
 
 **Scripts started through a symlinked path run.** The MCP server, `install.js`
 and `uninstall.js` ran only when `process.argv[1]` equalled their module URL
@@ -72,10 +89,12 @@ to do when it fails, and that an npx install from before 0.19.0 has no gsd
 tools until it is reinstalled. The state diagram states the refresh rule
 above.
 
-**Internal:** the test suite puts a stand-in `claude` first on PATH, so no test
-reaches a developer's own CLI or `~/.claude.json`; one test holds the stand-in
-against the real CLI where one is installed, and has Claude Code start the
-installed server (`claude mcp list` → Connected). `scripts/gate-replay.js`
+**Internal:** the test suite puts a stand-in `claude` first on PATH, which
+refuses any config outside the temp directory, so a test cannot reach a
+developer's own CLI or `~/.claude.json` (on Linux and macOS; CI runs Linux).
+One test holds the stand-in against the real CLI where one is installed, in
+both config layouts, and has Claude Code start the installed server
+(`claude mcp list` → Connected). `scripts/gate-replay.js`
 reads a suite's failing `after()`, a describe that threw, a suite timeout, a
 todo suite and a test still pending when the event loop ran dry (how Node 20
 and 22 report a hang) as what each is. The gate on `state.json` writes

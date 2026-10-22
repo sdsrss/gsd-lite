@@ -294,6 +294,26 @@ function realish(p) {
   }
 }
 
+/**
+ * Is the gsd plugin installed for every project: at user scope, or in a
+ * record from before Claude Code had scopes? install.js asks to decide what it
+ * installs and whether to register the MCP server; the updater asks to decide
+ * whether to run install.js. They must give the same answer. A project or
+ * local install serves the project it names only, so it is no reason for the
+ * npx install to step aside anywhere: taking it for one removed the npx
+ * install's MCP registration, and with it every other project's gsd tools.
+ * Unreadable or absent → false.
+ */
+function pluginInstalledForUser(claudeDir) {
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8')).plugins?.['gsd@gsd'];
+    const entries = Array.isArray(record) ? record : record ? [record] : [];
+    return entries.some((entry) => entry !== null && typeof entry === 'object' && (!entry.scope || entry.scope === 'user'));
+  } catch {
+    return false;
+  }
+}
+
 /** Hook identifiers GSD owns, current and legacy. */
 const GSD_HOOK_IDENTIFIERS = Object.freeze([
   'gsd-session-init',
@@ -373,4 +393,4 @@ function upsertHookEntry(hooks, { hookType, identifier, matcher, command, timeou
   return true;
 }
 
-module.exports = { GSD_HOOK_IDENTIFIERS, hookStandsDown, pluginDisabled, pluginServesHooks, removeHookEntry, upsertHookEntry };
+module.exports = { GSD_HOOK_IDENTIFIERS, hookStandsDown, pluginDisabled, pluginInstalledForUser, pluginServesHooks, realish, removeHookEntry, upsertHookEntry };

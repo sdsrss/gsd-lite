@@ -10,6 +10,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { execSync, spawnSync } = require('node:child_process');
 const { semverSortComparator } = require('./lib/semver-sort.cjs');
+const { pluginInstalledForUser, realish } = require('./lib/hook-registry.cjs');
 
 // ── Configuration ──────────────────────────────────────────
 const GITHUB_REPO = 'sdsrss/gsd-lite';
@@ -470,19 +471,18 @@ function getInstallMode() {
   // Hook files live at ~/.claude/hooks/ so pluginRoot (=__dirname/..) equals claudeDir,
   // but that doesn't mean it's a manual install — check the plugin registry first.
   //
-  // First of all, and with install.js's own test (isInstalledAsPlugin): a
+  // First of all, and with install.js's own test (pluginInstalledForUser): a
   // plugin install is updated by `claude plugin update`, and install.js —
   // which this runs for every other mode — prunes plugins/cache/gsd and
-  // clears .orphaned_at whenever it finds the record. Checked after dev mode,
+  // clears .orphaned_at whenever it finds the plugin. Checked after dev mode,
   // or as `?.[0]`, the two disagreed and the updater ran install.js against
   // an installed plugin's cache.
-  try {
-    const pluginsFile = path.join(claudeDir, 'plugins', 'installed_plugins.json');
-    const plugins = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'));
-    if (plugins.plugins?.['gsd@gsd']) return 'plugin';
-  } catch { /* fall through */ }
+  if (pluginInstalledForUser(claudeDir)) return 'plugin';
   if (isDevMode()) return 'dev';
-  return path.resolve(pluginRoot) === path.resolve(claudeDir)
+  // Real paths on both sides: pluginRoot comes from __dirname, which Node
+  // resolves through symlinks, and claudeDir is as given. Under a symlinked
+  // ~/.claude the npx install read as a plugin install and was never updated.
+  return realish(pluginRoot) === realish(claudeDir)
     ? 'manual'
     : 'plugin';
 }

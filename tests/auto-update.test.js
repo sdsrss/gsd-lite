@@ -96,8 +96,8 @@ describe('auto update install modes', () => {
   // `gsd update --force` there ran install.js against an installed plugin's
   // cache, and a record install.js counted (an empty list) the updater did
   // not. Both ask pluginInstalledForUser now, which counts a record with a
-  // user-scope, managed-scope or unscoped entry and nothing else; an empty
-  // list is no plugin for either (tests/install-mode-detection.test.js).
+  // user-scope (or unscoped) entry and nothing else; an empty list is no
+  // plugin for either (tests/install-mode-detection.test.js).
   for (const [label, layout, record, dev] of [
     ['a git checkout with the plugin installed', 'plugin', [{ scope: 'user', installPath: '/x', version: '0.3.0' }], true],
     ['an npx install beside a user-scope plugin record', 'manual', [{ scope: 'user', installPath: '/x', version: '0.3.0' }], false],

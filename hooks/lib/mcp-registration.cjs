@@ -9,16 +9,15 @@
 // settings.json, so an npx-only install never had the gsd tools.
 //
 // Only Claude Code's own CLI writes that file. It is live state every running
-// session rewrites, and where it lives is Claude Code's decision: 2.1.308
-// reads <config dir>/.config.json first when that is a non-empty file, and
-// otherwise `${CLAUDE_CONFIG_DIR || home}/.claude<suffix>.json`. Writing it here
-// would mean re-implementing that resolution and racing every session.
+// session rewrites, so writing it here would race every session.
 //
-// It is READ here, at the location the docs give, and only as a hint: "this
-// install's server is already registered" saves a CLI call (the updater runs
-// install.js on every release, often with no `claude` on its PATH). A wrong
-// read errs loudly: `claude mcp add` then refuses with "already exists" and
-// the installer says so, instead of something being changed silently.
+// It is READ here, only to tell whose registration is there: "this install's
+// server is already registered" saves a CLI call (the updater runs install.js
+// on every release, often with no `claude` on its PATH), and "a server of that
+// name starts something else" keeps install and uninstall off it. The file is
+// the one the CLI writes (userConfigPath). Read from anywhere else, every
+// install after the first failed with "already exists" and every session said
+// the server was not registered while it was connected (pre-tag review).
 
 'use strict';
 
@@ -29,10 +28,25 @@ const { spawnSync } = require('node:child_process');
 
 const SERVER_NAME = 'gsd';
 
+/**
+ * The file `claude mcp add -s user` writes, as Claude Code 2.1.308 picks it:
+ * <config dir>/.config.json (the legacy name) when that is a non-empty file,
+ * or an empty writable one with no .claude.json to go with it; otherwise
+ * `${CLAUDE_CONFIG_DIR || home}/.claude.json`, the one the docs name. Read off
+ * its binary and checked against its writes, with and without
+ * CLAUDE_CONFIG_DIR; tests/mcp-registration.test.js holds it against the real
+ * CLI in both layouts. The CLI has no command that says which file it uses.
+ */
 function userConfigPath(env = process.env) {
-  return env.CLAUDE_CONFIG_DIR
+  const modern = env.CLAUDE_CONFIG_DIR
     ? path.join(env.CLAUDE_CONFIG_DIR, '.claude.json')
     : path.join(os.homedir(), '.claude.json');
+  const legacy = path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.config.json');
+  try {
+    const stat = fs.statSync(legacy);
+    if (stat.isFile() && (stat.size > 0 || ((stat.mode & 0o222) !== 0 && !fs.existsSync(modern)))) return legacy;
+  } catch { /* no legacy file */ }
+  return modern;
 }
 
 function samePath(a, b) {
@@ -46,17 +60,17 @@ function samePath(a, b) {
 }
 
 /**
- * The user-scope registration named `gsd`, as far as the documented config
- * file shows it: 'ours' when it starts this install's server, 'other' when a
- * server of that name starts something else, 'absent' when the file has none
- * by that name, 'unknown' when the file cannot be read or parsed.
+ * The user-scope registration named `gsd`, as the CLI's config file shows it:
+ * 'ours' when it starts this install's server, 'other' when a server of that
+ * name starts something else, 'absent' when there is none by that name (or no
+ * file yet), 'unknown' when the file is there and cannot be read or parsed.
  */
 function userRegistration(serverPath, env = process.env) {
   let config;
   try {
     config = JSON.parse(fs.readFileSync(userConfigPath(env), 'utf8'));
-  } catch {
-    return 'unknown';
+  } catch (err) {
+    return err.code === 'ENOENT' ? 'absent' : 'unknown';
   }
   const entry = config?.mcpServers?.[SERVER_NAME];
   if (entry === undefined) return 'absent';
@@ -92,7 +106,8 @@ function runClaude(args, env = process.env) {
   const run = spawnSync('claude', win ? args.map((arg) => `"${arg}"`) : args, {
     env,
     encoding: 'utf8',
-    timeout: 30000,
+    // Inside the updater's 60 s budget for the whole install.
+    timeout: 20000,
     shell: win,
     windowsHide: true,
   });
@@ -116,11 +131,13 @@ function registerMcpServer(serverPath, env = process.env) {
   const command = shellCommand(addArgs(serverPath));
   const found = userRegistration(serverPath, env);
   if (found === 'ours') return { status: 'already', command };
+  // Replacing someone else's server is the user's decision: the reason says
+  // how (one command per step, as PowerShell 5.1 has no `&&`).
   if (found === 'other') {
     return {
       status: 'failed',
-      reason: `a user-scope MCP server named "${SERVER_NAME}" already exists in ${userConfigPath(env)} and it does not start ${serverPath}; it was left as it is`,
-      command: `${shellCommand(removeArgs())} && ${command}`,
+      reason: `a user-scope MCP server named "${SERVER_NAME}" already exists in ${userConfigPath(env)} and it does not start ${serverPath}; it was left as it is (to replace it, run ${shellCommand(removeArgs())} first)`,
+      command,
     };
   }
   const run = runClaude(addArgs(serverPath), env);
@@ -128,8 +145,8 @@ function registerMcpServer(serverPath, env = process.env) {
   if (/already exists/i.test(run.output)) {
     return {
       status: 'failed',
-      reason: `\`claude mcp add\` says a user-scope server named "${SERVER_NAME}" already exists, in a config this installer did not read; it was left as it is (\`claude mcp get ${SERVER_NAME}\` shows what it starts)`,
-      command: `${shellCommand(removeArgs())} && ${command}`,
+      reason: `\`claude mcp add\` says a user-scope server named "${SERVER_NAME}" already exists, in a config this installer did not read; it was left as it is (\`claude mcp get ${SERVER_NAME}\` shows what it starts; to replace it, run ${shellCommand(removeArgs())} first)`,
+      command,
     };
   }
   return { status: 'failed', reason: run.missing ? run.output : `\`claude mcp add\` failed: ${run.output || 'no output'}`, command };
@@ -139,15 +156,17 @@ function registerMcpServer(serverPath, env = process.env) {
  * Remove this install's user-scope registration, and nothing that is not
  * this install's.
  *
- * @returns {{ status: 'removed'|'absent'|'other'|'unknown'|'failed', reason?: string, command: string }}
+ * @returns {{ status: 'removed'|'absent'|'other'|'unknown'|'failed', reason?: string, command: string, file: string }}
+ *   file is the config file read, for an 'unknown' to name.
  */
 function unregisterMcpServer(serverPath, env = process.env) {
   const command = shellCommand(removeArgs());
+  const file = userConfigPath(env);
   const found = userRegistration(serverPath, env);
-  if (found !== 'ours') return { status: found, command };
+  if (found !== 'ours') return { status: found, command, file };
   const run = runClaude(removeArgs(), env);
-  if (run.ok) return { status: 'removed', command };
-  return { status: 'failed', reason: run.missing ? run.output : `\`claude mcp remove\` failed: ${run.output || 'no output'}`, command };
+  if (run.ok) return { status: 'removed', command, file };
+  return { status: 'failed', reason: run.missing ? run.output : `\`claude mcp remove\` failed: ${run.output || 'no output'}`, command, file };
 }
 
 /**
@@ -165,4 +184,9 @@ function recordFailedRegistration(runtimeDir, failure) {
   fs.writeFileSync(unregisteredMarkerPath(runtimeDir), `${JSON.stringify({ reason: failure.reason, command: failure.command }, null, 2)}\n`);
 }
 
-module.exports = { SERVER_NAME, recordFailedRegistration, registerMcpServer, unregisterMcpServer, unregisteredMarkerPath, userConfigPath, userRegistration };
+/** The command that registers this install's server, for a user to run. */
+function registerCommand(serverPath) {
+  return shellCommand(addArgs(serverPath));
+}
+
+module.exports = { SERVER_NAME, recordFailedRegistration, registerCommand, registerMcpServer, unregisterMcpServer, unregisteredMarkerPath, userConfigPath, userRegistration };
