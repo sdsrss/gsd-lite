@@ -1,4 +1,5 @@
 import { readFile, writeFile, rename, mkdir, unlink, stat, open } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile as execFileCb } from 'node:child_process';
@@ -37,6 +38,24 @@ export const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
  */
 export function shippedDocPath(...segments) {
   return join(PACKAGE_ROOT, ...segments);
+}
+
+/**
+ * Was the module at `moduleUrl` the script node was started with?
+ *
+ * Compared by real path. Node resolves the main module through symlinks and
+ * leaves process.argv[1] as given, so comparing the two as strings said "no"
+ * for a script started through a symlinked path, and the script did nothing
+ * and exited 0: the MCP server under a symlinked ~/.claude, and on macOS every
+ * install.js the updater runs, since os.tmpdir() is under /var, a symlink to
+ * /private/var. uninstall.js has its own copy (it avoids importing from src/).
+ */
+export function isMainModule(moduleUrl) {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
 }
 
 const _gsdDirCache = new Map();

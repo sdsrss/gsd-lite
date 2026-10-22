@@ -4,9 +4,10 @@
 import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, renameSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { isMainModule } from './src/utils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const _require = createRequire(import.meta.url);
@@ -602,6 +603,6 @@ export function main() {
   log('  Use /gsd:resume to continue an existing project');
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   main();
 }
