@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Plugin uninstaller for GSD-Lite
 
-import { existsSync, rmSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, chmodSync, statSync } from 'node:fs';
+import { existsSync, rmSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, chmodSync, statSync, realpathSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
@@ -306,6 +306,14 @@ export function main() {
   return summary;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Compared by real path, as isMainModule in src/utils.js does: Node resolves
+// the main module through symlinks and leaves argv[1] as given, so started
+// through a symlinked path the string comparison said no and nothing ran.
+// Inlined rather than imported, so this file keeps needing nothing from src/.
+let startedDirectly = false;
+try {
+  startedDirectly = realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch { /* no argv[1] (node -e, a REPL): imported, not run */ }
+if (startedDirectly) {
   main();
 }

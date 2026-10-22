@@ -1,10 +1,10 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { init, read, update, phaseComplete, patchPlan } from './tools/state/index.js';
-import { shippedDocPath } from './utils.js';
+import { isMainModule, shippedDocPath } from './utils.js';
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION = _require('../package.json').version;
@@ -470,6 +470,6 @@ process.on('unhandledRejection', (err) => {
   process.stderr.write(`[gsd] unhandledRejection: ${err?.stack || err}\n`);
 });
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   main().catch(console.error);
 }
