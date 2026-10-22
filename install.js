@@ -15,7 +15,7 @@ const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
 const { upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
 const { atomicWriteJson } = _require('./hooks/lib/atomic-write.cjs');
-const { registerMcpServer, unregisterMcpServer } = _require('./hooks/lib/mcp-registration.cjs');
+const { recordFailedRegistration, registerMcpServer, unregisterMcpServer } = _require('./hooks/lib/mcp-registration.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const SERVER_PATH = join(RUNTIME_DIR, 'src', 'server.js');
@@ -560,6 +560,17 @@ export function main() {
         log(`  ✗ MCP server NOT registered: ${registered.reason}`);
       }
     }
+    // The SessionStart hook reads this and says so every session while the
+    // registration is missing (recordFailedRegistration says why it is
+    // needed). An earlier record never outlives an install: the runtime
+    // directory it sits in is replaced whole by the swap above.
+    if (mcpFailure) {
+      try {
+        recordFailedRegistration(RUNTIME_DIR, mcpFailure);
+      } catch (err) {
+        log(`  ! Could not record the failed MCP registration: ${err.message}`);
+      }
+    }
 
     // Record install mode so SessionStart's Phase 0 orphan-cleanup can
     // distinguish "plugin uninstalled" from "npx install". Without this marker
@@ -618,8 +629,14 @@ export function main() {
 
   // The summary follows what happened. Without the MCP server there are no
   // gsd tools, so "installed successfully" over a failed registration would be
-  // the one line a user reads, and wrong. The reason also goes to stderr,
-  // which is what the updater reports when an install it ran fails.
+  // the one line a user reads, and wrong.
+  //
+  // Run by hand, the install exits 1. Run by the updater (PLUGIN_AUTO_UPDATE=1,
+  // which every version's updater sets for the install it starts), it exits 0:
+  // the new version is in place, and an updater reads any failure as "still on
+  // the old version" — false, and its next check would find nothing to retry.
+  // The SessionStart hook reports the missing registration instead, from the
+  // marker written above.
   if (mcpFailure) {
     log('\n✗ GSD-Lite is installed except for its MCP server, so the gsd tools are not available yet.');
     log(`  ${mcpFailure.reason}.`);
@@ -627,7 +644,7 @@ export function main() {
     log(`    ${mcpFailure.command}`);
     log('  then restart Claude Code.');
     console.error(`MCP server not registered: ${mcpFailure.reason}. Run: ${mcpFailure.command}`);
-    process.exitCode = 1;
+    if (process.env.PLUGIN_AUTO_UPDATE !== '1') process.exitCode = 1;
     return;
   }
   log('\n✓ GSD-Lite installed successfully!');

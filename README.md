@@ -174,7 +174,9 @@ It registers the MCP server with Claude Code itself, at user scope, by running
 does not read MCP servers from `settings.json`, where releases before 0.19.0
 put it; the installer removes that entry). So `claude` must be on the PATH the
 installer runs with. When it is not, or the command fails, everything else is
-installed, the installer prints the command to run yourself and exits 1.
+installed, the installer prints the command to run yourself and exits 1
+(the background update's install exits 0 instead, and every session start
+says the server is not registered, with the command, until it is).
 `claude mcp list` shows `gsd` once it is registered. A user-scope server
 already named `gsd` that starts something else is left as it is, and the
 installer says so. Restart Claude Code after installing.

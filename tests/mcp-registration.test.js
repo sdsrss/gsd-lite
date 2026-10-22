@@ -8,7 +8,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,12 +62,15 @@ async function installAsPlugin(claudeDir) {
 
 const FOREIGN = { type: 'stdio', command: 'npx', args: ['some-other-gsd'], env: {} };
 
-// A PATH holding node and nothing else, so `claude` is not found anywhere.
+// The PATH without every directory that holds a `claude` (this machine keeps
+// node beside it, so node is linked in on its own), so `claude` is not found
+// while tar and the rest still are.
 async function pathWithoutClaude(t) {
   const bin = await mkdtemp(join(tmpdir(), 'gsd-mcp-nobin-'));
   t.after(() => rm(bin, { recursive: true, force: true }));
   await symlink(process.execPath, join(bin, 'node'));
-  return bin;
+  const rest = (process.env.PATH || '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'claude')));
+  return [bin, ...rest].join(delimiter);
 }
 
 describe('npx/manual install: MCP server registration', { timeout: 180000 }, () => {
@@ -162,6 +166,107 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
     assert.equal(result.status, 0, result.output);
     assert.ok(result.stdout.includes(`Would register the MCP server with Claude Code: claude mcp add -s user gsd -- node ${ctx.serverPath}`), result.stdout);
     assert.deepEqual(await claudeCalls(ctx.claudeDir), []);
+  });
+});
+
+// The npx install's SessionStart hook, as Claude Code runs it after install.js
+// copied it into <config>/hooks. PLUGIN_AUTO_UPDATE=1 keeps it from starting
+// the updater, which would write under the temp home while it is removed.
+function sessionStart({ home, claudeDir }) {
+  const result = spawnSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
+    cwd: home,
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' },
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  return result.stdout;
+}
+
+const NOT_REGISTERED = /GSD-Lite's MCP server is not registered with Claude Code/;
+
+// An install the updater runs cannot report a failed registration through its
+// exit code: the updater reads any failure as "update failed, still on the old
+// version", while the new version is already in place, and its next check
+// finds it up to date. So that install exits 0 and the SessionStart hook says
+// it, every session, until the server is registered.
+describe('a registration the install could not make is reported every session', { timeout: 180000 }, () => {
+  it('run by the updater, the install exits 0, and each session start names the reason and the command', async (t) => {
+    const ctx = await claudeHome(t);
+    const result = run('install.js', ctx, { env: { PATH: await pathWithoutClaude(t), PLUGIN_AUTO_UPDATE: '1' } });
+    assert.equal(result.status, 0, result.output);
+    assert.match(result.stdout, /✗ MCP server NOT registered/);
+    for (let session = 0; session < 2; session++) {
+      const said = sessionStart(ctx);
+      assert.match(said, NOT_REGISTERED);
+      assert.match(said, /`claude` was not found on PATH/);
+      assert.ok(said.includes(`claude mcp add -s user gsd -- node ${ctx.serverPath}`), said);
+    }
+  });
+
+  it('an install that registers the server stops the report', async (t) => {
+    const ctx = await claudeHome(t);
+    run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add' } });
+    assert.match(sessionStart(ctx), NOT_REGISTERED, 'premise: reported');
+    assert.equal(run('install.js', ctx).status, 0);
+    assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED);
+  });
+
+  it('a registration made by hand since stops the report, and its record is cleared', async (t) => {
+    const ctx = await claudeHome(t);
+    run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add' } });
+    const marker = join(ctx.claudeDir, 'gsd', '.mcp-unregistered.json');
+    assert.ok(existsSync(marker), 'premise: the failure was recorded');
+    // The printed command, run by the user.
+    spawnSync('claude', ['mcp', 'add', '-s', 'user', 'gsd', '--', 'node', ctx.serverPath], { env: { ...process.env, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir } });
+    assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED);
+    assert.equal(existsSync(marker), false);
+  });
+
+  it('beside the plugin nothing is reported: the plugin serves the server', async (t) => {
+    const ctx = await claudeHome(t);
+    run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add' } });
+    await installAsPlugin(ctx.claudeDir);
+    assert.equal(run('install.js', ctx).status, 0);
+    assert.equal(existsSync(join(ctx.claudeDir, 'gsd', '.mcp-unregistered.json')), false);
+  });
+
+  // The whole path: the real updater installing a release where no `claude`
+  // is on PATH. It used to read the install's exit 1 as a failed update.
+  it('the updater counts such an install as installed, and the next session reports the registration', async (t) => {
+    const ctx = await claudeHome(t);
+    const pkg = join(ctx.home, 'release', 'gsd-lite-9.9.9');
+    for (const entry of ['install.js', 'uninstall.js', 'package.json', 'package-lock.json', 'src', 'hooks', 'commands', 'agents', 'workflows', 'references']) {
+      await cp(join(PROJECT_ROOT, entry), join(pkg, entry), { recursive: true });
+    }
+    await mkdir(join(pkg, 'node_modules'));
+    const tarball = join(ctx.home, 'release.tar.gz');
+    assert.equal(spawnSync('tar', ['czf', tarball, '-C', join(ctx.home, 'release'), 'gsd-lite-9.9.9']).status, 0);
+    const bytes = await readFile(tarball);
+
+    const saved = { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, HOME: process.env.HOME };
+    t.after(() => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    });
+    Object.assign(process.env, { PATH: await pathWithoutClaude(t), CLAUDE_CONFIG_DIR: ctx.claudeDir, HOME: ctx.home });
+    const req = createRequire(import.meta.url);
+    const source = join(PROJECT_ROOT, 'hooks', 'gsd-auto-update.cjs');
+    delete req.cache[req.resolve(source)];
+    t.after(() => { delete req.cache[req.resolve(source)]; });
+    const ok = await req(source).downloadAndInstall('https://codeload.github.com/sdsrss/gsd-lite/tar.gz/refs/tags/v9.9.9', false, null, {
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      }),
+    });
+    Object.assign(process.env, saved);
+    assert.equal(ok, true, 'the updater read an installed release as a failed update');
+    assert.ok(existsSync(ctx.serverPath), 'premise: the release was installed');
+    assert.match(sessionStart(ctx), NOT_REGISTERED);
   });
 });
 

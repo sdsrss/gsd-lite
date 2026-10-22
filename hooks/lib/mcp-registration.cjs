@@ -150,4 +150,19 @@ function unregisterMcpServer(serverPath, env = process.env) {
   return { status: 'failed', reason: run.missing ? run.output : `\`claude mcp remove\` failed: ${run.output || 'no output'}`, command };
 }
 
-module.exports = { SERVER_NAME, registerMcpServer, unregisterMcpServer, userConfigPath, userRegistration };
+/**
+ * Where a registration that failed is recorded, so the npx install's
+ * SessionStart hook can say so every session until it is fixed. An install
+ * the updater runs cannot report it through its exit code: the updater reads
+ * any non-zero exit as "update failed, still on the old version" while the
+ * new version is already in place, and its next check finds it up to date.
+ */
+function unregisteredMarkerPath(runtimeDir) {
+  return path.join(runtimeDir, '.mcp-unregistered.json');
+}
+
+function recordFailedRegistration(runtimeDir, failure) {
+  fs.writeFileSync(unregisteredMarkerPath(runtimeDir), `${JSON.stringify({ reason: failure.reason, command: failure.command }, null, 2)}\n`);
+}
+
+module.exports = { SERVER_NAME, recordFailedRegistration, registerMcpServer, unregisterMcpServer, unregisteredMarkerPath, userConfigPath, userRegistration };
