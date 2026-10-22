@@ -52,9 +52,18 @@ Check if GSD hooks are registered in Claude settings:
     appears in `settings.json` and nothing is copied to `~/.claude/hooks/`.
   - **npx / manual**: the three hooks are registered in `settings.hooks` and the
     five scripts sit in `~/.claude/hooks/`.
-  - Both can be true at once. That is supported and is not a double
-    registration: the `~/.claude/hooks` copies stand down while the plugin is
-    installed and enabled, so each hook still fires once.
+  - Both can be true at once, and that is supported. The `~/.claude/hooks`
+    copies stand down, so each hook fires once, only when the files show the
+    plugin serving this directory: the first entry under `gsd@gsd` (without
+    one, under the first `gsd@…` id) is unscoped, at `user` scope, or at
+    `project` / `local` scope for this directory;
+    `enabledPlugins["gsd@gsd"]` is `true` in `~/.claude/settings.json` or the
+    project's `.claude/settings.json` / `settings.local.json`, and no other of
+    them says otherwise; and the plugin's `hooks/hooks.json` declares the hook.
+    Otherwise both copies run and each hook fires twice: record INFO "hooks
+    from both the plugin and the npx install run", not a failure. A plugin
+    installed by policy (`managed` scope) is enabled by managed settings these
+    files do not show, so beside one both copies run.
 - Plugin mode — read `hooks/hooks.json` from the entry's `installPath` and check
   it declares `SessionStart`, `PostToolUse` and `Stop`:
   - All three declared: record PASS "hooks served by the plugin"

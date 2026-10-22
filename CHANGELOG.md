@@ -65,7 +65,11 @@ under **Now refused** at the end.
   skipped them for any plugin record, leaving every other project without
   them. In the plugin's own project each command and tool is then listed twice.
   The npx server's `health` no longer compares its version with the plugin's
-  record, which warned about a restart whenever the two differed.
+  record, which warned about a restart whenever the two differed. Beside a
+  plugin installed by policy (`managed` scope), the npx install's hooks run
+  as well as the plugin's, as in 0.18.0: a policy enables the plugin in
+  managed settings, which those hooks cannot read, so they do not stand
+  down; `/gsd:doctor` says so.
 - `npx gsd-lite uninstall` removes the registration with `claude mcp remove`,
   and only this install's: a `gsd` server starting something else stays, and
   a config it cannot read is reported (exit 1). `--dry-run` says what the
