@@ -903,20 +903,41 @@ describe('a state an older version wrote since', () => {
     const root = new URL('../src/', import.meta.url);
     const files = (await readdir(root, { recursive: true })).filter((f) => f.endsWith('.js'));
     assert.ok(files.length > 10, 'premise: the source tree was read');
-    // Named as what may be handed statePath, not as the writers to avoid: the
-    // first version matched writeJson( only, and writeAtomic(statePath, …) in
-    // init or phase-complete passed the suite (pre-tag review).
-    const READERS = ['dirname', 'ensureLockPathFromStatePath', 'get', 'set', 'loadState', 'readJson', 'stat', 'writeState'];
-    const writers = [];
-    const others = [];
+    // Named as the forms statePath may appear in, not as the writers to avoid.
+    // The first version matched writeJson( only, and writeAtomic(statePath, …)
+    // passed (pre-tag review); the second matched statePath as a first
+    // argument only, and an alias (`const p = statePath`), a rename onto it
+    // (`rename(tmp, statePath)`) or a path built inline passed (review of the
+    // repair). Every occurrence of the name must be one of these, and the
+    // literal path one of the two places that build it.
+    const READERS = ['dirname', 'ensureLockPathFromStatePath', 'loadState', 'readJson', 'stat', 'writeState', '_fileLockPaths.get', '_fileLockPaths.set'];
+    const FORMS = [
+      /\bconst statePath = await getStatePath\(/g,
+      /\bconst statePath = join\(gsdDir, 'state\.json'\);/g,
+      /\bif \(!?statePath\)/g,
+      new RegExp(`(?<![\\w$.])(?:${READERS.map((r) => r.replace('.', '\\.')).join('|')})\\(statePath[,)]`, 'g'),
+      /\}, statePath\);/g, // withStateLock's queue key
+      /\bfunction \w+\((?:fn, )?statePath(?:, state)?\)/g, // the helpers' own parameters
+      /\bconst queueKey = statePath \?\? null;/g,
+    ];
+    const offenders = [];
+    const directWrites = [];
+    const literals = [];
     for (const file of files) {
-      const source = await readFile(new URL(file, root), 'utf8');
-      for (const [, callee] of source.matchAll(/\b([A-Za-z_$][\w$]*)\(\s*statePath\b/g)) {
-        if (callee === 'writeJson') writers.push(file);
-        else if (!READERS.includes(callee)) others.push(`${file}: ${callee}`);
+      const source = (await readFile(new URL(file, root), 'utf8')).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+      const allowed = new Set();
+      for (const form of FORMS) {
+        for (const m of source.matchAll(form)) allowed.add(m.index + m[0].indexOf('statePath'));
       }
+      for (const _ of source.matchAll(/\bwriteJson\(statePath,/g)) directWrites.push(file);
+      for (const m of source.matchAll(/\bstatePath\b/g)) {
+        const isDirectWrite = source.startsWith('writeJson(statePath,', m.index - 'writeJson('.length);
+        if (!allowed.has(m.index) && !isDirectWrite) offenders.push(`${file}:${source.slice(0, m.index).split('\n').length}`);
+      }
+      for (const _ of source.matchAll(/['"`](?:[^'"`\n]*[/\\])?state\.json['"`]/g)) literals.push(file);
     }
-    assert.deepEqual(writers, ['tools/state/constants.js'], 'the one direct write is writeState\'s own');
-    assert.deepEqual(others, [], 'statePath handed to something that is neither writeState nor a reader');
+    assert.deepEqual(directWrites, ['tools/state/constants.js'], 'the one direct write is writeState\'s own');
+    assert.deepEqual(offenders, [], 'statePath in a form that is neither a reader, writeState nor a declaration');
+    assert.deepEqual(literals.sort(), ['tools/state/crud.js', 'utils.js'], 'the path to state.json built somewhere other than getStatePath and init');
   });
 });
