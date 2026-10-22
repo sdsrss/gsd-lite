@@ -103,11 +103,13 @@ describe('install mode, as the updater reads it', () => {
     assert.equal(updaterMode(ctx), 'manual');
   });
 
-  it('an empty plugin record is no plugin', (t) => {
-    const ctx = home(t);
-    writePlugins(ctx.claudeDir, []);
-    assert.equal(updaterMode(ctx), 'manual');
-  });
+  for (const [label, entries] of [['an empty plugin record', []], ['a record holding an empty list', [[]]], ['a record holding null', [null]]]) {
+    it(`${label} is no plugin`, (t) => {
+      const ctx = home(t);
+      writePlugins(ctx.claudeDir, entries);
+      assert.equal(updaterMode(ctx), 'manual');
+    });
+  }
 
   for (const [label, entry] of PLUGIN_FOR_EVERY_PROJECT) {
     it(`a plugin installed ${label} is the plugin install`, (t) => {

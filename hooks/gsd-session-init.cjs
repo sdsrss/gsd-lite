@@ -360,17 +360,21 @@ setTimeout(() => process.exit(0), 4000).unref();
           try { marker = JSON.parse(fs.readFileSync(markerPath, 'utf8')); } catch { /* none recorded */ }
         }
         if (found !== 'ours' && (found !== 'unknown' || marker)) {
-          const reason = found === 'other'
-            ? `a user-scope MCP server named gsd in ${userConfigPath()} starts something else (to replace it, run ${removeCommand()} first)`
-            : marker?.reason || `${userConfigPath()} has no registration of it`;
-          // It reaches the session's context: one line, no markup. The reason
-          // can carry the CLI's own output, so it keeps letters, digits and
-          // path punctuation only. The command is built here, shell-quoted,
-          // and must survive as it is: dropping # $ [ ] ! from a path made a
-          // command that registered another one (delta review).
+          // It reaches the session's context: one line, no markup. A reason
+          // the record keeps from the CLI carries the CLI's own output, so it
+          // keeps letters, digits and path punctuation only. The rest is this
+          // hook's own text and paths, kept whole: dropping # $ [ ] ! from a
+          // path made a command that registered another one (delta review).
+          // What the config file shows is read now: a reason the record kept
+          // from it outlived the state it described (final review).
           const plain = (s) => String(s ?? '').replace(/[^\p{L}\p{M}\p{N}\w .,:;()=+'"`/\\&@~%-]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
           const oneLine = (s) => String(s).replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ');
-          console.log(`⚠️  GSD-Lite (tell the user): its MCP server is not registered with Claude Code, so the gsd tools are not available: ${plain(reason)}. To register it, run \`${oneLine(registerCommand(serverPath))}\` in a shell, then restart Claude Code.`);
+          const reason = found === 'other'
+            ? oneLine(`a user-scope MCP server named gsd in ${userConfigPath()} starts something else (to replace it, run ${removeCommand()} first)`)
+            : found === 'unknown'
+              ? oneLine(`${userConfigPath()} could not be read or parsed`)
+              : marker?.cause === 'cli' ? plain(marker.reason) : oneLine(`${userConfigPath()} has no registration of it`);
+          console.log(`⚠️  GSD-Lite (tell the user): its MCP server is not registered with Claude Code, so the gsd tools are not available: ${reason}. To register it, run \`${oneLine(registerCommand(serverPath))}\` in a shell, then restart Claude Code.`);
         }
       }
     } catch { /* no runtime, no mode marker, or no helper: nothing to say */ }

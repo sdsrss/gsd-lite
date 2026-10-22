@@ -434,6 +434,16 @@ export function main() {
   // replaced. Losing it resets the update-check throttle and drops a pending
   // notification.
   if (!DRY_RUN) {
+    // The install mode goes in with the runtime, before anything that can be
+    // cut off. SessionStart reads it: Phase 0 to tell an uninstalled plugin
+    // from an npx install (without it, the .orphaned_at cache heuristic), and
+    // Phase 4b to report a missing MCP registration, for npx only. Written
+    // after the registration, into a runtime the swap had replaced whole, an
+    // install stopped in `claude mcp add` (the updater stops one at 60 s) left
+    // none, and no session said the server was missing (final review).
+    try {
+      writeFileSync(join(STAGING_DIR, '.install-mode'), (isPluginInstall ? 'plugin' : 'manual') + '\n');
+    } catch { /* best effort — the marker missing falls back to the heuristic */ }
     const backupDir = join(CLAUDE_DIR, `.gsd-runtime-backup-${process.pid}`);
     const hadRuntime = existsSync(RUNTIME_DIR);
     try {
@@ -565,15 +575,6 @@ export function main() {
         log(`  ! Could not record the failed MCP registration: ${err.message}`);
       }
     }
-
-    // Record install mode so SessionStart's Phase 0 orphan-cleanup can
-    // distinguish "plugin uninstalled" from "npx install". Without this marker
-    // the hook falls back to the .orphaned_at cache heuristic, which is fine
-    // for pre-marker users but more guess-y.
-    try {
-      const installModeMarker = join(RUNTIME_DIR, '.install-mode');
-      writeFileSync(installModeMarker, (isPluginInstall ? 'plugin' : 'manual') + '\n');
-    } catch { /* best effort — marker missing falls back to heuristic */ }
 
     // Clear stale .orphaned_at from the current plugin cache version, in case
     // the user previously uninstalled (Claude Code stamps it) and is now
