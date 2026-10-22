@@ -14,6 +14,7 @@ import {
   validateStateUpdate,
   validateTransition,
   workflowTransitionErrors,
+  WORKFLOW_MODES,
   createInitialState,
   detectCycles,
   handWrittenResearchBlocked,
@@ -270,7 +271,7 @@ function _newTaskIdError(state, phase, task) {
 /**
  * Update state.json with canonical field guard and full validation.
  */
-export async function update({ updates, basePath = process.cwd(), expectedVersion, _append_decisions, _propagation_tasks } = {}) {
+export async function update({ updates, basePath = process.cwd(), expectedVersion, _append_decisions, _propagation_tasks, _server_write = false } = {}) {
   if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
     return { error: true, code: ERROR_CODES.INVALID_INPUT, message: 'updates must be a non-null object' };
   }
@@ -319,6 +320,24 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
       const currentMode = state.workflow_mode;
       if (currentMode === 'completed' && updates.workflow_mode !== currentMode) {
         return { error: true, code: ERROR_CODES.TERMINAL_STATE, message: `Cannot change workflow_mode from terminal state '${currentMode}'` };
+      }
+    }
+
+    // The transition table, asked first, so a refused move is what the refusal
+    // names whatever else is wrong with the call. The fast path asks it itself
+    // (validateStateUpdate); validateState, which judges the updates carrying
+    // phases, appended decisions or propagation, sees only the state they
+    // produce, so with phases in the call any move was written. Not for the
+    // server's own result handlers (_server_write): they write the mode the
+    // outcome they process calls for, and a result that arrives after a hold
+    // was entered (a second /gsd:resume found the executor's commit and
+    // entered reconcile_workspace) was refused and lost; 0.18.0 took it. An
+    // unknown mode is left to validation, which names it as unknown.
+    const fullPath = Boolean(updates.phases || _append_decisions?.length || _propagation_tasks?.length);
+    if (fullPath && !_server_write && WORKFLOW_MODES.includes(updates.workflow_mode)) {
+      const refused = workflowTransitionErrors(state, updates.workflow_mode);
+      if (refused.length > 0) {
+        return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${refused.join('; ')}` };
       }
     }
 
@@ -540,13 +559,6 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     let validation = needsFullValidation
       ? validateState(merged)
       : validateStateUpdate(state, updates);
-    // validateState judges the state these produce and cannot see where the
-    // workflow came from, so the transition table is asked here: with phases
-    // in the call, any move it refuses used to be written.
-    if (needsFullValidation && 'workflow_mode' in updates) {
-      const refused = workflowTransitionErrors(state, updates.workflow_mode);
-      if (refused.length > 0) validation = { valid: false, errors: [...refused, ...validation.errors] };
-    }
     // The fast path checks the fields it was taught to, and each one it was
     // not taught let state-update write a state the full validator refuses,
     // after which every full validation of it failed: research entries,

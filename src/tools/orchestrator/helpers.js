@@ -409,8 +409,10 @@ function getBlockedReasonFromResult(result) {
   };
 }
 
+// The server's own writes: the mode a handler writes is the one the outcome
+// it processes calls for, taken as 0.18.0 took it (update() says why).
 async function persist(basePath, updates, { _append_decisions, _propagation_tasks, expectedVersion } = {}) {
-  const result = await update({ updates, basePath, expectedVersion, _append_decisions, _propagation_tasks });
+  const result = await update({ updates, basePath, expectedVersion, _append_decisions, _propagation_tasks, _server_write: true });
   if (result.error) {
     return result;
   }
@@ -419,7 +421,7 @@ async function persist(basePath, updates, { _append_decisions, _propagation_task
 
 // persist variant that returns merged state from update(), avoiding re-reads
 async function persistAndRead(basePath, updates, { _append_decisions, _propagation_tasks, expectedVersion } = {}) {
-  const result = await update({ updates, basePath, expectedVersion, _append_decisions, _propagation_tasks });
+  const result = await update({ updates, basePath, expectedVersion, _append_decisions, _propagation_tasks, _server_write: true });
   if (result.error) {
     return { error: true, ...result };
   }
