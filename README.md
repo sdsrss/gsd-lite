@@ -167,11 +167,25 @@ git clone https://github.com/sdsrss/gsd-lite.git
 cd gsd-lite && npm install && node cli.js install
 ```
 
-Methods 2 & 3 write components to `~/.claude/` and register the MCP server in `settings.json`.
+The installer copies commands, agents, workflows, references, and hooks to `~/.claude/`, sets up the MCP server runtime in `~/.claude/gsd/`, and registers the hooks and StatusLine in `~/.claude/settings.json`.
 
-The installer copies commands, agents, workflows, references, and hooks to `~/.claude/`, and sets up the MCP server runtime in `~/.claude/gsd/`.
+It registers the MCP server with Claude Code itself, at user scope, by running
+`claude mcp add -s user gsd -- node ~/.claude/gsd/src/server.js` (Claude Code
+does not read MCP servers from `settings.json`, where releases before 0.19.0
+put it; the installer removes that entry). So `claude` must be on the PATH the
+installer runs with. When it is not, or the command fails, everything else is
+installed, the installer prints the command to run yourself and exits 1.
+`claude mcp list` shows `gsd` once it is registered. A user-scope server
+already named `gsd` that starts something else is left as it is, and the
+installer says so. Restart Claude Code after installing.
 
-Uninstall: `node cli.js uninstall` or `npx gsd-lite uninstall`
+With the plugin installed as well, the installer registers no MCP server and
+removes the one an earlier install registered, since the plugin serves it.
+Installed the plugin after an npx install? Run `npx gsd-lite install` once
+more (or `claude mcp remove gsd -s user`), or every gsd tool is listed twice.
+
+Uninstall: `node cli.js uninstall` or `npx gsd-lite uninstall`. It removes
+the MCP registration too, with `claude mcp remove`.
 
 ## Upgrade
 

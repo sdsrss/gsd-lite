@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+// A stand-in for the `claude` CLI, first on PATH for the whole test suite
+// (tests/git-sandbox.cjs puts this directory there), so no test can reach a
+// developer's real CLI and the real ~/.claude.json behind it.
+//
+// It does what the real `claude mcp add -s user` / `claude mcp remove -s user`
+// do to the user config, with the same exit codes and messages (measured on
+// Claude Code 2.1.308): add writes `{type:'stdio',command,args,env:{}}` under
+// the top-level mcpServers of ${CLAUDE_CONFIG_DIR || HOME}/.claude.json and
+// exits 1 with "already exists" if the name is taken; remove exits 1 when the
+// name is absent. tests/mcp-registration.test.js holds this against the real
+// CLI when one is installed.
+//
+// Every call is appended to fake-claude-calls.jsonl beside that file.
+// GSD_FAKE_CLAUDE_FAIL=<subcommand> makes that subcommand fail;
+// GSD_FAKE_CLAUDE_FAIL=add:exists makes add answer "already exists", as the
+// real CLI does for a registration in a config file the caller did not read.
+'use strict';
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const argv = process.argv.slice(2);
+const dir = process.env.CLAUDE_CONFIG_DIR || os.homedir();
+const configPath = path.join(dir, '.claude.json');
+try {
+  fs.appendFileSync(path.join(dir, 'fake-claude-calls.jsonl'), `${JSON.stringify({ argv })}\n`);
+} catch { /* no such directory: the call still answers */ }
+
+function fail(message, code = 1) {
+  process.stderr.write(`${message}\n`);
+  process.exit(code);
+}
+
+function readConfig() {
+  try { return JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { return {}; }
+}
+
+function writeConfig(config) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+const [group, sub, ...rest] = argv;
+if (group !== 'mcp' || !['add', 'remove'].includes(sub)) fail(`fake claude: unsupported command: ${argv.join(' ')}`, 2);
+let scope = 'local';
+const positional = [];
+let tail = null;
+for (let i = 0; i < rest.length; i++) {
+  if (rest[i] === '--') { tail = rest.slice(i + 1); break; }
+  if (rest[i] === '-s' || rest[i] === '--scope') { scope = rest[++i]; continue; }
+  positional.push(rest[i]);
+}
+if (scope !== 'user') fail(`fake claude: only user scope is modelled, got ${scope}`, 2);
+const [name, ...more] = positional;
+if (process.env.GSD_FAKE_CLAUDE_FAIL === sub) fail(`fake claude: ${sub} failed on purpose`);
+if (process.env.GSD_FAKE_CLAUDE_FAIL === `${sub}:exists`) fail(`MCP server ${name} already exists in user config`);
+const config = readConfig();
+
+if (sub === 'add') {
+  const [command, ...args] = tail ?? more;
+  if (!name || !command) fail('fake claude: mcp add needs a name and a command', 2);
+  if (config.mcpServers?.[name]) fail(`MCP server ${name} already exists in user config`);
+  config.mcpServers = { ...config.mcpServers, [name]: { type: 'stdio', command, args, env: {} } };
+  writeConfig(config);
+  process.stdout.write(`Added stdio MCP server ${name} with command: ${[command, ...args].join(' ')} to user config\n`);
+} else {
+  if (!config.mcpServers?.[name]) fail(`No MCP server named "${name}" in user scope`);
+  delete config.mcpServers[name];
+  writeConfig(config);
+  process.stdout.write(`Removed MCP server ${name} from user config\n`);
+}

@@ -17,6 +17,15 @@ function runCli(args, home) {
   });
 }
 
+// The user-scope MCP registration, as tests/fake-claude/claude writes it.
+async function userMcpServer(claudeDir) {
+  try {
+    return JSON.parse(await readFile(join(claudeDir, '.claude.json'), 'utf-8')).mcpServers?.gsd;
+  } catch {
+    return undefined;
+  }
+}
+
 describe('cli', () => {
   it('prints help', async () => {
     const home = await mkdtemp(join(tmpdir(), 'gsd-cli-help-'));
@@ -36,12 +45,12 @@ describe('cli', () => {
       await mkdir(claudeDir, { recursive: true });
       runCli(['install'], home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.ok(settings.mcpServers.gsd);
+      assert.equal(settings.mcpServers, undefined, 'Claude Code reads no MCP servers from settings.json');
+      assert.deepEqual((await userMcpServer(claudeDir))?.args, [join(claudeDir, 'gsd', 'src', 'server.js')]);
       await stat(join(claudeDir, 'gsd', 'src', 'server.js'));
 
       runCli(['uninstall'], home);
-      const after = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.equal(after.mcpServers?.gsd, undefined);
+      assert.equal(await userMcpServer(claudeDir), undefined);
       await assert.rejects(stat(join(claudeDir, 'gsd')));
     } finally {
       await rm(home, { recursive: true, force: true });

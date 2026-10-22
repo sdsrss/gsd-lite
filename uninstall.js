@@ -31,6 +31,7 @@ function _requireHookLib(file) {
 }
 const { removeHookEntry } = _requireHookLib('hook-registry.cjs');
 const { atomicWrite: _sharedAtomicWrite } = _requireHookLib('atomic-write.cjs');
+const { unregisterMcpServer } = _requireHookLib('mcp-registration.cjs');
 
 function log(msg) { console.log(msg); }
 
@@ -163,7 +164,7 @@ export function main() {
   const hookLibDir = join(CLAUDE_DIR, 'hooks', 'lib');
   if (existsSync(hookLibDir)) {
     // Only remove GSD-owned files, not other plugins' libs
-    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs', 'ctx-bridge.cjs']) {
+    for (const libFile of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs', 'ctx-bridge.cjs', 'mcp-registration.cjs']) {
       const fullPath = join(hookLibDir, libFile);
       if (existsSync(fullPath)) {
         rmSync(fullPath);
@@ -283,6 +284,21 @@ export function main() {
         `The hook and MCP entries still point at files this run deleted. Fix the file and run this again: ${settingsPath}`,
       );
     }
+  }
+
+  // The MCP server registration, with Claude Code (install.js registers it at
+  // user scope with `claude mcp add`). Only this install's: a server of the
+  // same name that starts something else is not ours to remove.
+  if (typeof unregisterMcpServer !== 'function') {
+    logProblem(
+      'hooks/lib/mcp-registration.cjs not found — the MCP server registration was not checked',
+      'If `claude mcp list` still shows gsd, remove it with: claude mcp remove gsd -s user',
+    );
+  } else {
+    const mcp = unregisterMcpServer(join(RUNTIME_DIR, 'src', 'server.js'));
+    if (mcp.status === 'removed') logRemoved('MCP server deregistered from Claude Code (user scope)');
+    if (mcp.status === 'other') log('  - A user-scope MCP server named gsd starts something else; left as it is');
+    if (mcp.status === 'failed') logProblem(`Could not deregister the MCP server: ${mcp.reason}`, `Remove it by running: ${mcp.command}`);
   }
 
   // One state, read twice — closing line and exit code. The previous attempt at

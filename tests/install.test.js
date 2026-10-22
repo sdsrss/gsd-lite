@@ -13,6 +13,15 @@ async function makeClaudeHome(prefix) {
   return { home, claudeDir };
 }
 
+// The user-scope MCP registration, as tests/fake-claude/claude writes it.
+async function userMcpServer(claudeDir) {
+  try {
+    return JSON.parse(await readFile(join(claudeDir, '.claude.json'), 'utf-8')).mcpServers?.gsd;
+  } catch {
+    return undefined;
+  }
+}
+
 function runScript(script, home, extraEnv = {}) {
   execFileSync('node', [script], {
     cwd: process.cwd(),
@@ -44,8 +53,8 @@ describe('install and uninstall scripts', () => {
         e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
       assert.ok(gsdHook);
       assert.equal(gsdHook.hooks[0].command, `node ${JSON.stringify(contextMonitorPath)}`);
-      assert.ok(settings.mcpServers.gsd);
-      assert.equal(settings.mcpServers.gsd.args[0], serverPath);
+      assert.equal(settings.mcpServers, undefined, 'Claude Code reads no MCP servers from settings.json');
+      assert.deepEqual(await userMcpServer(claudeDir), { type: 'stdio', command: 'node', args: [serverPath], env: {} });
       const statuslineStat = await stat(statuslinePath);
       const contextMonitorStat = await stat(contextMonitorPath);
       const serverStat = await stat(serverPath);
@@ -193,8 +202,8 @@ describe('install and uninstall scripts', () => {
     try {
       await writeFile(join(claudeDir, 'settings.json'), '  \n');
       runScript('install.js', home);
-      const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.ok(settings.mcpServers.gsd, 'GSD should be registered');
+      assert.ok(existsSync(join(claudeDir, 'settings.json')), 'premise: settings.json was written');
+      assert.ok(await userMcpServer(claudeDir), 'GSD should be registered');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -224,8 +233,7 @@ describe('install and uninstall scripts', () => {
       assert.notEqual(status, 0, 'uninstalling from a missing directory must not report success');
       assert.doesNotMatch(output, /✓ GSD-Lite uninstalled/, 'must not claim it uninstalled anything');
       assert.ok(existsSync(join(claudeDir, 'gsd')), 'the real install must be untouched');
-      const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.ok(settings.mcpServers?.gsd, 'the real registration must be untouched');
+      assert.ok(await userMcpServer(claudeDir), 'the real registration must be untouched');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -412,7 +420,7 @@ describe('install and uninstall scripts', () => {
       runScript('install.js', home);
       runScript('uninstall.js', home);
       const settings = JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
-      assert.equal(settings.mcpServers?.gsd, undefined);
+      assert.equal(await userMcpServer(claudeDir), undefined);
       assert.equal(settings.statusLine, undefined);
       const gsdHook = settings.hooks?.PostToolUse?.find(e =>
         e.hooks?.some(h => h.command?.includes('gsd-context-monitor')));
@@ -762,6 +770,7 @@ describe('plugin-mode install', () => {
       // MCP entry should be removed (plugin .mcp.json handles it)
       assert.equal(settings.mcpServers?.gsd, undefined,
         'Plugin mode should remove manual MCP entry');
+      assert.equal(await userMcpServer(claudeDir), undefined, 'the plugin serves the MCP server; nothing is registered beside it');
 
       // StatusLine SHOULD be registered (plugin system cannot manage it)
       const statuslinePath = join(claudeDir, 'hooks', 'gsd-statusline.cjs');

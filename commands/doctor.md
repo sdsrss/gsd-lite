@@ -22,7 +22,14 @@ Check if `.gsd/state.json` exists:
 Call the `health` MCP tool:
 - If returns `status: "ok"`: record PASS with server version
 - If returns error or unreachable: record FAIL with error message
-- Note: if MCP server is not available at all (tool not found), record FAIL "MCP server not registered"
+- Note: if MCP server is not available at all (tool not found), record FAIL "MCP server not registered".
+  Fix by install mode (STEP 3 says which): plugin — update or re-enable the gsd
+  plugin; npx/manual — run `npx gsd-lite install`, which registers the server
+  with Claude Code at user scope (`claude mcp add -s user gsd …`, needs `claude`
+  on PATH) and prints the command to run by hand when it cannot. `claude mcp list`
+  shows `gsd` once registered. Releases before 0.19.0 wrote the server only into
+  `settings.json`, which Claude Code does not read MCP servers from, so an npx
+  install from then has no gsd tools until it is reinstalled.
 
 ## STEP 3: Hooks Registration
 

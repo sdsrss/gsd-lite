@@ -1,6 +1,6 @@
 /**
  * Environment isolation for the test suite, preloaded by the npm test scripts
- * (`node --require ./tests/git-sandbox.cjs --test …`). Three things:
+ * (`node --require ./tests/git-sandbox.cjs --test …`). Four things:
  *
  * 1. GIT_CONFIG_GLOBAL → tests/gitconfig, so every git the suite spawns runs
  *    with gc.auto=0. Without it `git commit` forks `git maintenance run --auto
@@ -49,4 +49,16 @@ if (!process.env.GSD_TEST_RUNTIME_DIR) {
   });
 } else {
   process.env.XDG_RUNTIME_DIR = process.env.GSD_TEST_RUNTIME_DIR;
+}
+
+// 4. A stand-in `claude` first on PATH. install.js and uninstall.js register
+//    the MCP server by running `claude mcp add` / `claude mcp remove`. The
+//    real CLI writes whatever config its environment names, so one fixture
+//    without its own CLAUDE_CONFIG_DIR would edit the ~/.claude.json of
+//    whoever runs the suite, and CI has no claude at all, so the suite would
+//    test one path there and another here. tests/fake-claude/claude says what
+//    it models; a test that wants the real CLI looks past this directory.
+const fakeClaudeDir = path.join(__dirname, 'fake-claude');
+if ((process.env.PATH || '').split(path.delimiter)[0] !== fakeClaudeDir) {
+  process.env.PATH = [fakeClaudeDir, process.env.PATH].filter(Boolean).join(path.delimiter);
 }
