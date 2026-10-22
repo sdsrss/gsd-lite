@@ -2,6 +2,179 @@
 
 All notable changes to this project are documented here.
 
+## [0.18.0] - 2026-10-21
+
+Minor, not patch: a hold now goes back to what it interrupted, turning the
+gsd plugin off turns off what `npx gsd-lite install` added beside it, and a
+researcher result says whether it is blocked. **Most projects need to do
+nothing.** The points below say when that is not true. Calls that used to be
+accepted and are now refused are listed under **Now refused** at the end.
+
+**Do I have to do anything?**
+
+- **A researcher result must say `blocked`.** The server used to tell the
+  researcher's "could not research" fallback apart from real research by the
+  `[BLOCKED]` prefix of its summaries, and read a list marker in front,
+  `BLOCKED:` or round brackets as a conclusion, which then replaced the
+  research on record. A result now carries `blocked: true` (the research could
+  not be completed) or `blocked: false`, and the server decides by it; the
+  placeholder's own form under `blocked: false` is refused as a
+  contradiction. The shipped `agents/researcher.md` returns it. If you
+  dispatch a researcher with a prompt of your own, add the field: a result
+  without it is refused, and `/gsd:resume` sends a refused result back to the
+  researcher once with the error, as it already did for a malformed one.
+  Research already on record is flagged when the state is loaded: blocked if
+  every decision summary is the placeholder, otherwise real research. A
+  research record you write with `state-update` is flagged the same way,
+  from its decisions; written back with its decisions unchanged and the flag
+  left out or repeated, it keeps the flag it has.
+- **Disabling the gsd plugin turns off what `npx gsd-lite install` registered
+  too.** With both installed, `/plugin` → Disable left the copies the npx
+  install put in `settings.json` running: its three hooks and the StatusLine.
+  They now stand down while the plugin is disabled and come back when it is
+  enabled. They read `enabledPlugins` where Claude Code does: the local
+  settings file at the git root (the main checkout's root in a worktree) or
+  in the directory the session started in, that directory's
+  `.claude/settings.json`, then `~/.claude/settings.json`. They stand down
+  only on a plain `false` from the deciding file, for a plugin record that is
+  gsd-lite; on anything else, a file caught mid-write included, they keep
+  running. They cannot read an organization's managed settings or
+  `claude --settings`: a disable there leaves them running, and an enable
+  there over a disable in your own files stands them down. The npx install's
+  MCP server, where Claude Code starts it (see **Known issue**), stays
+  connected while the plugin is disabled, lists no tools, and answers a call
+  by saying gsd is turned off; it lists its tools again once Claude Code
+  reconnects to it (a new session, or reconnecting it from `/mcp`). Nothing
+  changes with only one of the two installed, or with the plugin enabled.
+  This lives in the npx copies, and with the plugin installed gsd updates
+  only the plugin: run `npx gsd-lite@latest install` once to bring them to
+  0.18.0. With the plugin installed that install registers no MCP server of
+  its own, and removes one an earlier install registered.
+
+**What a hold returns to.** A hold is a mode that waits: a pause, a `/clear`, a
+decision you owe, a workspace or plan change to reconcile, a research refresh.
+Each one used to be released to `executing_task`, or to a mode guessed from
+`current_review`, so whatever it interrupted was lost. The server now records
+the interrupted mode (`suspended_modes`, readable with `state-read`, written
+only by the server) and every release goes back there, a hold stacked on a
+hold included.
+
+- A pause during planning resumes to planning; it resumed to execution and
+  skipped the plan revision.
+- A `/clear` over a pause comes back paused; `/gsd:resume` used to start
+  executing. A `/clear` during planning comes back to planning.
+- `reconcile_workspace` and `replan_required` responses carry `resume_to`, the
+  interrupted mode, and their guidance and `workflows/execution-flow.md` say
+  to write it back; they said `executing_task`, which dropped a review in
+  progress, a plan revision or a pause. A refused research refresh names the
+  mode to write when giving the research up: the interrupted one, or the
+  current one when another hold (a pause) sits over the refresh.
+- A stored research refresh, and blocked tasks that unblock, on resume or
+  by `unblock_tasks`, go back to the interrupted mode; the refresh went where
+  `current_review` pointed and the unblocks to execution, so a plan revision
+  or a pause underneath was lost. A refresh that sends tasks back for
+  revalidation still drops an interrupted review. A refresh hold left with
+  nothing to refresh, because the research was given up or refreshed while
+  another hold (a pause) sat over it, is released on resume; it sent the
+  researcher again. Unblocking tasks by hand in any mode other than that
+  hold and execution changes only the tasks: it no longer unpauses a paused
+  project, ends a plan revision, or releases a decision held at a stage (an
+  L3 confirmation, exhausted review retries) without its answer. In
+  execution it clears the current task and review, as before.
+- `/gsd:resume` no longer rewrites a project that is paused, planning, waiting
+  on you or waiting for `/clear`. A HEAD or plan change, or an earlier phase
+  needing revalidation, used to unpause a paused project, end a plan
+  revision, and clear a decision held in `awaiting_user`, server-side. The
+  check runs when the project is working again.
+- A plan revision is finished with `state-patch` and then `state-update`
+  (`workflow_mode: "executing_task"`), which records the plan's new hashes
+  as leaving `replan_required` already did; the next resume used to report
+  the revision as a plan change. The planning response, `commands/resume.md`,
+  `commands/status.md` and `workflows/execution-flow.md` sent a revision to
+  `/gsd:start`, `/gsd:prd` or `state-init`, which on an existing project come
+  back to planning, refuse, or discard its progress. A plan change found on
+  resume (`replan_required`) is revised the same way, with `state-patch` in
+  the hold, then `resume_to`.
+- New transitions: `planning` ↔ `awaiting_clear`, and from any hold to the
+  mode it interrupted.
+
+A state written before 0.18.0 records nothing of what its holds interrupted,
+so they are released to where `current_review` points: back to the review in
+progress, to a decision still owed, or to execution.
+
+**Also in this release:**
+
+- **A slow Node start is no longer read as Node refusing the proxy.** 0.17.2
+  asks Node whether it accepts the proxy value by starting it with
+  `NODE_USE_ENV_PROXY=1`. A start that took longer than 3 seconds counted as a
+  refusal, so the update check skipped a proxy that works and reported that
+  Node refused it. No answer now leaves the environment as it was: on Node
+  24.14+ / 25.4+ the check turns the proxy on itself; on earlier versions it
+  goes direct, and the reason says to set `NODE_USE_ENV_PROXY=1`.
+- A resume that passes through several holds reports an unfinished research
+  write (`RESEARCH_COMMIT_PENDING`) once; it repeated the warning once per
+  hold.
+- A `state-update` of `research` holding a decision of the wrong shape is
+  refused with what is wrong with it; under `blocked: true` it was refused as
+  "a decision that is not the [BLOCKED] placeholder".
+
+To go back: npx installs pin `gsd-lite@0.17.2`. A plugin install follows its
+marketplace, which can be re-added pinned to the tag — remove the `gsd`
+marketplace (that uninstalls the plugin), `claude plugin marketplace add
+sdsrss/gsd-lite#v0.17.2`, then install `gsd@gsd` again. 0.17.2 reads a state
+0.18.0 wrote; it ignores `suspended_modes` and `research.blocked` and leaves
+both as they are. Coming forward again, 0.18.0 sees that an older version has
+written the state since (each 0.18.0 write records its `_version` in
+`_owned_fields_version`), drops `suspended_modes` and reads the research flag
+from the decisions again, as for a state written before 0.18.0. After any
+write by 0.17.2, then, holds are released where `current_review` points, not
+to the mode recorded before you went back.
+
+**Known issue, not new in this release:** `npx gsd-lite install` registers its
+MCP server under `mcpServers` in `~/.claude/settings.json`. Claude Code
+2.1.308 does not list an MCP server declared there (`claude mcp list`,
+`claude mcp get`), and its documentation places MCP servers in
+`~/.claude.json` and `.mcp.json` only. With only the npx install, its hooks
+and StatusLine run but Claude Code does not start the gsd MCP server, so the
+gsd tools are not offered. The plugin install (`claude plugin install
+gsd@gsd`) is not affected.
+
+**Docs.** `commands/resume.md`, `workflows/execution-flow.md` and the state
+diagram say to release a pause, `reconcile_workspace` and `replan_required` to
+the `resume_to` the server reports, and to give research up with the mode the
+refusal names; a `/clear` and the blocked-task hold are released by the
+server. `agents/researcher.md` and `workflows/research.md` show `blocked` in
+the result contract. The README says how to switch gsd off. The `state-read`
+tool description names `suspended_modes`.
+
+**Internal:** the test suite unsets `GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE` and the other repository variables before it runs git: a
+commit made from a linked worktree ran the pre-commit hook with them set, and
+the fixtures' git commands wrote to the real repository. CI's gate-replay job
+compares a pull request with the base its merge commit was made on; it used
+the base recorded when the PR was opened, which is not refreshed when the
+branch is pushed again.
+
+- **Now refused.** Each was accepted by 0.17.2:
+  - A researcher result without a boolean `blocked`.
+  - A researcher result with `blocked: true` over research on record whose
+    decisions are real ones, whatever its summaries say. 0.17.2 went by the
+    summaries and stored one without the `[BLOCKED]` prefix as research,
+    replacing what was on record.
+  - A result with `blocked: false` whose decision summary is written as the
+    `[BLOCKED]` placeholder: it contradicts itself (`VALIDATION_FAILED`).
+    0.17.2 had no field and went by the summary: it stored such a result
+    over nothing or over a record that was itself blocked, and refused it
+    over research on record.
+  - `state-update` of `research` with a `blocked` that is not a boolean, or
+    that disagrees with its decisions: `true` when the record has no
+    decisions or one that is not the `[BLOCKED]` placeholder, `false` when
+    every decision is the placeholder (`VALIDATION_FAILED`). The record on
+    file written back with the same decisions may repeat its own flag.
+  - With the gsd plugin installed and disabled, every tool call to the MCP
+    server `npx gsd-lite install` registered, where Claude Code starts it:
+    answered as an error saying gsd is turned off.
+
 ## [0.17.2] - 2026-10-21
 
 Patch: the update check works behind a proxy on Node 22.21+ and 24+ and says
