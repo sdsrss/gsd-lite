@@ -30,18 +30,19 @@ const SERVER_NAME = 'gsd';
 
 /**
  * The file `claude mcp add -s user` writes, as Claude Code 2.1.308 picks it:
- * <config dir>/.config.json (the legacy name) when that is a non-empty file,
- * or an empty writable one with no .claude.json to go with it; otherwise
- * `${CLAUDE_CONFIG_DIR || home}/.claude.json`, the one the docs name. Read off
- * its binary and checked against its writes, with and without
- * CLAUDE_CONFIG_DIR; tests/mcp-registration.test.js holds it against the real
- * CLI in both layouts. The CLI has no command that says which file it uses.
+ * <config dir>/.config.json (the legacy name; the directory's name normalized
+ * to NFC) when that is a non-empty file, or an empty writable one with no
+ * .claude.json to go with it; otherwise `${CLAUDE_CONFIG_DIR || home}/.claude.json`,
+ * the one the docs name, which is .claude-custom-oauth.json while
+ * CLAUDE_CODE_CUSTOM_OAUTH_URL is set. Read off its binary and checked against
+ * its writes, with and without CLAUDE_CONFIG_DIR; tests/mcp-registration.test.js
+ * holds it against the real CLI in each layout. The CLI has no command that
+ * says which file it uses.
  */
 function userConfigPath(env = process.env) {
-  const modern = env.CLAUDE_CONFIG_DIR
-    ? path.join(env.CLAUDE_CONFIG_DIR, '.claude.json')
-    : path.join(os.homedir(), '.claude.json');
-  const legacy = path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.config.json');
+  const name = `.claude${env.CLAUDE_CODE_CUSTOM_OAUTH_URL ? '-custom-oauth' : ''}.json`;
+  const modern = path.join(env.CLAUDE_CONFIG_DIR || os.homedir(), name);
+  const legacy = path.join((env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')).normalize('NFC'), '.config.json');
   try {
     const stat = fs.statSync(legacy);
     if (stat.isFile() && (stat.size > 0 || ((stat.mode & 0o222) !== 0 && !fs.existsSync(modern)))) return legacy;
@@ -122,12 +123,13 @@ function runClaude(args, env = process.env) {
 }
 
 /**
- * Make sure user scope has this install's server registered.
+ * What registerMcpServer does, as far as the config file says without running
+ * anything: 'already', 'failed' when it leaves the registration to the user,
+ * or 'add' when it asks the CLI. A dry run reports this.
  *
- * @returns {{ status: 'already'|'registered'|'failed', reason?: string, command: string }}
- *   command is what the user can run by hand when status is 'failed'.
+ * @returns {{ status: 'already'|'failed'|'add', reason?: string, command: string }}
  */
-function registerMcpServer(serverPath, env = process.env) {
+function registrationPlan(serverPath, env = process.env) {
   const command = shellCommand(addArgs(serverPath));
   const found = userRegistration(serverPath, env);
   if (found === 'ours') return { status: 'already', command };
@@ -136,10 +138,29 @@ function registerMcpServer(serverPath, env = process.env) {
   if (found === 'other') {
     return {
       status: 'failed',
-      reason: `a user-scope MCP server named "${SERVER_NAME}" already exists in ${userConfigPath(env)} and it does not start ${serverPath}; it was left as it is (to replace it, run ${shellCommand(removeArgs())} first)`,
+      reason: `a user-scope MCP server named "${SERVER_NAME}" already exists in ${userConfigPath(env)} and it does not start ${serverPath}; it is left as it is (to replace it, run ${shellCommand(removeArgs())} first)`,
       command,
     };
   }
+  // Nor is a config this cannot read: whose registration is in it is unknown,
+  // and `claude mcp add` resets one it cannot parse and overwrites one it
+  // cannot read with only the new server (2.1.308, delta review).
+  if (found === 'unknown') {
+    return { status: 'failed', reason: `${userConfigPath(env)} could not be read or parsed, so it is left as it is`, command };
+  }
+  return { status: 'add', command };
+}
+
+/**
+ * Make sure user scope has this install's server registered.
+ *
+ * @returns {{ status: 'already'|'registered'|'failed', reason?: string, command: string }}
+ *   command is what the user can run by hand when status is 'failed'.
+ */
+function registerMcpServer(serverPath, env = process.env) {
+  const plan = registrationPlan(serverPath, env);
+  if (plan.status !== 'add') return plan;
+  const { command } = plan;
   const run = runClaude(addArgs(serverPath), env);
   if (run.ok) return { status: 'registered', command };
   if (/already exists/i.test(run.output)) {
@@ -189,4 +210,9 @@ function registerCommand(serverPath) {
   return shellCommand(addArgs(serverPath));
 }
 
-module.exports = { SERVER_NAME, recordFailedRegistration, registerCommand, registerMcpServer, unregisterMcpServer, unregisteredMarkerPath, userConfigPath, userRegistration };
+/** The command that removes the user-scope server named gsd, for a user to run. */
+function removeCommand() {
+  return shellCommand(removeArgs());
+}
+
+module.exports = { SERVER_NAME, recordFailedRegistration, registerCommand, registerMcpServer, registrationPlan, removeCommand, unregisterMcpServer, unregisteredMarkerPath, userConfigPath, userRegistration };

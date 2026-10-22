@@ -340,29 +340,37 @@ setTimeout(() => process.exit(0), 4000).unref();
   // when the install was cut off before it got there; or when it was removed
   // since. So this checks the registration itself every session, for the npx
   // install only (its runtime says `manual`; under the plugin the plugin
-  // serves the server), and says so until it is there. The reason is the one
-  // install.js recorded, if any. Plain stdout reaches Claude's context, not
-  // the screen, so the line asks Claude to pass it on.
+  // serves the server), and says so until it is there. A config it cannot
+  // read says nothing either way, unless install.js recorded a failure. The
+  // reason is what is wrong now: a server of that name starting something
+  // else, else the one install.js recorded. Plain stdout reaches Claude's
+  // context, not the screen, so the line asks Claude to pass it on.
   if (!process.env.CLAUDE_PLUGIN_ROOT) {
     try {
       const runtimeDir = path.join(claudeDir, 'gsd');
       if (fs.readFileSync(path.join(runtimeDir, '.install-mode'), 'utf8').trim() === 'manual') {
-        const { registerCommand, unregisteredMarkerPath, userConfigPath, userRegistration } = require('./lib/mcp-registration.cjs');
+        const { registerCommand, removeCommand, unregisteredMarkerPath, userConfigPath, userRegistration } = require('./lib/mcp-registration.cjs');
         const serverPath = path.join(runtimeDir, 'src', 'server.js');
         const markerPath = unregisteredMarkerPath(runtimeDir);
         const found = userRegistration(serverPath);
+        let marker = null;
         if (found === 'ours') {
           fs.rmSync(markerPath, { force: true });
-        } else if (found !== 'unknown') {
-          let marker = {};
+        } else {
           try { marker = JSON.parse(fs.readFileSync(markerPath, 'utf8')); } catch { /* none recorded */ }
-          const reason = marker.reason || (found === 'other'
-            ? `a user-scope MCP server named gsd in ${userConfigPath()} starts something else`
-            : `${userConfigPath()} has no registration of it`);
-          // Our own text and paths, but it reaches the session's context: one
-          // line, no markup, any letter a path can hold.
+        }
+        if (found !== 'ours' && (found !== 'unknown' || marker)) {
+          const reason = found === 'other'
+            ? `a user-scope MCP server named gsd in ${userConfigPath()} starts something else (to replace it, run ${removeCommand()} first)`
+            : marker?.reason || `${userConfigPath()} has no registration of it`;
+          // It reaches the session's context: one line, no markup. The reason
+          // can carry the CLI's own output, so it keeps letters, digits and
+          // path punctuation only. The command is built here, shell-quoted,
+          // and must survive as it is: dropping # $ [ ] ! from a path made a
+          // command that registered another one (delta review).
           const plain = (s) => String(s ?? '').replace(/[^\p{L}\p{M}\p{N}\w .,:;()=+'"`/\\&@~%-]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
-          console.log(`⚠️  GSD-Lite (tell the user): its MCP server is not registered with Claude Code, so the gsd tools are not available: ${plain(reason)}. To register it, run \`${plain(marker.command || registerCommand(serverPath))}\` in a shell, then restart Claude Code.`);
+          const oneLine = (s) => String(s).replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ');
+          console.log(`⚠️  GSD-Lite (tell the user): its MCP server is not registered with Claude Code, so the gsd tools are not available: ${plain(reason)}. To register it, run \`${oneLine(registerCommand(serverPath))}\` in a shell, then restart Claude Code.`);
         }
       }
     } catch { /* no runtime, no mode marker, or no helper: nothing to say */ }

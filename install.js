@@ -15,7 +15,7 @@ const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
 const { pluginInstalledForUser, upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
 const { atomicWriteJson } = _require('./hooks/lib/atomic-write.cjs');
-const { recordFailedRegistration, registerCommand, registerMcpServer, unregisterMcpServer, userConfigPath, userRegistration } = _require('./hooks/lib/mcp-registration.cjs');
+const { recordFailedRegistration, registerMcpServer, registrationPlan, unregisterMcpServer, userConfigPath, userRegistration } = _require('./hooks/lib/mcp-registration.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
 const SERVER_PATH = join(RUNTIME_DIR, 'src', 'server.js');
@@ -588,22 +588,25 @@ export function main() {
     }
   } else {
     // A dry run predicts the real run, from what can be known without running
-    // anything: the settings entry to remove, and whose registration is there.
-    // Whether `claude mcp add` would succeed is the CLI's to say.
+    // anything: the settings entry to remove, and what the config file says
+    // (registrationPlan). Whether `claude` is there to run, and whether
+    // `claude mcp add` would succeed, is not known without running it.
     const settings = readSettingsOrExit(settingsPath);
     if (settings.mcpServers && typeof settings.mcpServers === 'object' && ('gsd' in settings.mcpServers || 'gsd-lite' in settings.mcpServers)) {
       log('  [dry-run] Would remove the settings.json MCP entry (Claude Code does not read MCP servers from there)');
     }
-    const found = userRegistration(SERVER_PATH);
     if (isPluginInstall) {
+      const found = userRegistration(SERVER_PATH);
       if (found === 'ours') log('  [dry-run] Would remove the user-scope MCP registration (the plugin serves the MCP server)');
-    } else if (found === 'ours') {
-      log('  [dry-run] MCP server already registered with Claude Code (user scope)');
-    } else if (found === 'other') {
-      mcpFailure = { reason: `a user-scope MCP server named "gsd" already exists in ${userConfigPath()} and it does not start ${SERVER_PATH}; it would be left as it is`, command: registerCommand(SERVER_PATH) };
-      log(`  [dry-run] ✗ MCP server would NOT be registered: ${mcpFailure.reason}`);
+      if (found === 'unknown') log(`  [dry-run] ! Could not read ${userConfigPath()} to check for a user-scope registration of this install's server.`);
     } else {
-      log(`  [dry-run] Would register the MCP server with Claude Code: ${registerCommand(SERVER_PATH)}`);
+      const plan = registrationPlan(SERVER_PATH);
+      if (plan.status === 'already') log('  [dry-run] MCP server already registered with Claude Code (user scope)');
+      if (plan.status === 'add') log(`  [dry-run] Would register the MCP server with Claude Code: ${plan.command}`);
+      if (plan.status === 'failed') {
+        mcpFailure = plan;
+        log(`  [dry-run] ✗ MCP server would NOT be registered: ${plan.reason}`);
+      }
     }
   }
 
