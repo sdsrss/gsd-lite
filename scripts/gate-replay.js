@@ -151,10 +151,18 @@ try {
   // project supports, and nothing said so, because INCONCLUSIVE is a legitimate
   // verdict rather than an error. Surfaced only when a test OF the gate ran it
   // under the CI matrix instead of on one developer's Node.
+  // The run has a bound. A test that hangs on the base tree with no timeout
+  // of its own held the runner, and this replay with it, forever, and a
+  // replay killed by hand left its worktree behind. Past the bound there is
+  // no verdict, and the finally below still removes the worktree. Not a
+  // per-test --test-timeout: Node 22 applies it to each file's process as a
+  // whole, so a slow file (e2e-install takes minutes) would read as a red.
+  // A file process the runner started can outlive the stop.
+  const runTimeout = Number(process.env.GATE_REPLAY_RUN_TIMEOUT_MS) || 30 * 60_000;
   const run = spawnSync(
     process.execPath,
     ['--require', './tests/git-sandbox.cjs', '--test', '--test-reporter=tap', ...opts.files],
-    { cwd: tree, encoding: 'utf8' },
+    { cwd: tree, encoding: 'utf8', timeout: runTimeout, killSignal: 'SIGKILL' },
   );
   const out = `${run.stdout || ''}${run.stderr || ''}`;
 
@@ -204,9 +212,12 @@ try {
   //   - cancelledByParent never ran, and hookFailed is the hook's result
   //     (before or after the body — TAP does not say which), not the test's;
   //   - a timeout is a red, a test's or a whole suite's (its tests are then
-  //     reported as cancelled), and so is a test still pending when the event
-  //     loop ran dry: the same hang, which Node 20 and 22 report as
-  //     cancelledByParent where 24 and later report the timeout;
+  //     reported as cancelled). A test still pending when the event loop ran
+  //     dry is the same hang on Node 20 and 22, which report it as
+  //     cancelledByParent where 24 and later report the timeout, but they
+  //     give every test not yet finished that same result and do not say
+  //     which one hung: no result, said so. Counting them all as red named
+  //     tests that never ran and called a stuck before() DISCRIMINATIVE;
   //   - a describe whose callback threw registered none of its tests, and a
   //     suite whose before or after hook failed is the hook's result, as a
   //     test's hook is.
@@ -215,13 +226,13 @@ try {
   // diagnostic.
   const NO_RESULT = ['cancelledByParent', 'hookFailed'];
   const DRAINED = /Promise resolution is still pending but the event loop has already resolved/;
-  const hung = (r) => r.failureType === 'cancelledByParent' && DRAINED.test(r.error ?? '');
   const leafResults = results.filter((r) => r.type !== 'suite' && !r.skipped);
   const suiteResults = results.filter((r) => r.type === 'suite' && !r.skipped);
-  const failingTests = leafResults.filter((r) => !r.ok && (!NO_RESULT.includes(r.failureType) || hung(r))).map((r) => r.name);
+  const failingTests = leafResults.filter((r) => !r.ok && !NO_RESULT.includes(r.failureType)).map((r) => r.name);
   const timedOutSuites = suiteResults.filter((r) => r.failureType === 'testTimeoutFailure').map((r) => r.name);
   const failing = [...failingTests, ...timedOutSuites];
-  const noResult = leafResults.filter((r) => !r.ok && NO_RESULT.includes(r.failureType) && !hung(r));
+  const noResult = leafResults.filter((r) => !r.ok && NO_RESULT.includes(r.failureType));
+  const drained = noResult.filter((r) => DRAINED.test(r.error ?? ''));
   const brokenSuites = suiteResults.filter((r) => r.failureType === 'testCodeFailure');
   const suiteHookFailures = suiteResults.filter((r) => r.failureType === 'hookFailed');
   // Counted apart, each against its own kind: a suite is not one of the
@@ -229,6 +240,7 @@ try {
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const noResultParts = [
     noResult.length > 0 && `${noResult.length} of ${plural(tests, 'test', 'tests')} have no result of their own`,
+    drained.length > 0 && `${plural(drained.length, 'was', 'were')} still pending when the event loop ran dry (how Node ${process.versions.node.split('.')[0]} reports a hang, without saying which test hung)`,
     brokenSuites.length > 0 && `${plural(brokenSuites.length, 'suite threw while declaring its tests', 'suites threw while declaring their tests')}`,
     suiteHookFailures.length > 0 && `${plural(suiteHookFailures.length, 'suite\'s hook failed', 'suites\' hooks failed')}`,
   ].filter(Boolean);
@@ -258,7 +270,10 @@ try {
   const loadError = (out.match(/^.*(Cannot find module|Cannot find package|SyntaxError:|ERR_UNKNOWN_FILE_EXTENSION).*$/m)
     || out.match(/^.*ERR_MODULE_NOT_FOUND.*$/m) || [])[0];
 
-  if (tests === null || fail === null) {
+  if (run.error?.code === 'ETIMEDOUT') {
+    console.log(`INCONCLUSIVE — the replay did not finish in ${Math.round(runTimeout / 1000)} s on ${baseSha} and was stopped; nothing was judged.`);
+    exitCode = 2;
+  } else if (tests === null || fail === null) {
     console.log('INCONCLUSIVE — the runner printed no summary. Raw output:\n');
     console.log(out.trim().split('\n').slice(-25).join('\n'));
     exitCode = 2;
