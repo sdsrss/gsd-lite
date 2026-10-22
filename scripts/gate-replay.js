@@ -120,8 +120,9 @@ for (const file of opts.files) {
 // minutes) would read as a red.
 const boundSetting = process.env.GATE_REPLAY_RUN_TIMEOUT_MS;
 const runTimeout = boundSetting === undefined || boundSetting === '' ? 30 * 60_000 : Number(boundSetting);
-if (!Number.isSafeInteger(runTimeout) || runTimeout <= 0) {
-  console.log(`REFUSED — GATE_REPLAY_RUN_TIMEOUT_MS must be a whole number of milliseconds above 0, not "${boundSetting}". Nothing was replayed.`);
+// A timer holds at most 2^31 - 1 ms; past that Node fires it at once.
+if (!Number.isSafeInteger(runTimeout) || runTimeout <= 0 || runTimeout > 2 ** 31 - 1) {
+  console.log(`REFUSED — GATE_REPLAY_RUN_TIMEOUT_MS must be a whole number of milliseconds from 1 to 2147483647, not "${boundSetting}". Nothing was replayed.`);
   process.exit(2);
 }
 
@@ -141,7 +142,36 @@ function cleanup() {
 
 // The runner and the file processes it starts run as one process group, and
 // a stop takes the group: killed alone, the runner left each file process
-// running, and one with a handle open ran on for good (delta review).
+// running, and one with a handle open ran on for good (delta review). And
+// every process under the runner, whatever group it put itself in: a test
+// that starts its steps detached (tests/e2e-install.test.js does, for each
+// npm step) leaves the group, and those ran on (final review). The tree is
+// read before anything is killed, since a killed parent's children go to
+// init. What a run that finished left outside the group is not reached.
+function descendants(pid) {
+  let table;
+  try {
+    table = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' });
+  } catch {
+    return [];
+  }
+  const children = new Map();
+  for (const line of table.split('\n')) {
+    const [child, parent] = line.trim().split(/\s+/).map(Number);
+    if (!child) continue;
+    if (!children.has(parent)) children.set(parent, []);
+    children.get(parent).push(child);
+  }
+  const found = [];
+  for (const queue = [pid]; queue.length > 0;) {
+    for (const child of children.get(queue.shift()) ?? []) {
+      found.push(child);
+      queue.push(child);
+    }
+  }
+  return found;
+}
+
 let stopRun = () => {};
 function runBounded(command, args, options) {
   return new Promise((resolveRun, rejectRun) => {
@@ -151,7 +181,11 @@ function runBounded(command, args, options) {
     child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
     child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
     const stop = () => {
+      const tree = descendants(child.pid);
       try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      for (const pid of tree) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
+      }
     };
     stopRun = stop;
     let timedOut = false;
