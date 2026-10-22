@@ -53,8 +53,11 @@ function fixtureRepo(t) {
       git('add', '-A');
       git('commit', '-q', '-m', 'fix');
     },
-    replay(file) {
-      const run = spawnSync(process.execPath, [join(root, 'scripts', 'gate-replay.js'), file], { cwd: root, env, encoding: 'utf8', timeout: 120_000 });
+    worktrees() {
+      return git('worktree', 'list', '--porcelain').split('\n').filter((line) => line.startsWith('worktree '));
+    },
+    replay(file, extraEnv = {}) {
+      const run = spawnSync(process.execPath, [join(root, 'scripts', 'gate-replay.js'), file], { cwd: root, env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 120_000 });
       return { code: run.status, out: `${run.stdout || ''}${run.stderr || ''}` };
     },
   };
@@ -242,17 +245,58 @@ describe('slow suite', { timeout: 300 }, () => {
   });
 
   // A hang with nothing pending lets the event loop drain before the timeout:
-  // Node 20 and 22 report the test as cancelled with this error, 24 and later
-  // as the timeout it is. Red on every version, then.
-  it('counts a test still pending when the event loop ran dry as a failure', (t) => {
+  // Node 20 and 22 then report every test still pending or not yet started as
+  // cancelled with this error, and do not say which one hung, so the replay
+  // cannot tell a red from a test that never ran: INCONCLUSIVE, saying why.
+  // 24 and later report the hang as the timeout it is. Counting every drained
+  // test as a failure (the first version of this) listed tests that never ran
+  // as red, and called a hanging before() DISCRIMINATIVE (pre-tag review).
+  const DRAINS = Number(process.versions.node.split('.')[0]) < 24;
+
+  it('a test that hangs on the base tree is red where Node can say so, and never names a test that did not run', (t) => {
     const repo = fixtureRepo(t);
     repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/drained.test.js': `${HEADER}
 it('hangs', { timeout: 500 }, () => (require('../src.cjs') === 2 ? undefined : new Promise(() => {})));
+it('after it', () => {});
 ` });
     const { code, out } = repo.replay('tests/drained.test.js');
-    assert.equal(code, 0, out);
-    assert.match(out, /DISCRIMINATIVE — 1\/1 failed/);
-    assert.match(out, /✖ hangs/);
+    assert.doesNotMatch(out, /✖ after it/, 'a test that never ran is listed as failing');
+    if (DRAINS) {
+      assert.equal(code, 2, out);
+      assert.match(out, /INCONCLUSIVE — .*still pending when the event loop ran dry/);
+    } else {
+      assert.equal(code, 0, out);
+      assert.match(out, /DISCRIMINATIVE — 1\/2 failed/);
+      assert.match(out, /✖ hangs/);
+    }
+  });
+
+  it('a before() that never finishes on the base tree is no red', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/stuck-setup.test.js': `${HEADER}
+describe('suite', () => {
+  before(() => (require('../src.cjs') === 2 ? undefined : new Promise(() => {})), { timeout: 500 });
+  it('a', () => {});
+  it('b', () => {});
+});
+` });
+    const { code, out } = repo.replay('tests/stuck-setup.test.js');
+    assert.equal(code, 2, out);
+    assert.match(out, /INCONCLUSIVE/);
+  });
+
+  // With no timeout of its own, a hang held the runner, and the replay with
+  // it, forever; killed by hand, it left its worktree behind (pre-tag review,
+  // as old as the script). The run has a bound, past which nothing is judged.
+  it('a run that does not finish is stopped, judged INCONCLUSIVE, and its worktree removed', (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/forever.test.js': `${HEADER}
+it('waits', () => (require('../src.cjs') === 2 ? undefined : new Promise((resolve) => setTimeout(resolve, 20_000))));
+` });
+    const { code, out } = repo.replay('tests/forever.test.js', { GATE_REPLAY_RUN_TIMEOUT_MS: '3000' });
+    assert.equal(code, 2, out);
+    assert.match(out, /INCONCLUSIVE — the replay did not finish in 3 s/);
+    assert.equal(repo.worktrees().length, 1, `a worktree was left: ${repo.worktrees().join(', ')}`);
   });
 
   it('does not count a todo suite that timed out as a red', (t) => {

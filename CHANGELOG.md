@@ -98,9 +98,11 @@ developer's own CLI or `~/.claude.json` (on Linux and macOS; CI runs Linux).
 One test holds the stand-in against the real CLI where one is installed, in
 both config layouts, and has Claude Code start the installed server
 (`claude mcp list` → Connected). `scripts/gate-replay.js`
-reads a suite's failing `after()`, a describe that threw, a suite timeout, a
-todo suite and a test still pending when the event loop ran dry (how Node 20
-and 22 report a hang) as what each is. The gate on `state.json` writes
+reads a suite's failing `after()`, a describe that threw, a suite timeout and
+a todo suite as what each is, says when Node 20 or 22 reported a hang as tests
+still pending when the event loop ran dry (which does not say which test hung,
+so there is no verdict), and stops a replay that has not finished in 30
+minutes, removing its worktree. The gate on `state.json` writes
 catches an alias of the path, a rename onto it and a path built inline. The
 e2e install tests run a registry step once more when it runs out its budget
 (single requests through a proxy stall), and say so; no assertion changed.
