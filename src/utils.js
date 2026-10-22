@@ -149,6 +149,8 @@ export const LOCK_MAX_RETRIES = 240; // 12s total (> LOCK_STALE_MS)
  *   Timing overrides for tests; production uses the module defaults.
  */
 export async function withFileLock(lockPath, fn, opts = {}) {
+  // The lock writes its token into lockPath and removes it after.
+  refuseStateFile(lockPath);
   const staleMs = opts.staleMs ?? LOCK_STALE_MS;
   const retryMs = opts.retryMs ?? LOCK_RETRY_MS;
   const maxRetries = opts.maxRetries ?? LOCK_MAX_RETRIES;

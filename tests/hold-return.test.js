@@ -16,7 +16,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as schema from '../src/schema.js';
 import * as stateApi from '../src/tools/state/index.js';
 import { handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
@@ -915,6 +916,8 @@ describe('a state an older version wrote since', () => {
     for (const spelled of [path, join(dir, '.gsd', 'State.json'), `${join(dir, '.gsd')}/${'state'}${'.json'}`]) {
       await assert.rejects(utils.writeJson(spelled, {}), /state\.json is written through writeState only/);
       await assert.rejects(utils.writeAtomic(spelled, '{}'), /state\.json is written through writeState only/);
+      // The lock writes its token into the path it is given, and removes it.
+      await assert.rejects(utils.withFileLock(spelled, async () => {}), /state\.json is written through writeState only/);
     }
     assert.ok((await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir })).success, 'writeState still writes it');
   });
@@ -930,8 +933,27 @@ describe('a state an older version wrote since', () => {
   // specifier built at run time and loaded through server.js's createRequire
   // gets past it.
   const NO_WRITE = new Set(['access', 'accessSync', 'existsSync', 'lstat', 'lstatSync', 'readFile', 'readFileSync', 'readdir', 'readdirSync', 'realpathSync', 'stat', 'statSync', 'unlink', 'unlinkSync']);
-  function writeReach(source, { mayLoad = false } = {}) {
+  // What a module may import, past the fs modules: these builtins, the MCP
+  // SDK, and modules inside src/. An import from outside src/ reached a
+  // writer that does not refuse state.json (hooks/lib/atomic-write.cjs, one
+  // directory over; final review). The two modules that run commands (git,
+  // the project's own checks) import child_process: what a command writes no
+  // gate here can see.
+  const SRC = fileURLToPath(new URL('../src/', import.meta.url)).replace(/[\\/]$/, '');
+  const BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:os', 'node:path', 'node:url', 'node:util']);
+  const RUNS_COMMANDS = ['utils.js', 'tools/verify.js'];
+  function writeReach(source, { file = 'tools/state/crud.js', mayLoad = false } = {}) {
     const why = [];
+    for (const [, , spec] of source.matchAll(/^\s*(?:import|export)\s+[\w$*\s{},]*?\bfrom\s*(['"])([^'"]+)\1/gm)) {
+      if (spec.startsWith('.')) {
+        if (!resolve(dirname(join(SRC, file)), spec).startsWith(SRC + sep)) why.push(`imports ${spec}, outside src/`);
+      } else if (spec === 'node:child_process' ? !RUNS_COMMANDS.includes(file) : spec === 'node:module' ? !mayLoad : !BUILTINS.has(spec) && !spec.startsWith('@modelcontextprotocol/sdk/')) {
+        why.push(`imports ${spec}`);
+      }
+    }
+    // An open flag makes a read a write (readFile with flag 'w' truncates);
+    // process.report writes a file of its own.
+    if (/\bflag\s*:\s*['"`]|\bprocess\.report\b/.test(source)) why.push('writes through an open flag or process.report');
     const specifiers = source.match(/(['"`])(?:node:)?fs(?:\/promises)?\1/g)?.length ?? 0;
     const imports = [...source.matchAll(/import\s*\{([^}]*)\}\s*from\s*(['"])(?:node:)?fs(?:\/promises)?\2/g)];
     if (specifiers !== imports.length) why.push('names a fs module outside a static named import');
@@ -958,6 +980,11 @@ describe('a state an older version wrote since', () => {
       'const fs = await import(`node:fs/promises`);',
       "const fs = process.getBuiltinModule('node:fs');",
       "import { createRequire } from 'node:module';\nconst load = createRequire(import.meta.url);",
+      "import atomicWrite from '../../../hooks/lib/atomic-write.cjs';",
+      "import { execFileSync } from 'node:child_process';",
+      "import { Worker } from 'node:worker_threads';",
+      "import { readFile } from 'node:fs/promises';\nawait readFile(path, { flag: 'w' });",
+      'process.report.writeReport(path);',
     ]) {
       assert.notDeepEqual(writeReach(shape), [], `the gate passes: ${shape}`);
     }
@@ -965,6 +992,8 @@ describe('a state an older version wrote since', () => {
       "import { readFile, stat } from 'node:fs/promises';",
       'import { realpathSync as real, existsSync } from "node:fs";',
       "import { stat, unlink } from 'node:fs/promises';\nimport { join } from 'node:path';",
+      "import { readJson } from '../../utils.js';\nexport { resumeTarget } from '../../schema.js';",
+      "import { Server } from '@modelcontextprotocol/sdk/server/index.js';",
     ]) {
       assert.deepEqual(writeReach(shape), [], shape);
     }
@@ -976,7 +1005,7 @@ describe('a state an older version wrote since', () => {
     assert.ok(files.length > 10, 'premise: the source tree was read');
     const reach = [];
     for (const file of files) {
-      const why = writeReach(await readFile(new URL(file, root), 'utf8'), { mayLoad: file === 'server.js' });
+      const why = writeReach(await readFile(new URL(file, root), 'utf8'), { file, mayLoad: file === 'server.js' });
       if (file === 'utils.js') assert.notDeepEqual(why, [], 'premise: the gate sees the writers');
       else if (why.length > 0) reach.push(`${file}: ${why.join(', ')}`);
     }
@@ -985,6 +1014,15 @@ describe('a state an older version wrote since', () => {
     const dir = await project(t);
     await assert.rejects(utils.writeFilesTogether([{ path: join(dir, 'a.md'), content: 'a' }, { path: statePath(dir), content: '{}' }]), /state\.json is written through writeState only/);
     await assert.rejects(readFile(join(dir, 'a.md')), { code: 'ENOENT' }, 'a refused batch wrote part of itself');
+    // All or none when a document fails to write, before any rename, and no
+    // temp file left (final review: only a failing rename was tried).
+    const docs = ['a.md', 'b.md', 'c.md'].map((name) => join(dir, name));
+    for (const doc of docs) await writeFile(doc, 'old');
+    const failed = await utils.writeFilesTogether([{ path: docs[0], content: 'new' }, { path: docs[1], content: 'new' }, { path: docs[2], content: 42 }]).then(() => null, (err) => err);
+    assert.ok(failed, 'premise: the third document could not be written');
+    assert.equal(failed.renamed, 0);
+    for (const doc of docs) assert.equal(await readFile(doc, 'utf8'), 'old', `${doc} was replaced`);
+    assert.deepEqual((await readdir(dir)).filter((name) => name.endsWith('.tmp')), [], 'a temp file was left');
     // writeStateFile, the guard's one way past, is writeState's alone.
     const callers = [];
     for (const file of files) {
