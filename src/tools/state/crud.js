@@ -25,6 +25,7 @@ import {
   ensureLockPathFromStatePath,
   loadState,
   withStateLock,
+  writeState,
 } from './constants.js';
 import { phaseReviewSatisfied, propagateInvalidation, propagateCrossPhaseInvalidation } from './logic.js';
 
@@ -137,7 +138,7 @@ export async function init({ project, phases, research, force = false, basePath 
     // plan_hashes left null — computed lazily on first orchestrator-resume
     // after the agent writes actual plan.md / phases/*.md content (avoids
     // false drift detection from hashing placeholder files).
-    await writeJson(statePath, state);
+    await writeState(statePath, state);
 
     return {
       success: true,
@@ -560,7 +561,7 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     merged._version = (merged._version ?? 0) + 1;
 
     await _writeEvidenceArchive(dirname(statePath), pruned);
-    await writeJson(statePath, merged);
+    await writeState(statePath, merged);
     // R-25 (audit L13): GSD_DEBUG state-write trace (stderr only).
     if (process.env.GSD_DEBUG) {
       process.stderr.write(`[gsd:debug] state-write v${merged._version} keys=[${Object.keys(updates || {}).join(',')}]\n`);
@@ -735,7 +736,7 @@ export async function phaseComplete({
         return { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: `Validation failed: ${driftValidation.errors.join('; ')}${researchEscape(driftValidation.errors)}` };
       }
       state._version = (state._version ?? 0) + 1;
-      await writeJson(statePath, state);
+      await writeState(statePath, state);
       return {
         success: true,
         action: 'direction_drift',
@@ -809,7 +810,7 @@ export async function phaseComplete({
     }
     state._version = (state._version ?? 0) + 1;
     await _writeEvidenceArchive(gsdDir, pruned);
-    await writeJson(statePath, state);
+    await writeState(statePath, state);
     const isCompleted = state.workflow_mode === 'completed';
     const nextPhaseInfo = !isCompleted && state.phases.find(p => p.id === state.current_phase);
     return {
@@ -862,7 +863,7 @@ export async function addEvidence({ id, data, basePath = process.cwd() }) {
 
     state._version = (state._version ?? 0) + 1;
     await _writeEvidenceArchive(dirname(statePath), pruned);
-    await writeJson(statePath, state);
+    await writeState(statePath, state);
     return { success: true };
   }, statePath);
 }
@@ -950,7 +951,7 @@ export async function pruneEvidence({ currentPhase, basePath = process.cwd() }) 
     if (archived > 0) {
       state._version = (state._version ?? 0) + 1;
       await _writeEvidenceArchive(dirname(statePath), pruned);
-      await writeJson(statePath, state);
+      await writeState(statePath, state);
     }
 
     return { success: true, archived };
@@ -1032,7 +1033,7 @@ export async function patchPlan({ operations, basePath = process.cwd() } = {}) {
     }
 
     state._version = (state._version ?? 0) + 1;
-    await writeJson(statePath, state);
+    await writeState(statePath, state);
     return { success: true, applied, plan_version: state.plan_version };
   }, statePath);
 }

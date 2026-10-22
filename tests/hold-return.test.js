@@ -15,7 +15,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as schema from '../src/schema.js';
 import * as stateApi from '../src/tools/state/index.js';
@@ -609,5 +609,168 @@ describe('the guidance names the mode to write', () => {
       assert.doesNotMatch(text, /gsd:start|gsd:prd|state-init/, text);
       assert.match(text, /state-patch/, text);
     }
+  });
+});
+
+// 0.18 wrote the state, then an older version did (a downgrade and back).
+// Versions before 0.18 know neither suspended_modes nor research.blocked:
+// they carry both untouched while they change modes and research, bumping
+// _version as every write does. Taken at their word, a pause 0.17.2 released
+// left the project in the hold on top of the stack, so every release wrote
+// that same mode and popped nothing (resume hit its depth limit every time,
+// or sent the researcher round forever); a stack that survived sent a hold
+// back to a mode 0.17.2 had moved on from; and real research 0.17.2 stored
+// over a blocked placeholder kept the blocked flag, so a blocked refresh
+// replaced it (delta review of the pre-ship repairs).
+describe('a state an older version wrote since', () => {
+  const statePath = (dir) => join(dir, '.gsd', 'state.json');
+  // What 0.17.2 does to a state 0.18 wrote: change what it changes, bump
+  // _version, and carry every field it does not know.
+  async function olderVersionWrites(dir, changes) {
+    const raw = JSON.parse(await readFile(statePath(dir), 'utf8'));
+    Object.assign(raw, typeof changes === 'function' ? changes(raw) : changes);
+    raw._version = (raw._version ?? 0) + 1;
+    await writeFile(statePath(dir), JSON.stringify(raw));
+  }
+  async function project(t, ...modes) {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await initProject(dir);
+    for (const mode of modes) {
+      const res = await update({ updates: { workflow_mode: mode }, basePath: dir });
+      assert.ok(res.success, `entering ${mode}: ${JSON.stringify(res)}`);
+    }
+    return dir;
+  }
+  const research = (blocked, summary) => ({
+    result: { decision_ids: ['decision:a'], blocked, volatility: 'medium', expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), sources: [{ id: 's1', type: 'docs', ref: 'https://example.com/docs' }] },
+    decision_index: { 'decision:a': { summary, source: 'docs' } },
+    artifacts: { 'STACK.md': '# Stack\n', 'ARCHITECTURE.md': '# Architecture\n', 'PITFALLS.md': '# Pitfalls\n', 'SUMMARY.md': '# Summary\n' },
+  });
+
+  it('a /clear over a pause that 0.17.2 released to the /clear resumes', async (t) => {
+    const dir = await project(t, 'awaiting_clear', 'paused_by_user');
+    assert.deepEqual((await read({ basePath: dir })).suspended_modes, ['executing_task', 'awaiting_clear'], 'premise');
+    await olderVersionWrites(dir, { workflow_mode: 'awaiting_clear' });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.ok(!res.error, JSON.stringify(res));
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'executing_task');
+    assert.deepEqual(after.suspended_modes, []);
+  });
+
+  it('a blocked-task hold under a /clear that 0.17.2 released unblocks by hand', async (t) => {
+    const dir = await project(t);
+    const raw = JSON.parse(await readFile(statePath(dir), 'utf8'));
+    Object.assign(raw.phases[0].todo[0], { lifecycle: 'blocked', blocked_reason: 'needs a key' });
+    await writeFile(statePath(dir), JSON.stringify(raw));
+    for (const mode of ['awaiting_user', 'awaiting_clear']) await update({ updates: { workflow_mode: mode }, basePath: dir });
+    assert.deepEqual((await read({ basePath: dir })).suspended_modes, ['executing_task', 'awaiting_user'], 'premise');
+    await olderVersionWrites(dir, { workflow_mode: 'awaiting_user' });
+    const res = await resumeWorkflow({ basePath: dir, unblock_tasks: ['1.1'] });
+    assert.ok(!res.error, JSON.stringify(res));
+    assert.deepEqual(res.unblocked, ['1.1']);
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'executing_task');
+    assert.deepEqual(after.suspended_modes, []);
+  });
+
+  it('a pause over a refresh that 0.17.2 sent back into the refresh sends the researcher once', async (t) => {
+    const dir = await project(t);
+    assert.equal((await handleResearcherResult({ ...research(false, 'Use A'), basePath: dir })).action, 'research_stored', 'premise');
+    for (const mode of ['research_refresh_needed', 'paused_by_user']) await update({ updates: { workflow_mode: mode }, basePath: dir });
+    await olderVersionWrites(dir, { workflow_mode: 'executing_task' });
+    await olderVersionWrites(dir, { workflow_mode: 'research_refresh_needed' });
+    assert.equal((await resumeWorkflow({ basePath: dir })).action, 'dispatch_researcher', 'premise');
+    assert.equal((await handleResearcherResult({ ...research(false, 'Use A'), basePath: dir })).action, 'research_stored');
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'executing_task');
+    const next = await resumeWorkflow({ basePath: dir });
+    assert.notEqual(next.action, 'dispatch_researcher', JSON.stringify(next));
+  });
+
+  it('and with no research on record it resumes', async (t) => {
+    const dir = await project(t, 'research_refresh_needed', 'paused_by_user');
+    await olderVersionWrites(dir, { workflow_mode: 'research_refresh_needed' });
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.ok(!res.error, JSON.stringify(res));
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'executing_task');
+  });
+
+  it('a hold 0.17.2 entered after moving on is not sent back to what 0.18 recorded', async (t) => {
+    const dir = await project(t, 'planning', 'paused_by_user');
+    await olderVersionWrites(dir, { workflow_mode: 'executing_task' });
+    await olderVersionWrites(dir, { workflow_mode: 'awaiting_clear' });
+    await resumeWorkflow({ basePath: dir });
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'executing_task');
+    assert.deepEqual(after.suspended_modes, []);
+  });
+
+  it('research 0.17.2 stored over a blocked placeholder is research, and a blocked refresh does not replace it', async (t) => {
+    const dir = await project(t);
+    const placeholder = research(true, '[BLOCKED] no sources');
+    assert.equal((await handleResearcherResult({ ...placeholder, basePath: dir })).action, 'research_stored', 'premise');
+    assert.equal((await read({ basePath: dir })).research.blocked, true, 'premise');
+    // 0.17.2 stores a refresh by spreading the record it replaces.
+    await olderVersionWrites(dir, (raw) => ({ research: { ...raw.research, decision_index: { 'decision:a': { summary: 'Use A', source: 'docs' } } } }));
+    assert.equal((await read({ basePath: dir })).research.blocked, false);
+    const refused = await handleResearcherResult({ ...placeholder, basePath: dir });
+    assert.equal(refused.code, 'VALIDATION_FAILED', JSON.stringify(refused));
+    assert.equal((await read({ basePath: dir })).research.decision_index['decision:a'].summary, 'Use A');
+  });
+
+  // Not an older version: a hand edit leaves _version alone, so nothing
+  // tells it apart from this version's own write. A project left in the hold
+  // on top of its stack still resumes.
+  it('a hand edit that leaves the project in the hold on top of its stack resumes', async (t) => {
+    const dir = await project(t, 'awaiting_clear', 'paused_by_user');
+    const raw = JSON.parse(await readFile(statePath(dir), 'utf8'));
+    raw.workflow_mode = 'awaiting_clear';
+    await writeFile(statePath(dir), JSON.stringify(raw));
+    const res = await resumeWorkflow({ basePath: dir });
+    assert.ok(!res.error, JSON.stringify(res));
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'executing_task');
+    assert.deepEqual(after.suspended_modes, []);
+  });
+
+  // The other side: what this version writes, it keeps. A blocked record
+  // whose summary is not the placeholder is what reading the flag again from
+  // the decisions would change, so the flag shows a write that was taken for
+  // an older version's as surely as the stack does.
+  for (const [writer, write] of [
+    ['state-update', (dir) => update({ updates: { git_head: 'abc1234' }, basePath: dir })],
+    ['state-update of phases', (dir) => update({ updates: { phases: [{ id: 2, name: 'Phase 2, renamed' }] }, basePath: dir })],
+    ['evidence', (dir) => stateApi.addEvidence({ id: 'ev:1', data: { scope: 'task:1.1', type: 'test', data: { passed: true } }, basePath: dir })],
+    ['evidence pruning', async (dir) => {
+      await stateApi.addEvidence({ id: 'ev:1', data: { scope: 'task:1.1', type: 'test', data: { passed: true } }, basePath: dir });
+      return stateApi.pruneEvidence({ currentPhase: 2, basePath: dir });
+    }],
+    ['state-patch', (dir) => stateApi.patchPlan({ operations: [{ op: 'update_task', task_id: '1.2', name: 'Task B, renamed' }], basePath: dir })],
+    ['a stored research result', (dir) => handleResearcherResult({ ...research(true, 'Sources were unreachable'), basePath: dir })],
+  ]) {
+    it(`${writer} keeps the stack and the research flag it wrote`, async (t) => {
+      const dir = await project(t);
+      assert.equal((await handleResearcherResult({ ...research(true, 'Sources were unreachable'), basePath: dir })).action, 'research_stored', 'premise');
+      await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir });
+      const res = await write(dir);
+      assert.ok(res && !res.error, JSON.stringify(res));
+      const after = await read({ basePath: dir });
+      assert.equal(after._version, JSON.parse(await readFile(statePath(dir), 'utf8'))._version, 'premise: the write landed');
+      assert.deepEqual(after.suspended_modes, ['executing_task']);
+      assert.equal(after.research.blocked, true);
+    });
+  }
+
+  it('every write of state.json goes through writeState', async () => {
+    const root = new URL('../src/', import.meta.url);
+    const files = (await readdir(root, { recursive: true })).filter((f) => f.endsWith('.js'));
+    assert.ok(files.length > 10, 'premise: the source tree was read');
+    const writers = [];
+    for (const file of files) {
+      const source = await readFile(new URL(file, root), 'utf8');
+      for (const _ of source.matchAll(/writeJson\(\s*statePath\b/g)) writers.push(file);
+    }
+    assert.deepEqual(writers, ['tools/state/constants.js'], 'the one direct write is writeState\'s own');
   });
 });

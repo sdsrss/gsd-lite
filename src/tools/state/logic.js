@@ -2,7 +2,7 @@
 
 import { dirname, join } from 'node:path';
 import { writeFile, rename, unlink, open, stat } from 'node:fs/promises';
-import { ensureDir, writeJson, getStatePath, fsyncDir, isPlainObject, shippedDocPath } from '../../utils.js';
+import { ensureDir, getStatePath, fsyncDir, isPlainObject, shippedDocPath } from '../../utils.js';
 import { taskRefsForAgent } from '../../agent-payload.js';
 import {
   DEP_GATES,
@@ -23,6 +23,7 @@ import {
   ensureLockPathFromStatePath,
   loadState,
   withStateLock,
+  writeState,
   normalizeResearchArtifacts,
 } from './constants.js';
 
@@ -761,7 +762,7 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     }
 
     state._version = (state._version ?? 0) + 1;
-    await writeJson(statePath, state);
+    await writeState(statePath, state);
 
     // Remove sentinel after successful state write — crash consistency window closed
     try { await unlink(sentinelPath); } catch {}

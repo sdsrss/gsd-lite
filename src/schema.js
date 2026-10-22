@@ -1086,13 +1086,22 @@ export function migrateState(state) {
   // Future migrations go here:
   // if (version < 2) { migrateV1toV2(state); state.schema_version = 2; }
 
+  // suspended_modes and research.blocked are kept up to date only by 0.18 and
+  // later, which mark each write with its _version (writeState). Older
+  // versions carry both untouched while changing modes and research, and bump
+  // _version as every write does, so a mark behind _version means one of them
+  // wrote since: the stack describes holds they have moved on from, and the
+  // flag a record they may have replaced. Both are worked out again below, as
+  // for a state that never had them (which has no mark either).
+  const ownedFieldsStale = state._owned_fields_version !== state._version;
+
   // Research stored before results said whether they were blocked carries no
   // flag: read it once by the tag those results used. A record whose every
   // decision is a placeholder was blocked; one holding a real decision was
   // research, and is kept from a blocked refresh. A flag that is not a
   // boolean is read the same way: validateState refuses it, and left as it
   // was, every later write failed on it.
-  if (isPlainObject(state.research) && typeof state.research.blocked !== 'boolean') {
+  if (isPlainObject(state.research) && (ownedFieldsStale || typeof state.research.blocked !== 'boolean')) {
     state.research.blocked = researchBlockedByTag(state.research);
   }
 
@@ -1100,9 +1109,14 @@ export function migrateState(state) {
   // stack outside a hold holds nothing (validateState). Cleared on load so a
   // stale one cannot fail every later write with no way to remove it — the
   // field is server-owned and state-update cannot touch it.
-  if (!Array.isArray(state.suspended_modes) || !HOLD_MODES.includes(state.workflow_mode)) {
+  if (ownedFieldsStale || !Array.isArray(state.suspended_modes) || !HOLD_MODES.includes(state.workflow_mode)) {
     state.suspended_modes = [];
   }
+  // A project in the hold its own stack says it interrupted (a hand edit of
+  // workflow_mode can leave it there) would release to the mode it is in, pop
+  // nothing, and repeat that on every resume. The stack never holds the same
+  // mode twice in a row, so one entry is all there is to drop.
+  if (state.suspended_modes.at(-1) === state.workflow_mode) state.suspended_modes.pop();
 
   return state;
 }
