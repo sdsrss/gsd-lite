@@ -1,7 +1,7 @@
 // State constants and lock infrastructure
 
 import { join, dirname } from 'node:path';
-import { isPlainObject, readJson, withFileLock } from '../../utils.js';
+import { isPlainObject, readJson, withFileLock, writeJson } from '../../utils.js';
 import { migrateState } from '../../schema.js';
 
 // Moved to schema.js, which validates transitions with them; re-exported so
@@ -125,6 +125,19 @@ export async function loadState(statePath) {
     return { error: { error: true, code: ERROR_CODES.VALIDATION_FAILED, message: CORRUPT_STATE_MESSAGE } };
   }
   return { state: migrateState(result.data) };
+}
+
+/**
+ * Write state.json, marking the fields only this server keeps up to date
+ * (suspended_modes, research.blocked) as kept at this write's _version.
+ * Versions before 0.18 carry both untouched while bumping _version, so a mark
+ * behind _version on load means an older version wrote since and they are
+ * stale (migrateState). Every write of state.json goes through here: a write
+ * that did not would have its stack dropped on the next load.
+ */
+export async function writeState(statePath, state) {
+  state._owned_fields_version = state._version;
+  await writeJson(statePath, state);
 }
 
 export function normalizeResearchArtifacts(artifacts) {
