@@ -31,9 +31,37 @@ function runGroup(command, { timeout, ...options }) {
       clearTimeout(timer);
       if (code === 0) return resolvePromise(stdout);
       const how = timedOut ? `timed out after ${timeout} ms` : (signal ?? `exit ${code}`);
-      reject(new Error(`${command}: ${how}\n${stderr}`));
+      reject(Object.assign(new Error(`${command}: ${how}\n${stderr}`), { timedOut }));
     });
   });
+}
+
+// A registry request stalled in this machine's proxy holds a step past any
+// budget, and how loaded the machine is does not predict it. Measured
+// 2026-10-22, Layer B's npx install, six runs at load 7-10: 10-11 s four
+// times, then 21, 53 and 90 s, each slow run made slow by single requests of
+// 22-32 s; 0.18.0's pre-commit runs went past 180 s twice the day before,
+// and the same morning Layer A's npm ci ran out its 55 s once at load 3-6
+// and took seconds on the rerun. So
+// a step that ran out its budget runs once more, after `beforeRetry` (a fresh
+// npm cache: a killed npx can leave a half-built install in its _npx cache
+// that the next npx would reuse). A step that failed any other way is not
+// retried, and a second timeout fails with both.
+async function runNetworkStep(command, options, beforeRetry = async () => {}) {
+  try {
+    return await runGroup(command, options);
+  } catch (first) {
+    if (!first.timedOut) throw first;
+    // Said, so a retry that rescues a run is still seen in the output.
+    process.stderr.write(`# ${first.message.split('\n')[0]}; running it once more\n`);
+    await beforeRetry();
+    try {
+      return await runGroup(command, options);
+    } catch (second) {
+      second.message = `${second.message}\n(the first attempt ${first.message.split('\n')[0].replace(`${command}: `, '')} too)`;
+      throw second;
+    }
+  }
 }
 
 // For every step below that fetches from the registry. npm holds a request
@@ -337,7 +365,7 @@ describe('Layer A: manual/npm install E2E', () => {
   });
 });
 
-describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () => {
+describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 150000 }, () => {
   let home, claudeDir, npxSimDir, npmLogs;
 
   before(async () => {
@@ -372,12 +400,15 @@ describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () =>
     }
 
     // Run install.js from the npx-sim dir (no node_modules present). npm's
-    // debug logs go to npmLogs, where the test below reads what it requested.
-    execFileSync('node', [join(npxSimDir, 'install.js')], {
+    // debug logs go to npmLogs, where the test below reads what it requested;
+    // a retry starts them over, so they describe the run that passed.
+    await runNetworkStep(`node ${JSON.stringify(join(npxSimDir, 'install.js'))}`, {
       cwd: npxSimDir,
       env: { ...process.env, ...NPM_FETCH_ENV, HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), npm_config_logs_dir: npmLogs },
-      encoding: 'utf-8',
       timeout: 55000,
+    }, async () => {
+      await rm(npmLogs, { recursive: true, force: true });
+      await mkdir(npmLogs, { recursive: true });
     });
   });
 
@@ -586,11 +617,12 @@ describe('Layer A: install idempotency', () => {
 // Layer B: Real package install (full verification)
 // ============================================================
 
-// Both Layer B installs fetch every production dependency from the registry
-// into an empty cache, so their time is the network's. Measured on one machine
-// at load ~1.3 (2026-10-20), the npx install took 13 s to over 90 s across eight
-// runs and timed out twice at 90 s; the budgets below are twice that tail.
-describe('Layer B: npm pack + npm install -g E2E', { timeout: 180000 }, () => {
+// Both Layer B installs fetch every production dependency from the registry,
+// so their time is the network's. Measured on one machine at load ~1.3
+// (2026-10-20), the npx install took 13 s to over 90 s across eight runs and
+// timed out twice at 90 s; the budgets below are twice that tail, and each
+// suite has room for a second attempt (runNetworkStep).
+describe('Layer B: npm pack + npm install -g E2E', { timeout: 300000 }, () => {
   let home, claudeDir, npmPrefix, tarball;
 
   before(async () => {
@@ -608,7 +640,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 180000 }, () => {
     tarball = join(PROJECT_ROOT, tarballName);
 
     // npm install -g from tarball into isolated prefix
-    await runGroup(
+    await runNetworkStep(
       `npm install -g ${JSON.stringify(tarball)} --prefix ${JSON.stringify(npmPrefix)}`,
       { env: { ...process.env, ...NPM_FETCH_ENV }, timeout: 120000 }
     );
@@ -720,7 +752,7 @@ describe('Layer B: npm pack + npm install -g E2E', { timeout: 180000 }, () => {
   });
 });
 
-describe('Layer B: npx from tarball E2E', { timeout: 240000 }, () => {
+describe('Layer B: npx from tarball E2E', { timeout: 420000 }, () => {
   let home, claudeDir, tarball, npxCache;
 
   before(async () => {
@@ -737,7 +769,7 @@ describe('Layer B: npx from tarball E2E', { timeout: 240000 }, () => {
     tarball = join(PROJECT_ROOT, packInfo[0].filename);
 
     // Run via npx from tarball (file:// prefix required for local tarballs)
-    await runGroup(
+    await runNetworkStep(
       `npx --yes ${JSON.stringify(`file://${tarball}`)} install`,
       {
         env: {
@@ -748,7 +780,11 @@ describe('Layer B: npx from tarball E2E', { timeout: 240000 }, () => {
           npm_config_cache: npxCache,
         },
         timeout: 180000,
-      }
+      },
+      async () => {
+        await rm(npxCache, { recursive: true, force: true });
+        await mkdir(npxCache, { recursive: true });
+      },
     );
   });
 
