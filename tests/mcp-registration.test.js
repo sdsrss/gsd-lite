@@ -8,7 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE_CLAUDE_DIR = join(PROJECT_ROOT, 'tests', 'fake-claude');
+const { userConfigPath } = createRequire(import.meta.url)('../hooks/lib/mcp-registration.cjs');
 
 async function claudeHome(t, prefix = 'gsd-mcp-reg-') {
   const home = await mkdtemp(join(tmpdir(), prefix));
@@ -117,7 +118,7 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
     await writeFile(join(ctx.claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { gsd: FOREIGN } }));
     const result = run('install.js', ctx);
     assert.equal(result.status, 1, result.output);
-    assert.match(result.stdout, /MCP server NOT registered: a user-scope MCP server named "gsd" already exists .* it was left as it is/);
+    assert.match(result.stdout, /MCP server NOT registered: a user-scope MCP server named "gsd" already exists .* it is left as it is/);
     assert.doesNotMatch(result.stdout, /installed successfully/);
     assert.deepEqual((await userConfig(ctx.claudeDir)).mcpServers, { gsd: FOREIGN });
     assert.deepEqual(await claudeCalls(ctx.claudeDir), [], 'claude was called over a registration that is not ours');
@@ -204,6 +205,89 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
     assert.deepEqual(JSON.parse(await readFile(join(ctx.claudeDir, '.config.json'), 'utf8')).mcpServers, {});
   });
 
+  // `claude mcp add` resets a config it cannot parse (backing it up), and one
+  // it cannot read it overwrites with only the new server, the user's other
+  // servers and settings gone (Claude Code 2.1.308, delta review). The
+  // installer does not know whose registration is in there either, so it
+  // leaves the file to the user, as uninstall does.
+  const UNREADABLE = [
+    ['not JSON', (file) => writeFile(file, '{ not json')],
+    ['empty', (file) => writeFile(file, '')],
+    ['unreadable', async (file) => {
+      await writeFile(file, JSON.stringify({ mcpServers: { other: FOREIGN }, oauthAccount: { id: 'x' } }));
+      await chmod(file, 0);
+    }],
+  ];
+  for (const [label, prepare] of UNREADABLE) {
+    it(`a config it cannot read (${label}) is left as it is, with no claude call, and the install fails saying so`, async (t) => {
+      if (label === 'unreadable' && process.getuid?.() === 0) {
+        t.skip('root reads a file whatever its mode');
+        return;
+      }
+      const ctx = await claudeHome(t);
+      const file = join(ctx.claudeDir, '.claude.json');
+      await prepare(file);
+      const result = run('install.js', ctx);
+      const dry = run('install.js', ctx, { args: ['--dry-run'] });
+      await chmod(file, 0o600);
+      const after = await readFile(file, 'utf8');
+      assert.equal(result.status, 1, result.output);
+      assert.ok(result.stdout.includes(`MCP server NOT registered: ${file} could not be read or parsed`), result.stdout);
+      assert.ok(result.stdout.includes(`    claude mcp add -s user gsd -- node ${ctx.serverPath}`), result.stdout);
+      assert.deepEqual(await claudeCalls(ctx.claudeDir), [], 'claude was called over a config the installer could not read');
+      await prepare(join(ctx.home, 'expected'));
+      await chmod(join(ctx.home, 'expected'), 0o600);
+      assert.equal(after, await readFile(join(ctx.home, 'expected'), 'utf8'), 'the config changed');
+      assert.equal(dry.status, 1, dry.output);
+      assert.match(dry.stdout, /\[dry-run\] ✗ MCP server would NOT be registered: .* could not be read or parsed/);
+    });
+  }
+
+  it('beside the plugin, a dry run over a config it cannot read says so, as the install does', async (t) => {
+    const ctx = await claudeHome(t);
+    await installAsPlugin(ctx.claudeDir);
+    await writeFile(join(ctx.claudeDir, '.claude.json'), '{ not json');
+    const real = run('install.js', ctx);
+    assert.match(real.stdout, /! Could not read .*\.claude\.json/, 'premise: the install says so');
+    const dry = run('install.js', ctx, { args: ['--dry-run'] });
+    assert.match(dry.stdout, /\[dry-run\] ! Could not read .*\.claude\.json/);
+  });
+
+  // The CLI names its config .claude-custom-oauth.json while
+  // CLAUDE_CODE_CUSTOM_OAUTH_URL is set. Read from .claude.json, every install
+  // after the first failed with "already exists", every session said the
+  // server was missing while it was connected, and uninstall left it
+  // registered (delta review, with the real CLI).
+  it('with CLAUDE_CODE_CUSTOM_OAUTH_URL set, the registration is read where the CLI writes it', async (t) => {
+    const ctx = await claudeHome(t);
+    const env = { CLAUDE_CODE_CUSTOM_OAUTH_URL: 'https://oauth.invalid' };
+    assert.equal(run('install.js', ctx, { env }).status, 0);
+    const file = join(ctx.claudeDir, '.claude-custom-oauth.json');
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).mcpServers?.gsd?.args, [ctx.serverPath], 'premise: the CLI wrote the suffixed file');
+    const second = run('install.js', ctx, { env });
+    assert.equal(second.status, 0, second.output);
+    assert.match(second.stdout, /MCP server already registered/);
+    assert.doesNotMatch(sessionStart(ctx, env), NOT_REGISTERED);
+    assert.equal(run('uninstall.js', ctx, { env }).status, 0);
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).mcpServers, {});
+  });
+
+  // The CLI normalizes the config directory's name to NFC for the legacy
+  // file only. On a filesystem that keeps names as written (Linux), a
+  // directory named in NFD then has no legacy file the CLI can see.
+  it('reads the legacy file under the NFC spelling of the config directory, as the CLI does', { skip: process.platform !== 'linux' && 'needs a filesystem that keeps NFD names apart' }, async (t) => {
+    const home = await mkdtemp(join(tmpdir(), 'gsd-mcp-nfd-'));
+    t.after(() => rm(home, { recursive: true, force: true }));
+    const claudeDir = join(home, 'cafe\u0301');
+    await mkdir(claudeDir);
+    await writeFile(join(claudeDir, '.config.json'), JSON.stringify({ numStartups: 4 }));
+    assert.equal(userConfigPath({ CLAUDE_CONFIG_DIR: claudeDir }), join(claudeDir, '.claude.json'));
+    const nfc = join(home, 'caf\u00e9');
+    await mkdir(nfc);
+    await writeFile(join(nfc, '.config.json'), JSON.stringify({ numStartups: 4 }));
+    assert.equal(userConfigPath({ CLAUDE_CONFIG_DIR: claudeDir }), join(nfc, '.config.json'), 'the CLI reads the NFC spelling');
+  });
+
   it('the stand-in claude refuses a config outside the temp dir', () => {
     const result = spawnSync(join(FAKE_CLAUDE_DIR, 'claude'), ['mcp', 'add', '-s', 'user', 'gsd', '--', 'node', '/x'], {
       env: { ...process.env, CLAUDE_CONFIG_DIR: '/nonexistent-gsd-fake-claude-check', HOME: '/nonexistent-gsd-fake-claude-check' },
@@ -217,10 +301,10 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
 // The npx install's SessionStart hook, as Claude Code runs it after install.js
 // copied it into <config>/hooks. PLUGIN_AUTO_UPDATE=1 keeps it from starting
 // the updater, which would write under the temp home while it is removed.
-function sessionStart({ home, claudeDir }) {
+function sessionStart({ home, claudeDir }, env = {}) {
   const result = spawnSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
     cwd: home,
-    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1', ...env },
     encoding: 'utf8',
     timeout: 10000,
   });
@@ -286,6 +370,45 @@ describe('a registration the install could not make is reported every session', 
     run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add' } });
     const said = sessionStart(ctx);
     assert.ok(said.includes(ctx.serverPath), said);
+  });
+
+  // Pasted into a shell, the command registers this install's server. The
+  // line's sanitizer dropped # $ [ ] ! and the rest from it: the command then
+  // registered another path, which the installer refused to replace.
+  it('the reported command, run in a shell, registers this install\'s server whatever its path holds', async (t) => {
+    const ctx = await claudeHome(t, "gsd-mcp-a#b $x [1] !c 'q' ü-");
+    run('install.js', ctx, { env: { GSD_FAKE_CLAUDE_FAIL: 'add' } });
+    const command = sessionStart(ctx).match(/To register it, run `(.+)` in a shell, then restart/)?.[1];
+    assert.ok(command, 'premise: the line names a command');
+    const ran = spawnSync('sh', ['-c', command], { env: { ...process.env, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir }, encoding: 'utf8' });
+    assert.equal(ran.status, 0, `${command}\n${ran.stderr}`);
+    assert.deepEqual((await userConfig(ctx.claudeDir)).mcpServers?.gsd?.args, [ctx.serverPath]);
+    assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED);
+  });
+
+  // An empty or unparseable config says nothing about the registration, but
+  // an install that recorded its failure has: silent there, the one install
+  // that knew it failed was never reported (delta review).
+  it('a failure the install recorded is reported even while the config cannot be read', async (t) => {
+    const ctx = await claudeHome(t);
+    await writeFile(join(ctx.claudeDir, '.config.json'), '');
+    const result = run('install.js', ctx, { env: { PATH: await pathWithoutClaude(t), PLUGIN_AUTO_UPDATE: '1' } });
+    assert.match(result.stdout, /✗ MCP server NOT registered/, 'premise: the install failed');
+    assert.match(sessionStart(ctx), NOT_REGISTERED);
+  });
+
+  // The reason is what is wrong now: a reason recorded before a server of
+  // that name started something else sent the user to a command that fails.
+  it('a server named gsd that starts something else is reported as that, over an older recorded reason', async (t) => {
+    const ctx = await claudeHome(t);
+    run('install.js', ctx, { env: { PATH: await pathWithoutClaude(t), PLUGIN_AUTO_UPDATE: '1' } });
+    assert.match(sessionStart(ctx), /`claude` was not found on PATH/, 'premise: the recorded reason');
+    await writeFile(join(ctx.claudeDir, '.claude.json'), JSON.stringify({ mcpServers: { gsd: FOREIGN } }));
+    const said = sessionStart(ctx);
+    assert.match(said, NOT_REGISTERED);
+    assert.match(said, /starts something else/);
+    assert.match(said, /claude mcp remove gsd -s user/);
+    assert.doesNotMatch(said, /was not found on PATH/);
   });
 
   it('beside the plugin nothing is reported: the plugin serves the server', async (t) => {
@@ -431,9 +554,12 @@ function realClaude() {
 }
 
 describe('against the real claude CLI', { timeout: 360000 }, () => {
-  // Both config layouts the CLI writes user scope to: .claude.json, and the
-  // legacy <config dir>/.config.json when that is non-empty.
-  for (const layout of ['.claude.json', 'legacy .config.json']) {
+  // The config layouts the CLI writes user scope to: .claude.json, the legacy
+  // <config dir>/.config.json when that is non-empty, .claude-custom-oauth.json
+  // while CLAUDE_CODE_CUSTOM_OAUTH_URL is set, and .claude.json again beside a
+  // legacy file in a directory named in NFD, which the CLI does not see.
+  const LAYOUTS = ['.claude.json', 'legacy .config.json', 'custom OAuth', ...(process.platform === 'linux' ? ['legacy .config.json, NFD name'] : [])];
+  for (const layout of LAYOUTS) {
     it(`install registers a server Claude Code connects to, a second install sees it, no session reports it missing, uninstall removes it (${layout})`, async (t) => {
       const claude = realClaude();
       if (!claude) {
@@ -442,16 +568,17 @@ describe('against the real claude CLI', { timeout: 360000 }, () => {
       }
       const root = await mkdtemp(join(tmpdir(), 'gsd-mcp-real-'));
       t.after(() => rm(root, { recursive: true, force: true }));
-      await mkdir(join(root, 'real-home', '.claude'), { recursive: true });
+      const configName = layout.includes('NFD') ? '.claude\u0301' : '.claude';
+      await mkdir(join(root, 'real-home', configName), { recursive: true });
       await symlink(join(root, 'real-home'), join(root, 'home'), 'dir');
-      const ctx = { home: join(root, 'home'), claudeDir: join(root, 'home', '.claude') };
+      const ctx = { home: join(root, 'home'), claudeDir: join(root, 'home', configName) };
       assert.ok(realpathSync(ctx.claudeDir).startsWith(realpathSync(tmpdir())), 'premise: a throwaway config, never the real one');
-      if (layout !== '.claude.json') await writeFile(join(ctx.claudeDir, '.config.json'), JSON.stringify({ numStartups: 4 }));
+      if (layout.startsWith('legacy')) await writeFile(join(ctx.claudeDir, '.config.json'), JSON.stringify({ numStartups: 4 }));
       const PATH = (process.env.PATH || '').split(delimiter).filter((dir) => resolve(dir) !== FAKE_CLAUDE_DIR).join(delimiter);
-      const env = { PATH };
+      const env = { PATH, ...(layout === 'custom OAuth' ? { CLAUDE_CODE_CUSTOM_OAUTH_URL: 'https://oauth.invalid' } : {}) };
       const list = () => spawnSync(claude, ['mcp', 'list'], {
         cwd: root,
-        env: { ...process.env, PATH, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir },
+        env: { ...process.env, ...env, HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir },
         encoding: 'utf8',
         timeout: 60000,
       }).stdout;
@@ -465,7 +592,7 @@ describe('against the real claude CLI', { timeout: 360000 }, () => {
       const second = run('install.js', ctx, { env });
       assert.equal(second.status, 0, second.output);
       assert.match(second.stdout, /MCP server already registered/, 'the installer did not read the registration the real CLI wrote');
-      assert.doesNotMatch(sessionStart(ctx), NOT_REGISTERED);
+      assert.doesNotMatch(sessionStart(ctx, env), NOT_REGISTERED);
 
       const removed = run('uninstall.js', ctx, { env });
       assert.equal(removed.status, 0, removed.output);

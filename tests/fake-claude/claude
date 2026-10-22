@@ -9,9 +9,12 @@
 // the top-level mcpServers of the user config and exits 1 with "already
 // exists" if the name is taken; remove exits 1 when the name is absent. The
 // user config is the file the real CLI picks: <config dir>/.config.json when
-// that is non-empty (or empty, writable and alone), else
-// ${CLAUDE_CONFIG_DIR || HOME}/.claude.json. An existing file that is not
-// JSON is left alone, with exit 1: a stand-in must never rewrite a config.
+// that is non-empty (or empty, writable and alone), the directory's name
+// normalized to NFC; else ${CLAUDE_CONFIG_DIR || HOME}/.claude.json, named
+// .claude-custom-oauth.json while CLAUDE_CODE_CUSTOM_OAUTH_URL is set. An
+// existing file it cannot read, or that is empty or not JSON, is left alone,
+// with exit 1: a stand-in must never rewrite a config (the real CLI resets
+// one it cannot parse, and overwrites one it cannot read).
 // tests/mcp-registration.test.js holds this against the real CLI when one is
 // installed.
 //
@@ -27,8 +30,8 @@ const path = require('node:path');
 
 const argv = process.argv.slice(2);
 const dir = process.env.CLAUDE_CONFIG_DIR || os.homedir();
-const modern = path.join(dir, '.claude.json');
-const legacy = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.config.json');
+const modern = path.join(dir, `.claude${process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL ? '-custom-oauth' : ''}.json`);
+const legacy = path.join((process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')).normalize('NFC'), '.config.json');
 let configPath = modern;
 try {
   const stat = fs.statSync(legacy);
@@ -53,8 +56,12 @@ function fail(message, code = 1) {
 
 function readConfig() {
   let text;
-  try { text = fs.readFileSync(configPath, 'utf8'); } catch { return {}; }
-  if (text.trim() === '') return {};
+  try {
+    text = fs.readFileSync(configPath, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    return fail(`fake claude: ${configPath} cannot be read (${err.code}); left as it is`);
+  }
   try { return JSON.parse(text); } catch { return fail(`fake claude: ${configPath} is not JSON; left as it is`); }
 }
 
