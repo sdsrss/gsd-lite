@@ -899,45 +899,50 @@ describe('a state an older version wrote since', () => {
     });
   }
 
-  it('every write of state.json goes through writeState', async () => {
+  // Each 0.18+ write of state.json records the version that made it, which
+  // is how a state an older version wrote since is told apart (migrateState),
+  // so every write goes through writeState. Three gates that read the source
+  // for writers going around it each missed the next shape: writeJson only,
+  // then statePath as a first argument only, then statePath in listed forms
+  // only (a path from getStatePath under another name, 'state' + '.json', a
+  // shadowed reader name, a comment opened inside a string; pre-tag reviews).
+  // So the writers refuse it at run time instead (src/utils.js), whatever the
+  // path is called, and the gate is about who can write at all.
+  it('the general writers refuse state.json, and writeState writes it', async (t) => {
+    const utils = await import('../src/utils.js');
+    const dir = await project(t);
+    const path = statePath(dir);
+    for (const spelled of [path, join(dir, '.gsd', 'State.json'), `${join(dir, '.gsd')}/${'state'}${'.json'}`]) {
+      await assert.rejects(utils.writeJson(spelled, {}), /state\.json is written through writeState only/);
+      await assert.rejects(utils.writeAtomic(spelled, '{}'), /state\.json is written through writeState only/);
+    }
+    assert.ok((await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir })).success, 'writeState still writes it');
+  });
+
+  it('only the modules that may write files can reach a filesystem write', async () => {
     const root = new URL('../src/', import.meta.url);
     const files = (await readdir(root, { recursive: true })).filter((f) => f.endsWith('.js'));
     assert.ok(files.length > 10, 'premise: the source tree was read');
-    // Named as the forms statePath may appear in, not as the writers to avoid.
-    // The first version matched writeJson( only, and writeAtomic(statePath, …)
-    // passed (pre-tag review); the second matched statePath as a first
-    // argument only, and an alias (`const p = statePath`), a rename onto it
-    // (`rename(tmp, statePath)`) or a path built inline passed (review of the
-    // repair). Every occurrence of the name must be one of these, and the
-    // literal path one of the two places that build it.
-    const READERS = ['dirname', 'ensureLockPathFromStatePath', 'loadState', 'readJson', 'stat', 'writeState', '_fileLockPaths.get', '_fileLockPaths.set'];
-    const FORMS = [
-      /\bconst statePath = await getStatePath\(/g,
-      /\bconst statePath = join\(gsdDir, 'state\.json'\);/g,
-      /\bif \(!?statePath\)/g,
-      new RegExp(`(?<![\\w$.])(?:${READERS.map((r) => r.replace('.', '\\.')).join('|')})\\(statePath[,)]`, 'g'),
-      /\}, statePath\);/g, // withStateLock's queue key
-      /\bfunction \w+\((?:fn, )?statePath(?:, state)?\)/g, // the helpers' own parameters
-      /\bconst queueKey = statePath \?\? null;/g,
-    ];
-    const offenders = [];
-    const directWrites = [];
-    const literals = [];
+    // utils.js holds the writers (and the guard above); logic.js commits the
+    // research documents itself; server.js takes the whole fs module to read
+    // version files. Any other module that can write goes past the guard.
+    const MAY_WRITE = ['utils.js', 'tools/state/logic.js', 'server.js'];
+    const WRITES = /\b(writeFile|writeFileSync|rename|renameSync|appendFile|appendFileSync|copyFile|copyFileSync|cp|cpSync|open|openSync|createWriteStream|truncate|truncateSync|symlink|symlinkSync|link|linkSync)\b/;
+    const FS = "(?:node:)?fs(?:/promises)?";
+    const reach = [];
     for (const file of files) {
-      const source = (await readFile(new URL(file, root), 'utf8')).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-      const allowed = new Set();
-      for (const form of FORMS) {
-        for (const m of source.matchAll(form)) allowed.add(m.index + m[0].indexOf('statePath'));
-      }
-      for (const _ of source.matchAll(/\bwriteJson\(statePath,/g)) directWrites.push(file);
-      for (const m of source.matchAll(/\bstatePath\b/g)) {
-        const isDirectWrite = source.startsWith('writeJson(statePath,', m.index - 'writeJson('.length);
-        if (!allowed.has(m.index) && !isDirectWrite) offenders.push(`${file}:${source.slice(0, m.index).split('\n').length}`);
-      }
-      for (const _ of source.matchAll(/['"`](?:[^'"`\n]*[/\\])?state\.json['"`]/g)) literals.push(file);
+      const source = await readFile(new URL(file, root), 'utf8');
+      const named = [...source.matchAll(new RegExp(String.raw`import\s*\{([^}]*)\}\s*from\s*['"]${FS}['"]`, 'g'))].map((m) => m[1]);
+      const whole = new RegExp(String.raw`import\s+(?:\*\s+as\s+)?\w+\s+from\s*['"]${FS}['"]|require\(\s*['"]${FS}['"]\s*\)|import\(\s*['"]${FS}['"]`).test(source);
+      if (whole || named.some((names) => WRITES.test(names))) reach.push(file);
     }
-    assert.deepEqual(directWrites, ['tools/state/constants.js'], 'the one direct write is writeState\'s own');
-    assert.deepEqual(offenders, [], 'statePath in a form that is neither a reader, writeState nor a declaration');
-    assert.deepEqual(literals.sort(), ['tools/state/crud.js', 'utils.js'], 'the path to state.json built somewhere other than getStatePath and init');
+    assert.ok(reach.includes('utils.js'), 'premise: the writers were found');
+    assert.deepEqual(reach.filter((file) => !MAY_WRITE.includes(file)), []);
+    // writeStateFile, the guard's one way past, is writeState's alone.
+    const callers = [];
+    for (const file of files) {
+      if ((await readFile(new URL(file, root), 'utf8')).includes('writeStateFile')) callers.push(file);
+    }
+    assert.deepEqual(callers.sort(), ['tools/state/constants.js', 'utils.js']);
   });
 });

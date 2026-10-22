@@ -1,7 +1,7 @@
 // State constants and lock infrastructure
 
 import { join, dirname } from 'node:path';
-import { isPlainObject, readJson, withFileLock, writeJson } from '../../utils.js';
+import { isPlainObject, readJson, withFileLock, writeStateFile } from '../../utils.js';
 import { migrateState } from '../../schema.js';
 
 // Moved to schema.js, which validates transitions with them; re-exported so
@@ -137,7 +137,7 @@ export async function loadState(statePath) {
  */
 export async function writeState(statePath, state) {
   state._owned_fields_version = state._version;
-  await writeJson(statePath, state);
+  await writeStateFile(statePath, state);
 }
 
 export function normalizeResearchArtifacts(artifacts) {

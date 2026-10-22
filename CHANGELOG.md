@@ -102,8 +102,11 @@ reads a suite's failing `after()`, a describe that threw, a suite timeout and
 a todo suite as what each is, says when Node 20 or 22 reported a hang as tests
 still pending when the event loop ran dry (which does not say which test hung,
 so there is no verdict), and stops a replay that has not finished in 30
-minutes, removing its worktree. The gate on `state.json` writes
-catches an alias of the path, a rename onto it and a path built inline. The
+minutes, removing its worktree. The server's general file writers refuse `state.json`, which
+only `writeState` writes (it records the writing version, which is how a state
+an older version wrote since is recognised); a test pins which modules can
+reach a filesystem write at all. This replaces gates that read the source for
+writers going around `writeState` and kept missing one more shape. The
 e2e install tests run a registry step once more when it runs out its budget
 (single requests through a proxy stall), and say so; no assertion changed.
 The 0.18.0 heading's date said 2026-10-21; it was tagged on 2026-10-22.

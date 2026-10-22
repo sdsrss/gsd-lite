@@ -1,6 +1,6 @@
 import { readFile, writeFile, rename, mkdir, unlink, stat, open } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { basename, join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -307,10 +307,23 @@ async function writeFileDurable(filePath, content) {
   }
 }
 
+// state.json is written by writeState (src/tools/state/constants.js) and by
+// nothing else: each write there records the version that made it, which is
+// how a state an older version wrote since is told apart on load
+// (migrateState). The general writers refuse it, so a writer that goes around
+// writeState fails at its first test, however its path was spelled. Gates
+// that read the source for such writers missed one shape after another.
+function refuseStateFile(filePath) {
+  if (basename(String(filePath)).toLowerCase() === 'state.json') {
+    throw new Error(`${filePath}: state.json is written through writeState only`);
+  }
+}
+
 /**
  * Atomically write JSON data (write to .tmp, fsync, then rename).
  */
 export async function writeJson(filePath, data) {
+  refuseStateFile(filePath);
   await writeFileDurable(filePath, JSON.stringify(data, null, 2) + '\n');
 }
 
@@ -318,5 +331,11 @@ export async function writeJson(filePath, data) {
  * Atomically write text content (write to .tmp, fsync, then rename). [I-3]
  */
 export async function writeAtomic(filePath, content) {
+  refuseStateFile(filePath);
   await writeFileDurable(filePath, content);
+}
+
+/** writeState's own way to write state.json, durably; nothing else calls it. */
+export async function writeStateFile(filePath, state) {
+  await writeFileDurable(filePath, JSON.stringify(state, null, 2) + '\n');
 }
