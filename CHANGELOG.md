@@ -126,7 +126,9 @@ The state format is unchanged.
     the transition table does not allow, such as `reconcile_workspace` →
     `planning` (`VALIDATION_FAILED`, naming the transition). The same change
     without `phases` was already refused; with it, it was written. Releasing
-    a hold to the mode it interrupted is allowed either way.
+    a hold to the mode it interrupted is allowed either way. The server's own
+    handling of agent results is not held to the table, as before: a result
+    that arrives after a hold was entered is still recorded.
   - `npx gsd-lite install` run by hand exits 1 when the MCP server could not
     be registered (see above); it exited 0 having registered it nowhere
     Claude Code reads.
