@@ -179,7 +179,7 @@ function cleanupOrphan() {
     try { fs.rmSync(path.join(claudeDir, 'hooks', name), { force: true }); } catch { /* best effort */ }
   }
   // 5. Hook lib files (GSD-owned only — don't touch other plugins' libs)
-  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs', 'ctx-bridge.cjs']) {
+  for (const lib of ['gsd-finder.cjs', 'statusline-composite.cjs', 'semver-sort.cjs', 'hook-registry.cjs', 'atomic-write.cjs', 'ctx-bridge.cjs', 'mcp-registration.cjs']) {
     try { fs.rmSync(path.join(claudeDir, 'hooks', 'lib', lib), { force: true }); } catch { /* best effort */ }
   }
   // 6. Runtime dir + plugin marketplace + cache dirs (current + legacy names)

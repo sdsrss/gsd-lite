@@ -92,6 +92,23 @@ async function readSettings(claudeDir) {
   return JSON.parse(await readFile(join(claudeDir, 'settings.json'), 'utf-8'));
 }
 
+// The user-scope MCP registration, as tests/fake-claude/claude writes it.
+async function userMcpServer(claudeDir) {
+  try {
+    return JSON.parse(await readFile(join(claudeDir, '.claude.json'), 'utf-8')).mcpServers?.gsd;
+  } catch {
+    return undefined;
+  }
+}
+
+async function assertMcpRegistered(claudeDir) {
+  const settings = await readSettings(claudeDir);
+  assert.equal(settings.mcpServers, undefined, 'Claude Code reads no MCP servers from settings.json');
+  assert.deepEqual(await userMcpServer(claudeDir),
+    { type: 'stdio', command: 'node', args: [join(claudeDir, 'gsd', 'src', 'server.js')], env: {} },
+    'the server is registered at user scope with `claude mcp add`');
+}
+
 // --- Shared assertions ---
 
 async function assertInstallTree(claudeDir, { userScope = true } = {}) {
@@ -196,10 +213,14 @@ async function assertCleanUninstall(claudeDir) {
     'gsd-statusline.cjs', 'gsd-session-stop.cjs']) {
     assert.ok(!existsSync(join(claudeDir, 'hooks', h)), `hooks/${h} should be removed`);
   }
-  // Hook libs should not exist
-  for (const lib of ['gsd-finder.cjs', 'semver-sort.cjs', 'statusline-composite.cjs', 'hook-registry.cjs']) {
+  // Hook libs should not exist: every one the install copies, read from the
+  // package rather than listed here, so a lib added later is checked too.
+  const libs = (await readdir(join(PROJECT_ROOT, 'hooks', 'lib'))).filter((name) => name.endsWith('.cjs'));
+  assert.ok(libs.includes('hook-registry.cjs'), 'premise: the package\'s hooks/lib was read');
+  for (const lib of libs) {
     assert.ok(!existsSync(join(claudeDir, 'hooks', 'lib', lib)), `hooks/lib/${lib} should be removed`);
   }
+  assert.equal(await userMcpServer(claudeDir), undefined, 'the user-scope MCP registration should be removed');
   // settings.json should have no GSD entries
   if (existsSync(join(claudeDir, 'settings.json'))) {
     const settings = await readSettings(claudeDir);
@@ -289,12 +310,8 @@ describe('Layer A: manual/npm install E2E', () => {
     await assertInstallTree(claudeDir);
   });
 
-  it('registers MCP server in settings.json', async () => {
-    const settings = await readSettings(claudeDir);
-    assert.ok(settings.mcpServers?.gsd, 'mcpServers.gsd should exist');
-    assert.equal(settings.mcpServers.gsd.command, 'node');
-    assert.ok(settings.mcpServers.gsd.args[0].endsWith('server.js'),
-      'MCP args should point to server.js');
+  it('registers the MCP server with Claude Code', async () => {
+    await assertMcpRegistered(claudeDir);
   });
 
   it('registers statusLine in settings.json', async () => {
@@ -391,9 +408,8 @@ describe('Layer A: npx install E2E (npm ci fallback)', { timeout: 60000 }, () =>
     await assertInstallTree(claudeDir);
   });
 
-  it('registers MCP server (not plugin mode)', async () => {
-    const settings = await readSettings(claudeDir);
-    assert.ok(settings.mcpServers?.gsd, 'mcpServers.gsd should exist in npx mode');
+  it('registers the MCP server with Claude Code (not plugin mode)', async () => {
+    await assertMcpRegistered(claudeDir);
   });
 });
 
@@ -410,10 +426,11 @@ describe('Layer A: plugin install E2E', () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  it('does NOT register mcpServers.gsd in settings.json', async () => {
+  it('does NOT register an MCP server of its own', async () => {
     const settings = await readSettings(claudeDir);
     assert.equal(settings.mcpServers?.gsd, undefined,
       'Plugin mode should not register MCP in settings.json');
+    assert.equal(await userMcpServer(claudeDir), undefined, 'the plugin serves the MCP server');
   });
 
   it('still registers statusLine in settings.json', async () => {
@@ -745,9 +762,8 @@ describe('Layer B: npx from tarball E2E', { timeout: 240000 }, () => {
     await assertInstallTree(claudeDir);
   });
 
-  it('registers MCP server in settings.json (not plugin mode)', async () => {
-    const settings = await readSettings(claudeDir);
-    assert.ok(settings.mcpServers?.gsd, 'mcpServers.gsd should exist via npx install');
+  it('registers the MCP server with Claude Code (not plugin mode)', async () => {
+    await assertMcpRegistered(claudeDir);
   });
 
   it('registers statusLine and hooks', async () => {

@@ -15,8 +15,10 @@ const { semverSortComparator } = _require('./hooks/lib/semver-sort.cjs');
 const { isCompositeStatusLine, registerProvider: registerCompositeProvider } = _require('./hooks/lib/statusline-composite.cjs');
 const { upsertHookEntry } = _require('./hooks/lib/hook-registry.cjs');
 const { atomicWriteJson } = _require('./hooks/lib/atomic-write.cjs');
+const { registerMcpServer, unregisterMcpServer } = _require('./hooks/lib/mcp-registration.cjs');
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const RUNTIME_DIR = join(CLAUDE_DIR, 'gsd');
+const SERVER_PATH = join(RUNTIME_DIR, 'src', 'server.js');
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // Single source of truth for hook files (used by copy loop and registration)
@@ -487,31 +489,24 @@ export function main() {
     log('  [dry-run] Would swap the staged runtime into ~/.claude/gsd');
   }
 
-  // 8. Register MCP server + hooks in settings.json
-  //    When installed as a plugin, the plugin system handles MCP via .mcp.json,
-  //    so we skip manual MCP registration to avoid name collisions.
+  // 8. Register hooks in settings.json, then the MCP server with Claude Code
+  let mcpFailure = null;
   if (!DRY_RUN) {
     // Fresh read: this is the copy that gets written back, so it has to reflect
     // whatever landed in the file while the install was running. A parse failure
     // that appeared in the meantime aborts here rather than clobbering.
     const settings = readSettingsOrExit(settingsPath);
 
-    if (!settings.mcpServers) settings.mcpServers = {};
-    // Remove legacy "gsd-lite" server entry from older versions
-    delete settings.mcpServers['gsd-lite'];
-
-    if (isPluginInstall) {
-      // Plugin system handles MCP via .mcp.json — remove stale manual entry
-      if (settings.mcpServers.gsd) {
-        delete settings.mcpServers.gsd;
-        log('  ✓ Removed manual MCP entry (plugin .mcp.json handles registration)');
-      }
-    } else {
-      settings.mcpServers.gsd = {
-        command: 'node',
-        args: [join(RUNTIME_DIR, 'src', 'server.js')],
-      };
-      log('  ✓ MCP server registered in settings.json');
+    // Every install before 0.19.0 registered the MCP server here, and Claude
+    // Code never read it: settings.json carries no MCP server definitions. The
+    // server is registered with Claude Code below; these entries ("gsd-lite"
+    // is the name before that) are removed, and the key with them once empty.
+    if (settings.mcpServers && typeof settings.mcpServers === 'object' && !Array.isArray(settings.mcpServers)) {
+      const hadEntry = 'gsd' in settings.mcpServers || 'gsd-lite' in settings.mcpServers;
+      delete settings.mcpServers.gsd;
+      delete settings.mcpServers['gsd-lite'];
+      if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers;
+      if (hadEntry) log('  ✓ Removed the settings.json MCP entry (Claude Code does not read MCP servers from there)');
     }
 
     // StatusLine is a top-level setting that the plugin system (hooks.json)
@@ -545,6 +540,27 @@ export function main() {
       log(`  ✓ GSD-Lite ${wrote.join(' + ')} registered in settings.json`);
     }
 
+    // The MCP server goes through Claude Code's own CLI, at user scope
+    // (hooks/lib/mcp-registration.cjs says why not by writing its config).
+    // Under the plugin the plugin serves it, so a registration of this
+    // install's server is removed instead: both would list every tool twice.
+    if (isPluginInstall) {
+      const removed = unregisterMcpServer(SERVER_PATH);
+      if (removed.status === 'removed') log('  ✓ Removed the user-scope MCP registration (the plugin serves the MCP server)');
+      if (removed.status === 'failed') {
+        log(`  ! Could not remove this install's user-scope MCP registration: ${removed.reason}.`);
+        log(`    With the plugin serving too, every gsd tool is listed twice. Remove it with: ${removed.command}`);
+      }
+    } else {
+      const registered = registerMcpServer(SERVER_PATH);
+      if (registered.status === 'already') log('  ✓ MCP server already registered with Claude Code (user scope)');
+      if (registered.status === 'registered') log('  ✓ MCP server registered with Claude Code (user scope)');
+      if (registered.status === 'failed') {
+        mcpFailure = registered;
+        log(`  ✗ MCP server NOT registered: ${registered.reason}`);
+      }
+    }
+
     // Record install mode so SessionStart's Phase 0 orphan-cleanup can
     // distinguish "plugin uninstalled" from "npx install". Without this marker
     // the hook falls back to the .orphaned_at cache heuristic, which is fine
@@ -566,7 +582,9 @@ export function main() {
       } catch { /* best effort */ }
     }
   } else {
-    log('  [dry-run] Would register MCP server in settings.json');
+    log(isPluginInstall
+      ? '  [dry-run] Would remove a user-scope MCP registration of this install\'s server (the plugin serves it)'
+      : `  [dry-run] Would register the MCP server with Claude Code: claude mcp add -s user gsd -- node ${SERVER_PATH}`);
   }
 
   // 9. Prune old plugin cache versions (keep latest 3)
@@ -598,7 +616,22 @@ export function main() {
     }
   }
 
+  // The summary follows what happened. Without the MCP server there are no
+  // gsd tools, so "installed successfully" over a failed registration would be
+  // the one line a user reads, and wrong. The reason also goes to stderr,
+  // which is what the updater reports when an install it ran fails.
+  if (mcpFailure) {
+    log('\n✗ GSD-Lite is installed except for its MCP server, so the gsd tools are not available yet.');
+    log(`  ${mcpFailure.reason}.`);
+    log('  Register it by running:');
+    log(`    ${mcpFailure.command}`);
+    log('  then restart Claude Code.');
+    console.error(`MCP server not registered: ${mcpFailure.reason}. Run: ${mcpFailure.command}`);
+    process.exitCode = 1;
+    return;
+  }
   log('\n✓ GSD-Lite installed successfully!');
+  log('  Restart Claude Code to load the MCP server and hooks.');
   log('  Use /gsd:start to begin a new project');
   log('  Use /gsd:resume to continue an existing project');
 }

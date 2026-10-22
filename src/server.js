@@ -50,9 +50,10 @@ const server = new Server(
 );
 
 /**
- * Is this the copy an npx install registered in settings.json, with gsd
- * switched off by `/plugin disable`? That registration is out of the plugin
- * system's reach, so it kept serving every tool after the user turned gsd off.
+ * Is this the copy an npx install registered (`claude mcp add -s user`), with
+ * gsd switched off by `/plugin disable`? That registration is out of the
+ * plugin system's reach, so it kept serving every tool after the user turned
+ * gsd off.
  * Only the runtime copy at <config>/gsd/ stands down — the plugin's own server
  * is not started while the plugin is disabled, and a repository checkout is
  * never one to silence. The helper is the hooks' own, from the npx install's
