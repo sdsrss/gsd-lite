@@ -22,9 +22,9 @@ function runGroup(command, { timeout, ...options }) {
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
-    let timedOut = false;
+    let killedForTime = false;
     const timer = setTimeout(() => {
-      timedOut = true;
+      killedForTime = true;
       try { process.kill(-child.pid, 'SIGKILL'); } catch {}
     }, timeout);
     // Cleared at exit, not at close: close waits for the pipes to drain, and a
@@ -38,6 +38,10 @@ function runGroup(command, { timeout, ...options }) {
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      // Timed out only if the shell died of that kill. One that exited on its
+      // own in the turn of the loop the timer fired in (timers run first)
+      // still has its own exit code (final review: read as timed out, 5/5).
+      const timedOut = killedForTime && signal === 'SIGKILL';
       if (code === 0) return resolvePromise(stdout);
       const how = timedOut ? `timed out after ${timeout} ms` : (signal ?? `exit ${code}`);
       reject(Object.assign(new Error(`${command}: ${how}\n${stderr}`), { timedOut }));
@@ -354,6 +358,25 @@ describe('a step run as a process group', () => {
     const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
     for (let i = 0; i < 20 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(alive(), false, 'the descendant is still running');
+  });
+
+  it('a step that runs out its budget is killed and says it timed out', async () => {
+    const err = await runGroup('sleep 5', { timeout: 300 }).then(() => null, (e) => e);
+    assert.ok(err, 'premise: the step failed');
+    assert.equal(err.timedOut, true);
+    assert.match(err.message, /timed out after 300 ms/);
+  });
+
+  // An exit and the budget's timer that land in the same turn of the event
+  // loop: timers run first, and the step that failed on its own read as timed
+  // out and was retried, 5 of 5 times (final review).
+  it('a step that exits on its own as its budget runs out has not timed out', async () => {
+    const pending = runGroup('exit 3', { timeout: 200 }).then(() => null, (e) => e);
+    for (const until = Date.now() + 400; Date.now() < until;) { /* hold the loop past both */ }
+    const err = await pending;
+    assert.ok(err, 'premise: the step failed');
+    assert.equal(err.timedOut, false, err.message);
+    assert.match(err.message, /: exit 3\n/);
   });
 });
 

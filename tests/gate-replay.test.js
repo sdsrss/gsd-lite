@@ -305,13 +305,18 @@ it('waits', () => (require('../src.cjs') === 2 ? undefined : new Promise((resolv
   // Stopped at the bound, the runner alone was killed: the file process it
   // started kept running (forever, with a handle open), and what the tests
   // made in the temp directory stayed there (delta review).
-  const HANGS = `${HEADER}import { mkdtempSync, writeFileSync } from 'node:fs';
+  // It also starts a step of its own process group, as tests/e2e-install.test.js
+  // does for each npm step: a stop of the runner's group alone left that
+  // running (final review).
+  const HANGS = `${HEADER}import { spawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 it('hangs', () => {
   if (require('../src.cjs') === 2) return undefined;
   const dir = mkdtempSync(join(tmpdir(), 'gsd-replay-leftover-'));
-  writeFileSync(process.env.REPLAY_PROBE, JSON.stringify({ pid: process.pid, dir }));
+  const step = spawn('sleep', ['120'], { detached: true, stdio: 'ignore' });
+  writeFileSync(process.env.REPLAY_PROBE, JSON.stringify({ pid: process.pid, step: step.pid, dir }));
   setInterval(() => {}, 1000);
   return new Promise(() => {});
 });
@@ -323,9 +328,11 @@ it('hangs', () => {
     const file = join(home, 'probe.json');
     t.after(() => {
       if (existsSync(file)) {
-        const { pid, dir } = JSON.parse(readFileSync(file, 'utf8'));
-        try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
-        rmSync(dir, { recursive: true, force: true });
+        const { pid, step, dir } = JSON.parse(readFileSync(file, 'utf8'));
+        for (const left of [pid, step].filter(Boolean)) {
+          try { process.kill(left, 'SIGKILL'); } catch { /* gone */ }
+        }
+        if (dir) rmSync(dir, { recursive: true, force: true });
       }
       rmSync(home, { recursive: true, force: true });
     });
@@ -351,9 +358,28 @@ it('hangs', () => {
     const { code, out } = repo.replay('tests/hangs.test.js', { GATE_REPLAY_RUN_TIMEOUT_MS: '3000', REPLAY_PROBE: probe });
     assert.equal(code, 2, out);
     assert.match(out, /did not finish in 3 s/);
-    const { pid, dir } = JSON.parse(readFileSync(probe, 'utf8'));
+    const { pid, step, dir } = JSON.parse(readFileSync(probe, 'utf8'));
     assert.ok(await gone(pid), 'the test file\'s process is still running');
+    assert.ok(await gone(step), 'the step it started in a group of its own is still running');
     assert.equal(existsSync(dir), false, `${dir} was left`);
+  });
+
+  // What a finished run leaves in the runner's group goes with it.
+  it('a run that finishes leaves no process it started behind', async (t) => {
+    const repo = fixtureRepo(t);
+    repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/leaves.test.js': `${HEADER}import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+it('leaves a process', () => {
+  const left = spawn('sleep', ['120'], { stdio: 'ignore' });
+  left.unref();
+  writeFileSync(process.env.REPLAY_PROBE, JSON.stringify({ pid: left.pid }));
+  assert.equal(require('../src.cjs'), 2);
+});
+` });
+    const probe = probed(t);
+    const { out } = repo.replay('tests/leaves.test.js', { REPLAY_PROBE: probe });
+    assert.match(out, /DISCRIMINATIVE/);
+    assert.ok(await gone(JSON.parse(readFileSync(probe, 'utf8')).pid), 'a process the run started is still running');
   });
 
   it('a replay stopped by a signal stops its run and removes its worktree', async (t) => {
@@ -367,13 +393,15 @@ it('hangs', () => {
     assert.ok(existsSync(probe), 'premise: the test started');
     child.kill('SIGTERM');
     assert.deepEqual(await exited, { code: 143, signal: null });
-    const { pid, dir } = JSON.parse(readFileSync(probe, 'utf8'));
+    const { pid, step, dir } = JSON.parse(readFileSync(probe, 'utf8'));
     assert.ok(await gone(pid), 'the test file\'s process is still running');
+    assert.ok(await gone(step), 'the step it started in a group of its own is still running');
     assert.equal(existsSync(dir), false, `${dir} was left`);
     assert.equal(repo.worktrees().length, 1, `a worktree was left: ${repo.worktrees().join(', ')}`);
   });
 
-  for (const value of ['-1', '0', '1.5', 'thirty']) {
+  // 2147483648 ms is past what a timer holds: Node fired it at once.
+  for (const value of ['-1', '0', '1.5', 'thirty', '2147483648']) {
     it(`refuses a run bound of ${value}`, (t) => {
       const repo = fixtureRepo(t);
       repo.commit({ 'src.cjs': 'module.exports = 2;\n', 'tests/a.test.js': `${HEADER}it('a', () => { assert.equal(require('../src.cjs'), 2); });\n` });
