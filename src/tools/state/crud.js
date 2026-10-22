@@ -13,6 +13,7 @@ import {
   validateState,
   validateStateUpdate,
   validateTransition,
+  workflowTransitionErrors,
   createInitialState,
   detectCycles,
   handWrittenResearchBlocked,
@@ -539,6 +540,13 @@ export async function update({ updates, basePath = process.cwd(), expectedVersio
     let validation = needsFullValidation
       ? validateState(merged)
       : validateStateUpdate(state, updates);
+    // validateState judges the state these produce and cannot see where the
+    // workflow came from, so the transition table is asked here: with phases
+    // in the call, any move it refuses used to be written.
+    if (needsFullValidation && 'workflow_mode' in updates) {
+      const refused = workflowTransitionErrors(state, updates.workflow_mode);
+      if (refused.length > 0) validation = { valid: false, errors: [...refused, ...validation.errors] };
+    }
     // The fast path checks the fields it was taught to, and each one it was
     // not taught let state-update write a state the full validator refuses,
     // after which every full validation of it failed: research entries,
