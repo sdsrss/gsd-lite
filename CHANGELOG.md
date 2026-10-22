@@ -23,13 +23,17 @@ under **Now refused** at the end.
   removes the old `settings.json` entry. The daily update runs this
   installer, so the registration happens on its own once 0.19.0 is installed;
   start a new session afterwards. `claude mcp list` then shows `gsd`.
-- **Not on its own if `~/.claude` (or `CLAUDE_CONFIG_DIR`) is a symlink, or
-  the gsd plugin is installed at project or local scope.** The update check of
-  0.18.0 and earlier takes the npx install for a plugin install in both cases,
-  so it never installs an update and says to run `claude plugin update`: run
-  `npx gsd-lite@latest install` once. From 0.19.0 the check compares real
-  paths, and counts only a plugin installed for every project (user scope, or
-  a record from before Claude Code had scopes).
+- **Not on its own if the path to `~/.claude/hooks` (or
+  `$CLAUDE_CONFIG_DIR/hooks`) goes through a symlink anywhere, or the gsd
+  plugin is installed at project or local scope.** A symlinked home directory
+  or parent of it, `~/.claude`, or the hooks directory alone all count. The
+  update check of 0.18.0 and earlier takes the npx install for a plugin
+  install in these cases, so it never installs an update and says to run
+  `claude plugin update`: run `npx gsd-lite@latest install` once. From 0.19.0
+  the check compares the real path of its own directory with the config's
+  hooks directory, and counts only a plugin installed for every project (user
+  scope, managed scope for one installed by policy, or a record from before
+  Claude Code had scopes).
 - **`claude` has to be on the PATH the installer runs with.** For a manual
   `npx gsd-lite install` that is your shell; for the update, the environment
   Claude Code was started from. When `claude` is not found, or `claude mcp add`
@@ -42,9 +46,14 @@ under **Now refused** at the end.
   notices go; the line asks Claude to tell you). A registration already in
   place is recognised without calling `claude`, so later updates do not need
   it. A user-scope server already named `gsd` that starts something else is
-  left as it is and reported the same way. The registration is read where the
-  CLI writes it: `.claude.json`, or the legacy `<config dir>/.config.json` when
-  that file is not empty.
+  left as it is and reported the same way, and so is a Claude Code config the
+  installer cannot read or parse: whose registration is in it is unknown, and
+  `claude mcp add` resets such a file (one it cannot read, it overwrites with
+  only the new server). While the config stays unreadable, only a failure the
+  install recorded is reported at session start. The registration is read
+  where the CLI writes it: `.claude.json` (`.claude-custom-oauth.json` while
+  `CLAUDE_CODE_CUSTOM_OAUTH_URL` is set), or the legacy
+  `<config dir>/.config.json` when that file is not empty.
 - **With both the plugin and the npx install:** nothing changes for the tools;
   the plugin serves them. `npx gsd-lite install` registers no MCP server there
   and removes one an earlier npx install registered, so each tool is listed
@@ -55,10 +64,14 @@ under **Now refused** at the end.
   there were no plugin, its commands and MCP registration included; 0.18.0
   skipped them for any plugin record, leaving every other project without
   them. In the plugin's own project each command and tool is then listed twice.
+  The npx server's `health` no longer compares its version with the plugin's
+  record, which warned about a restart whenever the two differed.
 - `npx gsd-lite uninstall` removes the registration with `claude mcp remove`,
   and only this install's: a `gsd` server starting something else stays, and
   a config it cannot read is reported (exit 1). `--dry-run` says what the
-  registration would do and exits 1 where the install would.
+  registration would do as far as the config file tells, and exits 1 where
+  that already says the install would fail; whether `claude` is on PATH and
+  whether `claude mcp add` succeeds it cannot tell without running them.
 
 **Scripts started through a symlinked path run.** The MCP server, `install.js`
 and `uninstall.js` ran only when `process.argv[1]` equalled their module URL

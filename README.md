@@ -177,12 +177,16 @@ installer runs with. When it is not, or the command fails, everything else is
 installed, the installer prints the command to run yourself and exits 1
 (the background update's install exits 0 instead). While the registration is
 missing, for that or any other reason, every session start puts a line saying
-so, with the command, in Claude's context and asks Claude to tell you.
+so, with the command, in Claude's context and asks Claude to tell you. A
+Claude Code config the installer cannot read or parse is left alone, and the
+install fails saying so; while it stays that way, only a failure the install
+recorded is reported.
 `claude mcp list` shows `gsd` once it is registered. A user-scope server
 already named `gsd` that starts something else is left as it is, and the
 installer says so. Restart Claude Code after installing.
 
-With the plugin installed as well (for every project, at user scope), the
+With the plugin installed as well (for every project: at user scope, or by
+policy at managed scope), the
 installer registers no MCP server and removes the one an earlier install
 registered, since the plugin serves it. Installed the plugin after an npx
 install? Run `npx gsd-lite install` once more (or `claude mcp remove gsd -s
@@ -190,9 +194,11 @@ user`), or every gsd tool is listed twice. A plugin installed at project or
 local scope serves that project only, so the installer then installs as if
 there were none.
 
-If `~/.claude` is a symlink, or the plugin is installed at project or local
-scope, the update check of 0.18.0 and earlier never updates an npx install:
-run `npx gsd-lite@latest install` once.
+If the path to `~/.claude/hooks` goes through a symlink anywhere (your home
+directory or a parent of it, `~/.claude`, or the hooks directory itself), or
+the plugin is installed at project or local scope, the update check of 0.18.0
+and earlier never updates an npx install: run `npx gsd-lite@latest install`
+once.
 
 Uninstall: `node cli.js uninstall` or `npx gsd-lite uninstall`. It removes
 the MCP registration too, with `claude mcp remove`.
