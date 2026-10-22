@@ -2,7 +2,107 @@
 
 All notable changes to this project are documented here.
 
-## [0.18.0] - 2026-10-21
+## [0.19.0] - 2026-10-22
+
+Minor, not patch: `npx gsd-lite install` now registers its MCP server where
+Claude Code reads it, which changes what the installer writes and when it
+exits non-zero. Calls that used to be accepted and are now refused are listed
+under **Now refused** at the end.
+
+**Do I have to do anything?**
+
+- **With the npx install, and no plugin: the gsd tools arrive with this
+  update.** Every earlier release registered the MCP server only under
+  `mcpServers` in `~/.claude/settings.json`, and Claude Code does not read MCP
+  servers from there (its settings documentation: `settings.json` carries no
+  MCP server definitions). So an npx-only install had its hooks and StatusLine
+  and no gsd tools: 0.18.0's **Known issue**, present since the npx install
+  existed. The installer now registers the server with Claude Code's own CLI,
+  at user scope: `claude mcp add -s user gsd -- node ~/.claude/gsd/src/server.js`
+  (under `CLAUDE_CONFIG_DIR`, that directory's `gsd/src/server.js`), and
+  removes the old `settings.json` entry. The daily update runs this
+  installer, so the registration happens on its own once 0.19.0 is installed;
+  start a new session afterwards. `claude mcp list` then shows `gsd`.
+- **`claude` has to be on the PATH the installer runs with.** For a manual
+  `npx gsd-lite install` that is your shell; for the update, the environment
+  Claude Code was started from. When `claude` is not found, or `claude mcp add`
+  fails, the installer installs everything else, prints the command to run
+  yourself, says the gsd tools are not available yet, and exits 1; the update
+  reports it as a failed install with that reason. A registration already in
+  place is recognised without calling `claude`, so later updates do not need
+  it. A user-scope server already named `gsd` that starts something else is
+  left as it is and reported, also with exit 1.
+- **With both the plugin and the npx install:** nothing changes for the tools;
+  the plugin serves them. `npx gsd-lite install` registers no MCP server there
+  and removes one an earlier npx install registered, so each tool is listed
+  once. If you installed the plugin after an npx install of 0.19.0, run
+  `npx gsd-lite install` once more (or `claude mcp remove gsd -s user`), or
+  every gsd tool is listed twice.
+- `npx gsd-lite uninstall` removes the registration with `claude mcp remove`,
+  and only this install's: a `gsd` server starting something else stays.
+
+**Scripts started through a symlinked path run.** The MCP server, `install.js`
+and `uninstall.js` ran only when `process.argv[1]` equalled their module URL
+as a string, and Node resolves the started script through symlinks while
+leaving `argv[1]` as given. Started through a symlinked path, each did nothing
+and exited 0: the MCP server under a symlinked `~/.claude` closed the
+connection at once (`claude mcp list`: Failed to connect), and `uninstall.js`
+removed nothing. The update extracts a release under the system temp directory
+and runs its `install.js` from there; reproduced with a symlinked `TMPDIR`, it
+reported an install and installed nothing. On macOS the temp directory is
+under `/var`, a symlink to `/private/var`, so this is how npx installs there
+would fail to update; not run on macOS. All three compare real paths now.
+
+**A research refresh drops the review it would make stale, wherever the review
+sits.** A refresh that sends tasks back for revalidation drops the review in
+progress, since what it reviewed may have to be redone. That held only when
+the refresh hold sat directly on the review, or a pause sat on that hold. A
+refresh stored in the review itself, under a pause or a `/clear` over the
+review, under a refresh hold over a pause, or under a hold whose record an
+older version's write had dropped, kept the review, and once released it ran
+over the tasks the refresh had just sent back. The review is now dropped in
+all of them; the workflow goes to execution when you get back to it. A
+decision held at a stage (an L3 confirmation, exhausted review retries) is
+not a review and stays.
+
+**Docs.** The README and `commands/doctor.md` describe the registration, what
+to do when it fails, and that an npx install from before 0.19.0 has no gsd
+tools until it is reinstalled. The state diagram states the refresh rule
+above.
+
+**Internal:** the test suite puts a stand-in `claude` first on PATH, so no test
+reaches a developer's own CLI or `~/.claude.json`; one test holds the stand-in
+against the real CLI where one is installed, and has Claude Code start the
+installed server (`claude mcp list` → Connected). `scripts/gate-replay.js`
+reads a suite's failing `after()`, a describe that threw, a suite timeout, a
+todo suite and a test still pending when the event loop ran dry (how Node 20
+and 22 report a hang) as what each is. The gate on `state.json` writes
+catches an alias of the path, a rename onto it and a path built inline. The
+e2e install tests run a registry step once more when it runs out its budget
+(single requests through a proxy stall), and say so; no assertion changed.
+The 0.18.0 heading's date said 2026-10-21; it was tagged on 2026-10-22.
+
+On Windows, where `claude` may be `claude.cmd`, the installer starts it
+through the shell; this path has not been run on Windows.
+
+To go back: `npx gsd-lite@0.18.0 install`, with `PLUGIN_AUTO_UPDATE=1` in the
+environment Claude Code is started from to stop the daily update installing
+0.19.0 again. 0.18.0 leaves the user-scope registration in place and its
+server keeps working there (not through a symlinked path); 0.18.0's uninstall
+does not remove it, so after uninstalling run `claude mcp remove gsd -s user`.
+The state format is unchanged.
+
+- **Now refused.** Each was accepted by 0.18.0:
+  - `state-update` carrying `phases` together with a `workflow_mode` change
+    the transition table does not allow, such as `reconcile_workspace` →
+    `planning` (`VALIDATION_FAILED`, naming the transition). The same change
+    without `phases` was already refused; with it, it was written. Releasing
+    a hold to the mode it interrupted is allowed either way.
+  - `npx gsd-lite install` exits 1 when the MCP server could not be
+    registered (see above); it exited 0 having registered it nowhere Claude
+    Code reads.
+
+## [0.18.0] - 2026-10-22
 
 Minor, not patch: a hold now goes back to what it interrupted, turning the
 gsd plugin off turns off what `npx gsd-lite install` added beside it, and a
