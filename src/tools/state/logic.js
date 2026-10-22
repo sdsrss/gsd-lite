@@ -693,7 +693,8 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // whose stack an older version's write dropped. Reading it from the stack
     // instead kept it in every shape but two. Only what this refresh sent back
     // counts, and only what the review covers: the task, or a task of the
-    // phase (the current one when it names none, as resume reads it).
+    // phase resume reviews, which is the current one whatever scope_id names
+    // (getCurrentPhase in orchestrator/helpers.js, mirrored here).
     // Dropped for a sibling, a task review never ran. And not a decision owed:
     // a stage that is not a review's, or, while awaiting_user is in force or
     // underneath, a current_review with a stage, which resume asks the user
@@ -701,7 +702,8 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
     // resume returns to.
     const reviewing = workflowModeForReview(state.current_review);
     const review = state.current_review;
-    const reviewedPhase = (state.phases || []).find((phase) => phase.id === (review?.scope_id ?? state.current_phase));
+    const reviewedPhase = (state.phases || []).find((phase) => phase.id === state.current_phase)
+      || (state.phases || []).find((phase) => phase.lifecycle === 'active');
     const reviewedSentBack = review?.scope === 'task'
       ? invalidated.includes(review.scope_id)
       : (reviewedPhase?.todo || []).some((task) => invalidated.includes(task.id));

@@ -386,7 +386,8 @@ function evidenceEntryErrors(evidence) {
  * allowed, or nothing. Every path a client's update takes asks it: this fast
  * path, and update() for the updates validateState judges (phases, appended
  * decisions, propagation), which sees only the state they produce. The
- * server's own result handlers do not (update()'s _server_write says why).
+ * server's own result handlers' writes on that second path do not
+ * (update()'s _server_write says why); theirs on this one do.
  */
 export function workflowTransitionErrors(state, to) {
   const currentMode = state.workflow_mode;

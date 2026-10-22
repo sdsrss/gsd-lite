@@ -228,6 +228,49 @@ describe('a refresh that sends tasks back drops the review in progress, whatever
     await releaseAll(dir);
   });
 
+  // Resume reviews the current phase, whatever scope_id names (getCurrentPhase).
+  // A phase review naming another phase was kept while the refresh sent back
+  // a task of the current one, and resume reviewed it over the reopened
+  // phase (final review).
+  it('a phase review counts the phase resume reviews, the current one', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await stateApi.init({ project: 'p', phases: [
+      { name: 'A', tasks: [{ index: 1, name: 'a' }] },
+      { name: 'B', tasks: [{ index: 1, name: 'cites a', research_basis: ['decision:a'] }, { index: 2, name: 'b' }] },
+    ], basePath: dir });
+    assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
+    await acceptTask(dir, 1, '1.1');
+    assert.ok((await completePhase(dir, 1)).success, 'premise: phase 1 complete');
+    await checkpointTask(dir, 2, '2.1');
+    await checkpointTask(dir, 2, '2.2');
+    await update({ updates: { phases: [{ id: 2, lifecycle: 'reviewing' }] }, basePath: dir });
+    assert.ok((await update({ updates: { workflow_mode: 'reviewing_phase', current_review: { scope: 'phase', scope_id: 1 } }, basePath: dir })).success, 'premise: a review naming phase 1');
+    assert.equal((await read({ basePath: dir })).current_phase, 2, 'premise: phase 2 is current');
+    const stored = await handleResearcherResult({ ...revised, basePath: dir });
+    assert.deepEqual(stored.invalidated_tasks, ['2.1'], JSON.stringify(stored));
+    assert.equal((await read({ basePath: dir })).current_review, null, 'the review resume would run over phase 2 is still held');
+    await releaseAll(dir);
+  });
+
+  // Only a review in progress goes: a decision held at a stage that is not a
+  // review's stays even where nothing marks awaiting_user, under a pause whose
+  // stack an older version's write dropped (final review: no test held this).
+  it('a decision held at a stage stays under a pause whose stack an older version dropped', async (t) => {
+    const dir = await reviewing(t, 'phase');
+    const decision = { scope: 'phase', scope_id: 1, stage: 'review_retry_exhausted', retry_count: 6 };
+    assert.ok((await update({ updates: { workflow_mode: 'awaiting_user', current_review: decision }, basePath: dir })).success, 'premise');
+    assert.ok((await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir })).success, 'premise: paused');
+    const statePath = join(dir, '.gsd', 'state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8'));
+    raw._version += 1; // an older version's write: _version moved, the stamp did not
+    await writeFile(statePath, JSON.stringify(raw));
+    assert.deepEqual((await read({ basePath: dir })).suspended_modes, [], 'premise: the stack was dropped on load');
+    const stored = await handleResearcherResult({ ...revised, basePath: dir });
+    assert.deepEqual(stored.invalidated_tasks, ['1.1'], JSON.stringify(stored));
+    assert.deepEqual((await read({ basePath: dir })).current_review, decision);
+  });
+
   it('a decision owed under a pause over awaiting_user stays', async (t) => {
     const dir = await reviewing(t, 'task');
     const owed = { scope: 'task', scope_id: '1.1', stage: 'quality' };
