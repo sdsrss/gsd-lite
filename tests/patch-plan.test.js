@@ -77,8 +77,8 @@ describe('patchPlan — add_task', () => {
     const state = await read({ basePath: tempDir });
     state.phases[0].lifecycle = 'accepted';
     // Write directly for test setup
-    const { writeJson } = await import('../src/utils.js');
-    await writeJson(join(tempDir, '.gsd', 'state.json'), state);
+    // By hand: the server's general writers refuse state.json (writeState only).
+    await (await import('node:fs/promises')).writeFile(join(tempDir, '.gsd', 'state.json'), JSON.stringify(state, null, 2));
 
     const result = await patchPlan({
       operations: [{ op: 'add_task', phase_id: 1, task: { name: 'Late task' } }],

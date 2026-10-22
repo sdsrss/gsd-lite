@@ -1035,8 +1035,8 @@ describe('Simulation 10: Edge cases', () => {
     // Tamper: remove phase_handoff
     const state = await read({ basePath: bp });
     delete state.phases[0].phase_handoff;
-    const { writeJson } = await import('../src/utils.js');
-    await writeJson(join(bp, '.gsd', 'state.json'), state);
+    // By hand: the server's general writers refuse state.json (writeState only).
+    await (await import('node:fs/promises')).writeFile(join(bp, '.gsd', 'state.json'), JSON.stringify(state, null, 2));
 
     const result = await phaseComplete({ phase_id: 1, basePath: bp });
     assert.ok(result.error);

@@ -90,14 +90,17 @@ describe('auto update install modes', () => {
   });
 
   // install.js prunes plugins/cache/gsd and clears .orphaned_at whenever it
-  // finds a gsd@gsd record, and the updater runs install.js only when it has
+  // finds the plugin, and the updater runs install.js only when it has
   // decided there is no plugin. The two must decide that the same way. They
   // did not: a git checkout was "dev" before the registry was read, so
   // `gsd update --force` there ran install.js against an installed plugin's
-  // cache, and a record install.js counts (an empty list) the updater did not.
+  // cache, and a record install.js counted (an empty list) the updater did
+  // not. Both ask pluginInstalledForUser now, which counts a record with a
+  // user-scope, managed-scope or unscoped entry and nothing else; an empty
+  // list is no plugin for either (tests/install-mode-detection.test.js).
   for (const [label, layout, record, dev] of [
     ['a git checkout with the plugin installed', 'plugin', [{ scope: 'user', installPath: '/x', version: '0.3.0' }], true],
-    ['a plugin record in the shape install.js counts', 'manual', [], false],
+    ['an npx install beside a user-scope plugin record', 'manual', [{ scope: 'user', installPath: '/x', version: '0.3.0' }], false],
   ]) {
     it(`treats ${label} as a plugin install`, async () => {
       const ctx = await loadAutoUpdate(layout);
