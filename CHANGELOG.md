@@ -72,17 +72,20 @@ reported an install and installed nothing. On macOS the temp directory is
 under `/var`, a symlink to `/private/var`, so this is how npx installs there
 would fail to update; not run on macOS. All three compare real paths now.
 
-**A research refresh drops the review it would make stale, wherever the review
-sits.** A refresh that sends tasks back for revalidation drops the review in
-progress, since what it reviewed may have to be redone. That held only when
-the refresh hold sat directly on the review, or a pause sat on that hold. A
-refresh stored in the review itself, under a pause or a `/clear` over the
-review, under a refresh hold over a pause, or under a hold whose record an
-older version's write had dropped, kept the review, and once released it ran
-over the tasks the refresh had just sent back. The review is now dropped in
-all of them; the workflow goes to execution when you get back to it. A
-decision held at a stage (an L3 confirmation, exhausted review retries) is
-not a review and stays.
+**A research refresh drops the review it makes stale, wherever the review
+sits, and only that one.** A refresh that sends back for revalidation what a
+review in progress was reviewing drops the review, since that has to be
+redone first. That held only when the refresh hold sat directly on the
+review, or a pause sat on that hold. A refresh stored in the review itself,
+under a pause or a `/clear` over the review, under a refresh hold over a
+pause, or under a hold whose record an older version's write had dropped,
+kept the review, and once released it ran over the tasks the refresh had just
+sent back. The review is now dropped in all of them; the workflow goes to
+execution when you get back to it. What counts is what the review covers: the
+task, or a task of the phase. A refresh that sends back only other tasks
+keeps the review (0.18.0 dropped it under a refresh hold, and a task review
+dropped that way never ran). A decision owed (an L3 confirmation, exhausted
+review retries, anything held in `awaiting_user`) is not a review and stays.
 
 **Docs.** The README and `commands/doctor.md` describe the registration, what
 to do when it fails, and that an npx install from before 0.19.0 has no gsd

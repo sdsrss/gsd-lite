@@ -686,15 +686,25 @@ export async function storeResearch({ result, artifacts, decision_index, basePat
       }
     }
 
-    // A refresh that sends tasks back drops the review in progress: what it
-    // reviewed may have to be redone. The review is current_review, wherever
-    // the workflow stands over it: in the review itself, under the refresh
-    // hold, a pause, a /clear or a stack of them, or under a hold whose stack
-    // an older version's write dropped. Reading it from the stack instead
-    // kept it in every shape but two. A decision held at a stage is not what
-    // was reviewed, and stays.
+    // A refresh that sends back what a review in progress was reviewing drops
+    // the review: that has to be redone first. The review is current_review,
+    // wherever the workflow stands over it: in the review itself, under the
+    // refresh hold, a pause, a /clear or a stack of them, or under a hold
+    // whose stack an older version's write dropped. Reading it from the stack
+    // instead kept it in every shape but two. Only what it reviewed counts:
+    // the task, or a task of the phase. Dropped for a sibling, a task review
+    // never ran. And not a decision owed: a stage that is not a review's, or
+    // anything current_review holds while awaiting_user is in force or
+    // underneath, which resume treats as the decision.
     const reviewing = workflowModeForReview(state.current_review);
-    if (invalidated.length > 0 && (reviewing === 'reviewing_task' || reviewing === 'reviewing_phase')) {
+    const review = state.current_review;
+    const sentBack = (task) => task?.lifecycle === 'needs_revalidation';
+    const reviewedSentBack = review?.scope === 'task'
+      ? sentBack((state.phases || []).flatMap((phase) => phase.todo || []).find((task) => task.id === review.scope_id))
+      : (state.phases || []).find((phase) => phase.id === review?.scope_id)?.todo?.some(sentBack) === true;
+    const decisionOwed = state.workflow_mode === 'awaiting_user' || state.suspended_modes.includes('awaiting_user');
+    if (invalidated.length > 0 && reviewedSentBack && !decisionOwed
+        && (reviewing === 'reviewing_task' || reviewing === 'reviewing_phase')) {
       state.current_review = null;
       // Its mode cannot stay without it. Holds stay: releasing one into a
       // review mode whose review is gone goes to execution (resumeTarget).
