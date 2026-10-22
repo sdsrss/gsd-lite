@@ -382,6 +382,24 @@ function evidenceEntryErrors(evidence) {
 }
 
 /**
+ * The transition whitelist: why moving `state` to workflow_mode `to` is not
+ * allowed, or nothing. Every update path asks it — this fast path, and
+ * update() for the updates validateState judges (phases, appended decisions,
+ * propagation), which sees only the state they produce.
+ */
+export function workflowTransitionErrors(state, to) {
+  const currentMode = state.workflow_mode;
+  if (!currentMode || to === currentMode) return [];
+  const allowed = WORKFLOW_TRANSITIONS[currentMode];
+  // Releasing a hold to what it interrupted is always a valid move: that mode
+  // was the workflow's a moment ago. It is how a pause returns to planning,
+  // which no table row would otherwise allow.
+  const returning = HOLD_MODES.includes(currentMode) && to === resumeTarget(state);
+  if (!allowed || returning || allowed.includes(to)) return [];
+  return [`Invalid workflow_mode transition: '${currentMode}' → '${to}' (allowed: ${allowed.join(', ') || 'none (terminal state)'})`];
+}
+
+/**
  * Incremental validation: only validate changed fields + their relationships.
  * Falls back to full validateState() for complex updates (phases).
  */
@@ -400,18 +418,7 @@ export function validateStateUpdate(state, updates) {
           errors.push(`Invalid workflow_mode: ${updates.workflow_mode} (valid: ${WORKFLOW_MODES.join(', ')})`);
           break;
         }
-        // Transition whitelist — reject unlisted transitions
-        const currentMode = state.workflow_mode;
-        if (currentMode && updates.workflow_mode !== currentMode) {
-          const allowed = WORKFLOW_TRANSITIONS[currentMode];
-          // Releasing a hold to what it interrupted is always a valid move:
-          // that mode was the workflow's a moment ago. It is how a pause
-          // returns to planning, which no table row would otherwise allow.
-          const returning = HOLD_MODES.includes(currentMode) && updates.workflow_mode === resumeTarget(state);
-          if (allowed && !returning && !allowed.includes(updates.workflow_mode)) {
-            errors.push(`Invalid workflow_mode transition: '${currentMode}' → '${updates.workflow_mode}' (allowed: ${allowed.join(', ') || 'none (terminal state)'})`);
-          }
-        }
+        errors.push(...workflowTransitionErrors(state, updates.workflow_mode));
         // Guard: 'completed' requires all phases accepted (parity with full
         // validateState). R-02: mirror BOTH completed invariants on the fast
         // path — all phases accepted AND no running task — so the incremental
