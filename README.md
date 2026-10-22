@@ -176,8 +176,9 @@ put it; the installer removes that entry). So `claude` must be on the PATH the
 installer runs with. When it is not, or the command fails, everything else is
 installed, the installer prints the command to run yourself and exits 1
 (the background update's install exits 0 instead). While the registration is
-missing, for that or any other reason, every session start puts a line saying
-so, with the command, in Claude's context and asks Claude to tell you. A
+missing, for that or any other reason, each new session (and each `/clear`
+or compaction; not one resumed with `--resume` or `--continue`) puts a line
+saying so, with the command, in Claude's context and asks Claude to tell you. A
 Claude Code config the installer cannot read or parse is left alone, and the
 install fails saying so; while it stays that way, only a failure the install
 recorded is reported.
@@ -189,8 +190,10 @@ With the plugin installed as well (for every project: at user scope, or by
 policy at managed scope), the
 installer registers no MCP server and removes the one an earlier install
 registered, since the plugin serves it. Installed the plugin after an npx
-install? Run `npx gsd-lite install` once more (or `claude mcp remove gsd -s
-user`), or every gsd tool is listed twice. A plugin installed at project or
+install? Run `npx gsd-lite install` once more, or every gsd tool is listed
+twice (removing the registration by hand instead leaves the install marked as
+an npx install, whose session check then reports it missing wherever the npx
+hooks still run beside the plugin). A plugin installed at project or
 local scope serves that project only, so the installer then installs as if
 there were none.
 

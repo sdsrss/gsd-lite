@@ -944,7 +944,7 @@ describe('a state an older version wrote since', () => {
   const RUNS_COMMANDS = ['utils.js', 'tools/verify.js'];
   function writeReach(source, { file = 'tools/state/crud.js', mayLoad = false } = {}) {
     const why = [];
-    for (const [, , spec] of source.matchAll(/^\s*(?:import|export)\s+[\w$*\s{},]*?\bfrom\s*(['"])([^'"]+)\1/gm)) {
+    for (const [, , spec] of source.matchAll(/^\s*(?:import|export)\s+(?:[\w$*\s{},]*?\bfrom\s*)?(['"])([^'"]+)\1/gm)) {
       if (spec.startsWith('.')) {
         if (!resolve(dirname(join(SRC, file)), spec).startsWith(SRC + sep)) why.push(`imports ${spec}, outside src/`);
       } else if (spec === 'node:child_process' ? !RUNS_COMMANDS.includes(file) : spec === 'node:module' ? !mayLoad : !BUILTINS.has(spec) && !spec.startsWith('@modelcontextprotocol/sdk/')) {
@@ -981,6 +981,7 @@ describe('a state an older version wrote since', () => {
       "const fs = process.getBuiltinModule('node:fs');",
       "import { createRequire } from 'node:module';\nconst load = createRequire(import.meta.url);",
       "import atomicWrite from '../../../hooks/lib/atomic-write.cjs';",
+      "import '../../../hooks/lib/atomic-write.cjs';",
       "import { execFileSync } from 'node:child_process';",
       "import { Worker } from 'node:worker_threads';",
       "import { readFile } from 'node:fs/promises';\nawait readFile(path, { flag: 'w' });",

@@ -40,10 +40,12 @@ under **Now refused** at the end.
   fails, the installer installs everything else, prints the command to run
   yourself, says the gsd tools are not available yet, and exits 1. Run by the
   update it exits 0, since the new version is in place and the update would
-  otherwise report it as still on the old one. Either way, every session start
-  checks the registration while it is missing, whatever removed it, and puts
-  the reason and the command in Claude's context (where gsd's session-start
-  notices go; the line asks Claude to tell you). A registration already in
+  otherwise report it as still on the old one. Either way, each new session
+  (and each `/clear` or compaction; not one resumed with `--resume` or
+  `--continue`) checks the registration while it is missing, whatever
+  removed it, and puts the reason and the command in Claude's context (where
+  gsd's session-start notices go; the line asks Claude to tell you). A
+  registration already in
   place is recognised without calling `claude`, so later updates do not need
   it. A user-scope server already named `gsd` that starts something else is
   left as it is and reported the same way, and so is a Claude Code config the
@@ -53,26 +55,32 @@ under **Now refused** at the end.
   install recorded is reported at session start. The registration is read
   where the CLI writes it: `.claude.json` (`.claude-custom-oauth.json` while
   `CLAUDE_CODE_CUSTOM_OAUTH_URL` is set), or the legacy
-  `<config dir>/.config.json` when that file is not empty.
+  `<config dir>/.config.json` when that file is not empty (or is empty,
+  writable and alone, which the CLI then reports as corrupted).
 - **With both the plugin and the npx install:** nothing changes for the tools;
   the plugin serves them. `npx gsd-lite install` registers no MCP server there
   and removes one an earlier npx install registered, so each tool is listed
-  once. If you installed the plugin after an npx install of 0.19.0, run
-  `npx gsd-lite install` once more (or `claude mcp remove gsd -s user`), or
-  every gsd tool is listed twice. A plugin installed at project or local scope
-  serves only that project, so beside one the npx install now installs as if
-  there were no plugin, its commands and MCP registration included; 0.18.0
-  skipped them for any plugin record, leaving every other project without
-  them. In the plugin's own project each command and tool is then listed twice.
-  The npx server's `health` no longer compares its version with the plugin's
-  record, which warned about a restart whenever the two differed. Beside a
-  plugin installed by policy (`managed` scope), the npx install's hooks run
-  as well as the plugin's, as in 0.18.0: a policy enables the plugin in
-  managed settings, which those hooks cannot read, so they do not stand
-  down; `/gsd:doctor` says so.
+  once. If you installed the plugin after an npx install of 0.19.0, run `npx
+  gsd-lite install` once more, or every gsd tool is listed twice. Removing the
+  registration by hand (`claude mcp remove gsd -s user`) leaves the install
+  marked as an npx install, and its session check then reports the
+  registration as missing wherever the npx hooks still run beside the plugin
+  (a plugin at managed scope, for one); the reinstall does not. A plugin
+  installed at project or local scope serves only that project, so beside one
+  the npx install now installs as if there were no plugin, its commands and
+  MCP registration included; 0.18.0 skipped them for any plugin record,
+  leaving every other project without them. In the plugin's own project each
+  command and tool is then listed twice. The npx server's `health` no longer
+  compares its version with the plugin's record, which warned about a restart
+  whenever the two differed. Beside a plugin installed by policy (`managed`
+  scope), the npx install's hooks run as well as the plugin's, as in 0.18.0: a
+  policy enables the plugin in managed settings, which those hooks cannot
+  read, so they do not stand down; `/gsd:doctor` says so.
 - `npx gsd-lite uninstall` removes the registration with `claude mcp remove`,
   and only this install's: a `gsd` server starting something else stays, and
-  a config it cannot read is reported (exit 1). `--dry-run` says what the
+  a config it cannot read is reported (exit 1), as is a registration of this
+  install's that could not be removed (`claude` not on PATH, or `claude mcp
+  remove` failed: exit 1, with the command to run). `--dry-run` says what the
   registration would do as far as the config file tells, and exits 1 where
   that already says the install would fail; whether `claude` is on PATH and
   whether `claude mcp add` succeeds it cannot tell without running them.
@@ -115,26 +123,30 @@ above.
 refuses any config outside the temp directory, so a test cannot reach a
 developer's own CLI or `~/.claude.json` (on Linux and macOS; CI runs Linux).
 One test holds the stand-in against the real CLI where one is installed, in
-both config layouts, and has Claude Code start the installed server
-(`claude mcp list` → Connected). `scripts/gate-replay.js`
+each config layout it writes (`.claude.json`, the legacy `.config.json`, the
+custom-OAuth name, a directory named in NFD), and has Claude Code start the
+installed server (`claude mcp list` → Connected). `scripts/gate-replay.js`
 reads a suite's failing `after()`, a describe that threw, a suite timeout and
 a todo suite as what each is, says when Node 20 or 22 reported a hang as tests
 still pending when the event loop ran dry (which does not say which test hung,
 so those tests give no verdict), and stops a replay that has not finished in
-30 minutes (`GATE_REPLAY_RUN_TIMEOUT_MS`) with every process it started; one
-stopped by a signal stops its run too, and either way its worktree and what
-its tests left in the temp directory are removed. The server's general file writers refuse `state.json`, which
-only `writeState` writes (it records the writing version, which is how a state
-an older version wrote since is recognised). Only `src/utils.js` writes
-files: every other module imports from the fs modules only functions that
-cannot write a file's content, by name, and loads no module at run time; a
-test holds that, and holds itself against each import shape that can write.
-This replaces gates that listed the shapes of writers going around
-`writeState` and kept missing one more. The
-e2e install tests run a registry step once more when it runs out its budget
-(single requests through a proxy stall), and say so, and a step ends with its
-shell, taking what the shell left running; no assertion changed.
-The 0.18.0 heading's date said 2026-10-21; it was tagged on 2026-10-22.
+30 minutes (`GATE_REPLAY_RUN_TIMEOUT_MS`) with the processes under it (a
+detached one whose parent had already exited is not reached); one stopped by a
+signal stops its run too, and either way its worktree and what its tests left
+in the temp directory are removed. The server's general file writers refuse
+`state.json`, which only `writeState` writes (it records the writing version,
+which is how a state an older version wrote since is recognised). Only
+`src/utils.js` writes files: every other module imports from the fs modules
+only functions that cannot write a file's content, by name, imports nothing
+from outside `src/` but listed builtins and the MCP SDK, and loads no module
+at run time (`src/server.js`, which loads the hooks' plugin registry,
+excepted); a test holds that, and holds itself against each import shape the
+reviews found. This replaces gates that listed the shapes of writers going
+around `writeState` and kept missing one more. The e2e install tests run a
+registry step once more when it runs out its budget (single requests through a
+proxy stall), and say so, and a step ends with its shell, taking what the
+shell left running; no assertion changed. The 0.18.0 heading's date said
+2026-10-21; it was tagged on 2026-10-22.
 
 On Windows, where `claude` may be `claude.cmd`, the installer starts it
 through the shell; this path has not been run on Windows.
