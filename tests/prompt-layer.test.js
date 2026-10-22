@@ -300,7 +300,9 @@ describe('prompt layer — agents', () => {
     }
     // The researcher has two dispatch paths, and a description naming one of
     // them under-describes when it runs.
-    assert.match(read('src/tools/orchestrator/resume.js'), /action: 'dispatch_researcher'/, 'premise: resume no longer re-dispatches the researcher');
+    // Resume dispatches it through preflight (helpers.js), which runs in the
+    // refresh hold too.
+    assert.match(read('src/tools/orchestrator/helpers.js'), /action: 'dispatch_researcher'/, 'premise: resume no longer dispatches the researcher');
     assert.match(frontmatterDescription(read('agents/researcher.md')), /before planning or when stored research expires/,
       'researcher description names only the planning dispatch, not the refresh one');
   });

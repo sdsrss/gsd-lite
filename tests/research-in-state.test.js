@@ -648,22 +648,25 @@ describe('a refresh replaces the decision index', () => {
   });
 
   it('hands the researcher the decisions on record, so it can keep their ids', async () => {
-    // Both paths that dispatch it: preflight finding the research expired, and
-    // a project already held for a refresh whose research no longer reads as
-    // expired (resume's research_refresh_needed case).
+    // Both modes it is dispatched from, both by preflight finding the research
+    // expired: execution, and a project already held for the refresh. (The
+    // hold's own branch dispatched it too, when nothing had expired; it now
+    // releases the hold — tests/hold-return.test.js.)
     await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
     const index = { 'decision:a': { summary: 'A', source: 'docs' } };
     const onRecord = expiredResearch(index);
     await update({ updates: { research: onRecord }, basePath: dir });
     const fromPreflight = await resumeWorkflow({ basePath: dir });
-    await update({ updates: { research: { ...expiredResearch(index), expires_at: future(), decision_index: index } }, basePath: dir });
+    assert.equal((await read({ basePath: dir })).workflow_mode, 'research_refresh_needed', 'premise: held for the refresh');
+    const changed = { 'decision:a': { ...onRecord.decision_index['decision:a'], summary: 'A, revised' } };
+    await update({ updates: { research: { ...onRecord, decision_index: changed } }, basePath: dir });
     const fromHold = await resumeWorkflow({ basePath: dir });
-    for (const [path, r, expected] of [['preflight', fromPreflight, onRecord.decision_index], ['hold', fromHold, index]]) {
+    for (const [path, r, expected] of [['preflight', fromPreflight, onRecord.decision_index], ['hold', fromHold, changed]]) {
       assert.equal(r.action, 'dispatch_researcher', `${path}: ${JSON.stringify(r)}`);
       assert.equal(r.workflow_mode, 'research_refresh_needed', `${path}: ${JSON.stringify(r)}`);
       assert.deepEqual(r.current_decision_index, expected, `${path}: ${JSON.stringify(r)}`);
     }
-    assert.deepEqual(fromHold.expired_research, [], 'premise: the hold path ran with nothing expired');
+    assert.deepEqual(fromHold.expired_research.map((e) => e.id).sort(), ['decision:a', 'research'], 'premise: the hold dispatched it for research that had expired');
   });
 });
 
