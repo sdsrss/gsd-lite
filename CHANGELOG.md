@@ -73,10 +73,13 @@ hold included.
   by `unblock_tasks`, go back to the interrupted mode; the refresh went where
   `current_review` pointed and the unblocks to execution, so a plan revision
   or a pause underneath was lost. A refresh that sends tasks back for
-  revalidation still drops an interrupted review. A refresh hold left with
-  nothing to refresh, because the research was given up or refreshed while
-  another hold (a pause) sat over it, is released on resume; it sent the
-  researcher again. Unblocking tasks by hand in any mode other than that
+  revalidation still drops an interrupted review, now also when it is
+  stored while another hold (a pause) sits over the refresh; 0.17.2 kept
+  that review, so a phase review could pass over a task that needed
+  revalidation and the phase complete without reviewing the redone work. A
+  refresh hold left with nothing to refresh, because the research was
+  given up or refreshed while another hold sat over it, is released on
+  resume. Unblocking tasks by hand in any mode other than that
   hold and execution changes only the tasks: it no longer unpauses a paused
   project, ends a plan revision, or releases a decision held at a stage (an
   L3 confirmation, exhausted review retries) without its answer. In
@@ -112,13 +115,14 @@ progress, to a decision still owed, or to execution.
   24.14+ / 25.4+ the check turns the proxy on itself; on earlier versions it
   goes direct, and the reason says to set `NODE_USE_ENV_PROXY=1`.
 - A resume that passes through several holds reports an unfinished research
-  write (`RESEARCH_COMMIT_PENDING`) once; it repeated the warning once per
-  hold.
-- A `state-update` of `research` holding a decision of the wrong shape is
-  refused with what is wrong with it; under `blocked: true` it was refused as
-  "a decision that is not the [BLOCKED] placeholder".
+  write (`RESEARCH_COMMIT_PENDING`) once; it added a copy for each hold it
+  released on the way.
 
-To go back: npx installs pin `gsd-lite@0.17.2`. A plugin install follows its
+To go back: an npx install runs `npx gsd-lite@0.17.2 install`, and to stay
+there sets `PLUGIN_AUTO_UPDATE=1` in the environment Claude Code is started
+from: 0.17.2's update check otherwise installs the latest release again at
+its next daily check, and that variable turns the check off. A plugin install
+follows its
 marketplace, which can be re-added pinned to the tag — remove the `gsd`
 marketplace (that uninstalls the plugin), `claude plugin marketplace add
 sdsrss/gsd-lite#v0.17.2`, then install `gsd@gsd` again. 0.17.2 reads a state
