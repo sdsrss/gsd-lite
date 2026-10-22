@@ -612,3 +612,17 @@ describe('repo gates — no npm install the package runs asks for an audit', () 
     assert.deepEqual(commands.filter((c) => !c.includes('--no-audit') || !c.includes('--no-fund')), []);
   });
 });
+
+// pull_request.base.sha is not refreshed when a PR's branch is pushed again.
+// After another PR merged, 0.17.2's release PR replayed against the older base
+// and so replayed the merged PR's test files, which were VACUOUS there, and
+// the job went red on work that was not the PR's. The merge commit the
+// checkout produces has the current base as its first parent.
+describe('repo gates — the PR replay compares against the base its merge commit was made on', () => {
+  it('ci.yml takes a pull_request base from the merge commit, not the event payload', () => {
+    const ci = readWorkflow('ci.yml');
+    assert.match(ci, /bash scripts\/gate-replay-changed\.sh "\$BASE" HEAD/, 'premise: the replay step is there');
+    assert.doesNotMatch(ci, /pull_request\.base\.sha/);
+    assert.match(ci, /if \[ "\$EVENT" = pull_request \]; then BASE=HEAD\^1; else BASE="\$BEFORE"; fi/);
+  });
+});
