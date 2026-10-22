@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { cpSync, existsSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -163,10 +163,14 @@ describe('session-init Phase 0 — orphan self-cleanup', () => {
       assert.equal(existsSync(join(claudeDir, 'hooks', 'gsd-session-init.cjs')), false);
       assert.equal(existsSync(join(claudeDir, 'hooks', 'gsd-session-stop.cjs')), false);
       assert.equal(existsSync(join(claudeDir, 'hooks', 'gsd-auto-update.cjs')), false);
-      // Lib files gone
-      assert.equal(existsSync(join(claudeDir, 'hooks', 'lib', 'gsd-finder.cjs')), false);
-      assert.equal(existsSync(join(claudeDir, 'hooks', 'lib', 'statusline-composite.cjs')), false);
-      assert.equal(existsSync(join(claudeDir, 'hooks', 'lib', 'semver-sort.cjs')), false);
+      // Lib files gone: every one the install copies, read from the package
+      // rather than listed here, so a lib added later is checked too. The
+      // session-init and uninstall.js keep their own lists of these names.
+      const libs = readdirSync(LIB_DIR).filter((name) => name.endsWith('.cjs'));
+      assert.ok(libs.includes('mcp-registration.cjs'), 'premise: the package\'s hooks/lib was read');
+      for (const lib of libs) {
+        assert.equal(existsSync(join(claudeDir, 'hooks', 'lib', lib)), false, `hooks/lib/${lib} is still there`);
+      }
       // Runtime gone
       assert.equal(existsSync(join(claudeDir, 'gsd')), false);
       // known_marketplaces.json scrubbed
