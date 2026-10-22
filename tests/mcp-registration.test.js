@@ -16,7 +16,6 @@ import { fileURLToPath } from 'node:url';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE_CLAUDE_DIR = join(PROJECT_ROOT, 'tests', 'fake-claude');
-const { userConfigPath } = createRequire(import.meta.url)('../hooks/lib/mcp-registration.cjs');
 
 async function claudeHome(t, prefix = 'gsd-mcp-reg-') {
   const home = await mkdtemp(join(tmpdir(), prefix));
@@ -276,6 +275,9 @@ describe('npx/manual install: MCP server registration', { timeout: 180000 }, () 
   // file only. On a filesystem that keeps names as written (Linux), a
   // directory named in NFD then has no legacy file the CLI can see.
   it('reads the legacy file under the NFC spelling of the config directory, as the CLI does', { skip: process.platform !== 'linux' && 'needs a filesystem that keeps NFD names apart' }, async (t) => {
+    // Required here, not at the top: the file then still loads on a tree
+    // without the helper, and a replay against it judges the other tests.
+    const { userConfigPath } = createRequire(import.meta.url)('../hooks/lib/mcp-registration.cjs');
     const home = await mkdtemp(join(tmpdir(), 'gsd-mcp-nfd-'));
     t.after(() => rm(home, { recursive: true, force: true }));
     const claudeDir = join(home, 'cafe\u0301');
