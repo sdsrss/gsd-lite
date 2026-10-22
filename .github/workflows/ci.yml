@@ -119,10 +119,18 @@ jobs:
         # ordinary work, and a check that fires on ordinary work is one people
         # learn to click through. Verified capable of failing by replaying
         # 71271dd — the vacuous gate named above — which exits 1 here.
+        #
+        # push: the branch tip before this push (all-zeros when the push
+        # created the ref — the script says so and stops).
+        # pull_request: `HEAD` is the merge commit GitHub made of this PR and
+        # the base branch as it was at this push, so its first parent is that
+        # base and the diff is exactly this PR's changes. Not
+        # pull_request.base.sha: that is not refreshed when the branch is pushed
+        # again, so once another PR had merged, the replay diffed against the
+        # older base and replayed that PR's test files (0.17.2's release PR).
         env:
-          # push: the branch tip before this push (all-zeros when the push
-          # created the ref — the script says so and stops).
-          # pull_request: the base branch tip. `HEAD` is the merge commit the
-          # checkout produced, so the diff is exactly this PR's test changes.
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: bash scripts/gate-replay-changed.sh "$BASE" HEAD
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then BASE=HEAD^1; else BASE="$BEFORE"; fi
+          bash scripts/gate-replay-changed.sh "$BASE" HEAD
