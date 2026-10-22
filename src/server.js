@@ -23,10 +23,13 @@ function _checkVersionDrift() {
       return `⚠️ GSD server running v${PKG_VERSION} but code on disk is v${diskVersion}. Run /mcp to restart.`;
     }
 
-    // Strategy 2: Check plugin cache registry (plugin mode)
+    // Strategy 2: Check plugin cache registry (plugin mode). Not for the npx
+    // install's copy: the plugin's record says nothing about it, and beside a
+    // plugin installed for another project it warned whenever the two
+    // versions differed.
     const claudeDir = process.env.CLAUDE_CONFIG_DIR || _path.join(_os.homedir(), '.claude');
     const pluginsFile = _path.join(claudeDir, 'plugins', 'installed_plugins.json');
-    if (_fs.existsSync(pluginsFile)) {
+    if (!isNpxRuntimeCopy(claudeDir) && _fs.existsSync(pluginsFile)) {
       const plugins = JSON.parse(_fs.readFileSync(pluginsFile, 'utf8'));
       const gsdEntry = plugins.plugins?.['gsd@gsd']?.[0];
       if (gsdEntry?.version && gsdEntry.version !== PKG_VERSION) {
@@ -49,6 +52,12 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
+/** Is this server the npx install's runtime copy, at <config>/gsd/? */
+function isNpxRuntimeCopy(claudeDir) {
+  const realish = (p) => { try { return _fs.realpathSync(p); } catch { return p; } };
+  return realish(fileURLToPath(import.meta.url)).startsWith(realish(_path.join(claudeDir, 'gsd')) + _path.sep);
+}
+
 /**
  * Is this the copy an npx install registered (`claude mcp add -s user`), with
  * gsd switched off by `/plugin disable`? That registration is out of the
@@ -63,9 +72,7 @@ const server = new Server(
  */
 function turnedOff() {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || _path.join(_os.homedir(), '.claude');
-  const realish = (p) => { try { return _fs.realpathSync(p); } catch { return p; } };
-  const here = realish(fileURLToPath(import.meta.url));
-  if (!here.startsWith(realish(_path.join(claudeDir, 'gsd')) + _path.sep)) return false;
+  if (!isNpxRuntimeCopy(claudeDir)) return false;
   try {
     const { pluginDisabled } = _require(_path.join(claudeDir, 'hooks', 'lib', 'hook-registry.cjs'));
     return pluginDisabled(claudeDir, process.env.CLAUDE_PROJECT_DIR || process.cwd()) === true;
