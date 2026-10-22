@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { WORK_MODES } from '../src/schema.js';
 import * as stateApi from '../src/tools/state/index.js';
 import { handleResearcherResult, resumeWorkflow } from '../src/tools/orchestrator/index.js';
-import { acceptTask, checkpointTask, createTempDir, read, removeTempDir, update } from './e2e-helpers.js';
+import { acceptTask, checkpointTask, completePhase, createTempDir, read, removeTempDir, update } from './e2e-helpers.js';
 
 const research = {
   result: { decision_ids: ['decision:a'], blocked: false, volatility: 'medium', expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), sources: [{ id: 's1', type: 'docs', ref: 'https://example.com/docs' }] },
@@ -25,6 +25,8 @@ const revised = { ...research, decision_index: { 'decision:a': { summary: 'A, re
 const REVIEWS = {
   task: { mode: 'reviewing_task', review: { scope: 'task', scope_id: '1.1', stage: 'quality' } },
   phase: { mode: 'reviewing_phase', review: { scope: 'phase', scope_id: 1 } },
+  // state-update takes one, and resume reviews the current phase for it.
+  'phase with no scope_id': { mode: 'reviewing_phase', review: { scope: 'phase' } },
 };
 
 // A project with research on record and a review of `scope` in progress over
@@ -37,7 +39,7 @@ async function reviewing(t, scope) {
     { index: 2, name: 'b' },
   ] }], basePath: dir });
   assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
-  if (scope === 'phase') {
+  if (scope.startsWith('phase')) {
     await acceptTask(dir, 1, '1.1');
     await acceptTask(dir, 1, '1.2');
     await update({ updates: { phases: [{ id: 1, lifecycle: 'reviewing' }] }, basePath: dir });
@@ -168,8 +170,78 @@ describe('a refresh that sends tasks back drops the review in progress, whatever
     });
   }
 
-  // In awaiting_user, current_review is the decision owed, whatever stage it
-  // carries; resume treats it so. A refresh leaves it (pre-tag review).
+  // A phase review the refresh did not reach stays: what counts is a task of
+  // the phase it reviews (delta review: nothing held a phase review of
+  // another phase).
+  it('a phase review of a phase the refresh did not reach stays', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await stateApi.init({ project: 'p', phases: [
+      { name: 'A', tasks: [{ index: 1, name: 'cites a', research_basis: ['decision:a'] }] },
+      { name: 'B', tasks: [{ index: 1, name: 'b' }] },
+    ], basePath: dir });
+    assert.equal((await handleResearcherResult({ ...research, basePath: dir })).action, 'research_stored', 'premise: research on record');
+    await acceptTask(dir, 1, '1.1');
+    const done = await completePhase(dir, 1);
+    assert.ok(done.success, `premise: phase 1 complete: ${JSON.stringify(done)}`);
+    await acceptTask(dir, 2, '2.1');
+    await update({ updates: { phases: [{ id: 2, lifecycle: 'reviewing' }] }, basePath: dir });
+    const review = { scope: 'phase', scope_id: 2 };
+    assert.ok((await update({ updates: { workflow_mode: 'reviewing_phase', current_review: review }, basePath: dir })).success, 'premise: reviewing phase 2');
+    const stored = await handleResearcherResult({ ...revised, basePath: dir });
+    assert.deepEqual(stored.invalidated_tasks, ['1.1'], JSON.stringify(stored));
+    assert.deepEqual((await read({ basePath: dir })).current_review, review);
+  });
+
+  // What this refresh sends back counts, not a task's lifecycle: a task review
+  // of a task an earlier refresh had sent back was dropped when this one sent
+  // back another task, and kept when it sent back nothing (delta review).
+  it('a task review is not dropped for a task this refresh did not send back', async (t) => {
+    const dir = await createTempDir();
+    t.after(() => removeTempDir(dir));
+    await stateApi.init({ project: 'p', phases: [{ name: 'A', tasks: [
+      { index: 1, name: 'cites a', research_basis: ['decision:a'] },
+      { index: 2, name: 'cites b', research_basis: ['decision:b'] },
+    ] }], basePath: dir });
+    const both = { ...research, result: { ...research.result, decision_ids: ['decision:a', 'decision:b'] }, decision_index: { 'decision:a': { summary: 'A', source: 'docs' }, 'decision:b': { summary: 'B', source: 'docs' } } };
+    assert.equal((await handleResearcherResult({ ...both, basePath: dir })).action, 'research_stored', 'premise: research on record');
+    await checkpointTask(dir, 1, '1.1');
+    await acceptTask(dir, 1, '1.2');
+    const aRevised = { ...both, decision_index: { ...both.decision_index, 'decision:a': { summary: 'A, revised', source: 'docs' } } };
+    assert.deepEqual((await handleResearcherResult({ ...aRevised, basePath: dir })).invalidated_tasks, ['1.1'], 'premise: 1.1 sent back');
+    const review = { scope: 'task', scope_id: '1.1', stage: 'quality' };
+    assert.ok((await update({ updates: { workflow_mode: 'reviewing_task', current_task: '1.1', current_review: review }, basePath: dir })).success, 'premise: reviewing 1.1');
+    const bRevised = { ...aRevised, decision_index: { ...aRevised.decision_index, 'decision:b': { summary: 'B, revised', source: 'docs' } } };
+    assert.deepEqual((await handleResearcherResult({ ...bRevised, basePath: dir })).invalidated_tasks, ['1.2'], 'premise: only 1.2 sent back');
+    assert.deepEqual((await read({ basePath: dir })).current_review, review);
+  });
+
+  // Under awaiting_user, resume asks the user about a current_review that
+  // carries a stage, and returns to one that does not: a phase review a
+  // blocked task interrupted. That one is a review in progress, and goes
+  // (delta review: it was kept, and resume dispatched the reviewer over a
+  // phase the refresh had reopened).
+  it('a phase review under awaiting_user, which resume returns to, is dropped', async (t) => {
+    const dir = await reviewing(t, 'phase');
+    assert.ok((await update({ updates: { workflow_mode: 'awaiting_user' }, basePath: dir })).success, 'premise: awaiting_user over the review');
+    await storeRevised(dir);
+    await releaseAll(dir);
+  });
+
+  it('a decision owed under a pause over awaiting_user stays', async (t) => {
+    const dir = await reviewing(t, 'task');
+    const owed = { scope: 'task', scope_id: '1.1', stage: 'quality' };
+    assert.ok((await update({ updates: { workflow_mode: 'awaiting_user', current_review: owed }, basePath: dir })).success, 'premise');
+    assert.ok((await update({ updates: { workflow_mode: 'paused_by_user' }, basePath: dir })).success, 'premise: paused');
+    assert.ok((await read({ basePath: dir })).suspended_modes.includes('awaiting_user'), 'premise: awaiting_user underneath');
+    await handleResearcherResult({ ...revised, basePath: dir });
+    const after = await read({ basePath: dir });
+    assert.equal(after.workflow_mode, 'paused_by_user');
+    assert.deepEqual(after.current_review, owed);
+  });
+
+  // In awaiting_user, a current_review with a stage is the decision owed;
+  // resume treats it so. A refresh leaves it (pre-tag review).
   it('a decision owed in awaiting_user stays whatever stage it carries', async (t) => {
     const dir = await reviewing(t, 'task');
     const owed = { scope: 'task', scope_id: '1.1', stage: 'quality' };

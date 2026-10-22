@@ -94,11 +94,13 @@ under a pause or a `/clear` over the review, under a refresh hold over a
 pause, or under a hold whose record an older version's write had dropped,
 kept the review, and once released it ran over the tasks the refresh had just
 sent back. The review is now dropped in all of them; the workflow goes to
-execution when you get back to it. What counts is what the review covers: the
-task, or a task of the phase. A refresh that sends back only other tasks
-keeps the review (0.18.0 dropped it under a refresh hold, and a task review
-dropped that way never ran). A decision owed (an L3 confirmation, exhausted
-review retries, anything held in `awaiting_user`) is not a review and stays.
+execution when you get back to it. What counts is what this refresh sends
+back and the review covers: the task, or a task of the phase. A refresh that
+sends back only other tasks keeps the review (0.18.0 dropped it under a
+refresh hold, and a task review dropped that way never ran). A decision owed
+(an L3 confirmation, exhausted review retries, a review stage held in
+`awaiting_user`, which resume asks you about) is not a review and stays; a
+phase review that a blocked task interrupted is one, and goes.
 
 **Docs.** The README and `commands/doctor.md` describe the registration, what
 to do when it fails, and that an npx install from before 0.19.0 has no gsd
@@ -141,7 +143,9 @@ The state format is unchanged.
     without `phases` was already refused; with it, it was written. Releasing
     a hold to the mode it interrupted is allowed either way. The server's own
     handling of agent results is not held to the table, as before: a result
-    that arrives after a hold was entered is still recorded.
+    that arrives after a hold was entered is still recorded, and the workflow
+    moves on as the result calls for, which ends the hold (a pause included),
+    as in 0.18.0.
   - `npx gsd-lite install` run by hand exits 1 when the MCP server could not
     be registered (see above); it exited 0 having registered it nowhere
     Claude Code reads.
