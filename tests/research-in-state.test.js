@@ -385,6 +385,25 @@ describe('a store lands whole or changes nothing', () => {
       assert.match(res.message, /decision_index must be an object/);
     });
 
+    // The same for one decision of the wrong shape, which the flag check read
+    // as "a decision that is not the [BLOCKED] placeholder" (delta review of
+    // the pre-ship repairs).
+    for (const [label, entry, named] of [
+      ['a string', 'x', /decision_index\.decision:x must be an object/],
+      ['null', null, /decision_index\.decision:x must be an object/],
+      ['one with a numeric summary', { summary: 5, source: 'docs' }, /decision_index\.decision:x\.summary must be a non-empty string/],
+    ]) {
+      it(`leaves a decision that is ${label} to validation, which names it`, async () => {
+        await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
+        await handleResearcherResult({ ...payload(REAL), basePath: dir });
+        const { research } = await read({ basePath: dir });
+        const res = await update({ updates: { research: { ...research, decision_index: { 'decision:x': entry }, blocked: true } }, basePath: dir });
+        assert.equal(res.code, 'VALIDATION_FAILED', JSON.stringify(res));
+        assert.match(res.message, named);
+        assert.doesNotMatch(res.message, /placeholder/);
+      });
+    }
+
     it('says a record with no decisions holds none', async () => {
       await init({ project: 'p', phases: [{ name: 'A', tasks: [{ index: 1, name: 'a' }] }], basePath: dir });
       await handleResearcherResult({ ...payload(REAL), basePath: dir });
