@@ -4,12 +4,28 @@ All notable changes to this project are documented here.
 
 ## [0.19.1] - 2026-11-01
 
-Patch: `npx gsd-lite update` installs updates into an npx install, the
-dependency overrides move onto versions without known advisories, and
-releases reach npm through npm trusted publishing. A plugin install updates
-as usual (`claude plugin update gsd@gsd`). If gsd-lite is also installed
-globally, or in the project you run the command from, `npx gsd-lite update`
-runs that copy; update it first.
+Patch: updates install again, `npx gsd-lite update` installs into an npx
+install, the dependency overrides move onto patched versions, and releases
+reach npm through npm trusted publishing.
+
+**Do I have to do anything?**
+
+- **npx install: run `npx gsd-lite update --force` once** (or
+  `npx gsd-lite@latest install`). The updater already on your machine cannot
+  download this release (first item below), and after a recent attempt a
+  plain `update` is throttled; `--force` checks now.
+- **Plugin install:** update as usual (`/plugin` → Installed → gsd → Update
+  now, or `claude plugin update gsd@gsd`).
+- **gsd-lite also installed globally, or in the project you run the command
+  from:** `npx gsd-lite update` runs that copy; update it first.
+
+- **Updates download again.** GitHub now answers a release download with a
+  redirect to `release-assets.githubusercontent.com`, a host the updater did
+  not accept, so it refused the redirect and no update was installed, by
+  `gsd update` or by the daily check at session start. The host is accepted
+  now. The download is still checked against the release's SHA-256 and
+  Ed25519 signature before anything is installed, and the GitHub token is
+  still not sent along with the redirect.
 
 - **`npx gsd-lite update` installs updates into an npx install.** Run from a
   package rather than from `~/.claude/hooks`, the updater took every npx
@@ -22,15 +38,15 @@ runs that copy; update it first.
   `@hono/node-server` goes to `^2.1.3` (the override held it at `^1.19.14`,
   and GHSA-rmxm-3fg6-px4f has no patched 1.x; the MCP SDK accepts 2.x), and
   the floors of `fast-uri` (`^4.2.3`), `ip-address` (`^10.7.5`) and `qs`
-  (`^6.17.1`) move onto the versions that close their advisories. The two
-  high advisories, zod (GHSA-mrhx-c7xc-m3w5) and body-parser
-  (GHSA-27r3-jxmh-p828), come through the SDK's own version ranges; an npx
-  install and every update resolve those fresh, so they get the patched
-  versions on their own. The repository's lockfile now has them too.
-  Of these, the stdio server loads zod, which validates every tool call, and
-  fast-uri, both now on patched versions; express, body-parser, hono,
-  `@hono/node-server`, qs and ip-address are not loaded at all (traced over
-  initialize, the tool list and a tool call).
+  (`^6.17.1`) move onto patched versions. The two high advisories, zod
+  (GHSA-mrhx-c7xc-m3w5) and body-parser (GHSA-27r3-jxmh-p828), are not pinned
+  here: zod comes in through the SDK's version range and body-parser through
+  express's, and installing or updating to this release gets their patched
+  versions; the repository's lockfile has them too. The stdio server loads
+  zod, which validates every tool call, and fast-uri, both on patched
+  versions; express, body-parser, hono, `@hono/node-server`, qs and
+  ip-address are not loaded at all (traced over initialize, the tool list
+  and a tool call).
 
 - **Releases are published to npm by GitHub Actions through npm trusted
   publishing** instead of a maintainer's access token. `npm view
