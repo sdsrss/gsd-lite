@@ -608,9 +608,17 @@ const compareVersions = semverSortComparator;
 // is still a valid "update" for any pre-MIN client, a MITM forging the GitHub
 // API JSON could present it with no `sig:` and bypass verification. The core of
 // any 0.8.3 prerelease is 0.8.3, so it is correctly treated as signed-era.
+//
+// Fails closed: only a strict `x.y.z` (optionally `-prerelease`, optionally
+// `v`-prefixed) below MIN may go unsigned. Anything else must be signed. The
+// core used to be cut at `+` too, which compareVersions does not do: a tag
+// like `v0+.99.0` read as core "0" here (unsigned OK) and as newer than every
+// installed 0.x there, so whoever could publish a release could ship an
+// unsigned install.js.
 function requiresSignature(version) {
-  const core = String(version).replace(/^v/, '').split('-')[0].split('+')[0];
-  return compareVersions(core, MIN_SIGNED_VERSION) >= 0;
+  const m = /^v?(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(String(version));
+  if (!m) return true;
+  return compareVersions(m[1], MIN_SIGNED_VERSION) >= 0;
 }
 
 function getCurrentVersion(mode = getInstallMode()) {
