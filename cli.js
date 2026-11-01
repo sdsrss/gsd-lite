@@ -39,7 +39,9 @@ switch (command) {
     // verbose: true means checkForUpdate prints the outcome of the check itself
     // ("Already up to date", "Could not fetch latest release", "Throttled — …").
     // Only add a line for what that output does not cover.
-    const result = await checkForUpdate({ force, verbose: true, install: true });
+    // fromCli: this module was loaded from the package, not from the install,
+    // so the install mode is read from what install.js recorded.
+    const result = await checkForUpdate({ force, verbose: true, install: true, fromCli: true });
     const line = describeUpdateOutcome(result);
     if (line) console.log(line);
     break;
