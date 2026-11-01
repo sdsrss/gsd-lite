@@ -650,6 +650,12 @@ const ALLOWED_TARBALL_HOSTS = [
   'api.github.com',
   'codeload.github.com',
   'objects.githubusercontent.com',
+  // Where GitHub now redirects a release asset download (302 from
+  // github.com/<o>/<r>/releases/download/…, measured 2026-11-01). Without it
+  // every update stopped at the redirect and none was ever installed. The
+  // asset is still checked against the release's sha256 and Ed25519 signature
+  // before install.js runs; the host list only bounds where bytes come from.
+  'release-assets.githubusercontent.com',
 ];
 
 function validateTarballUrl(url) {
