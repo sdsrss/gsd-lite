@@ -2,6 +2,46 @@
 
 All notable changes to this project are documented here.
 
+## [0.20.0] - 2026-11-01
+
+Minor, not patch: gsd-lite now requires Node.js 22 or later. Node 20 reached
+end of life on 2026-04-30.
+
+**Do I have to do anything?**
+
+- **On Node 22 or later:** nothing.
+- **On Node 20:** move to Node 22 or 24. Nothing in 0.20.0 needs Node 22
+  yet, so it still runs on Node 20, but it is no longer tested there, npm
+  warns (`EBADENGINE`) when installing it, and later releases may use Node 22
+  features. To stay on 0.19.1 instead: `npx gsd-lite@0.19.1 install`, and run
+  Claude Code with `PLUGIN_AUTO_UPDATE=1` in its environment so the daily
+  update check does not install a newer release.
+- **npx install still on 0.19.0 or earlier:** run
+  `npx gsd-lite update --force` once. The updater those versions shipped
+  cannot download a release (see 0.19.1).
+
+- **Node 22 is the minimum.** `engines` is `>=22.0.0`, and CI tests Node 22
+  and 24.
+
+- **Update notices speak only of updates that are not installed yet.** After
+  an update went in another way (`npx gsd-lite@latest install`,
+  `claude plugin update`), the next session no longer reports that version as
+  failed or as available, and a throttled `npx gsd-lite update` no longer
+  announces it as available.
+
+- **A "could not check for updates" notice survives a manual update.** In
+  0.19.1, an update installed by `gsd update` also deleted that notice,
+  although the background checks it was about could still be failing.
+
+- **Update hints name a command an npx install can run:**
+  `npx gsd-lite update --force`, in the session's update notices, in the
+  throttled `update` message, and in `/gsd:doctor`. They said `gsd update`,
+  which an npx-only install does not have on its PATH.
+
+- **A release whose tag is not a version is not taken for an update.** A tag
+  such as `vv0.8.2` or `v1.0` now fails the update check instead of being
+  read as a version.
+
 ## [0.19.1] - 2026-11-01
 
 Patch: the updater can download releases, `npx gsd-lite update` installs into an npx
