@@ -17,8 +17,8 @@
  * Child processes inherit both through process.env, including the fixtures
  * that build their own env object — they all spread ...process.env.
  *
- * --require, not --import: package.json declares node >=20.0.0 and --import
- * only landed in 20.6.
+ * --require, not --import: chosen while package.json declared node >=20.0.0,
+ * and --import only landed in 20.6. Either works on the >=22 floor.
  */
 const fs = require('node:fs');
 const os = require('node:os');

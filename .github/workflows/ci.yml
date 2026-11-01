@@ -17,10 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 20 is the engines floor; 24 is the current LTS. Both ends are tested
-        # because the failures that matter here are version-dependent — see the
-        # coverage steps below for one the matrix itself has to work around.
-        node-version: [20, 22, 24]
+        # 22 is the engines floor; 24 is the current LTS. Both ends are tested
+        # because the failures that matter here are version-dependent.
+        # tests/repo-gates.test.js reads the floor from package.json and fails
+        # when it is missing here. Node 20 left with the floor in 0.20.0 (end
+        # of life 2026-04-30).
+        node-version: [22, 24]
     steps:
       # Actions are pinned to the commit SHA of the major they track, not to the
       # floating tag. A floating tag is mutable by the action's owner, so `@v5`
@@ -49,16 +51,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Run tests (Node 20 — no coverage thresholds available)
-        # `--test-coverage-lines` / `--test-coverage-branches` landed in Node
-        # 22.8. On 20 they are unknown options and node exits before running a
-        # single test, so this leg runs the suite without the coverage gate.
-        # It still proves the engines floor works; the gate lives on 22 and 24.
-        if: matrix.node-version == 20
-        run: npm test
-
-      - name: Run tests with coverage (Node 22+)
-        # This IS the coverage gate: test:coverage runs node's built-in coverage
+      - name: Run tests with coverage
+        # This IS the coverage gate, on every leg: test:coverage runs node's built-in coverage
         # with `--test-coverage-lines=80 --test-coverage-branches=75`, so a drop
         # fails here. Verified to be capable of failing: raising the thresholds
         # to 99 exits 1.
@@ -69,7 +63,9 @@ jobs:
         # "Could not parse coverage, skipping threshold check" and exited 0 on
         # every build it ever ran. A step that cannot fail is worse than no step:
         # it reads like a gate in the job list and in review.
-        if: matrix.node-version != 20
+        #
+        # The threshold flags landed in Node 22.8; while Node 20 was the floor
+        # its leg ran plain `npm test` instead, because node 20 exits on them.
         run: npm run test:coverage
 
       - name: Security audit

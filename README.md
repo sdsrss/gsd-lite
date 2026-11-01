@@ -483,7 +483,7 @@ Design notes (architecture spec, engineering task breakdown, calibration notes) 
 
 ## Requirements
 
-- Node.js >= 20.0.0
+- Node.js >= 22.0.0 (0.19.x was the last line tested on Node 20)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 
 ## License
