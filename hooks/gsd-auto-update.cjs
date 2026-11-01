@@ -607,7 +607,8 @@ async function fetchLatestRelease(token) {
 const compareVersions = semverSortComparator;
 
 // A release requires a valid signature when its RELEASE CORE (major.minor.patch,
-// ignoring any prerelease/build suffix) is at or above MIN_SIGNED_VERSION.
+// ignoring any prerelease suffix) is at or above MIN_SIGNED_VERSION, and
+// whenever the version is not a strict x.y.z[-prerelease] (see below).
 // Gating on the core — not the full semver — closes an anti-downgrade gap:
 // `0.8.3-rc.1` sorts BELOW `0.8.3`, so a raw `compareVersions(latest, MIN) >= 0`
 // gate would treat an unsigned `0.8.3-rc.1` as legacy-OK. Since that prerelease
