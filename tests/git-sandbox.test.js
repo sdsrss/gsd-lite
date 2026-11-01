@@ -6,7 +6,8 @@ import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-// Not import.meta.dirname: that landed in 20.11 and package.json says >=20.0.0.
+// Not import.meta.dirname: that landed in 20.11, after the >=20.0.0 floor this
+// was written under. Either works on the >=22 floor.
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
