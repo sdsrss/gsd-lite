@@ -4,28 +4,42 @@ All notable changes to this project are documented here.
 
 ## [0.19.1] - 2026-11-01
 
-Patch: updates install again, `npx gsd-lite update` installs into an npx
+Patch: the updater can download releases, `npx gsd-lite update` installs into an npx
 install, the dependency overrides move onto patched versions, and releases
 reach npm through npm trusted publishing.
 
 **Do I have to do anything?**
 
-- **npx install: run `npx gsd-lite update --force` once** (or
-  `npx gsd-lite@latest install`). The updater already on your machine cannot
-  download this release (first item below), and after a recent attempt a
-  plain `update` is throttled; `--force` checks now.
+- **npx install: run `npx gsd-lite update --force` once.** The updater
+  already on your machine cannot download this release (first item below),
+  and after a recent attempt a plain `update` is throttled; `--force` checks
+  now.
 - **Plugin install:** update as usual (`/plugin` → Installed → gsd → Update
   now, or `claude plugin update gsd@gsd`).
 - **gsd-lite also installed globally, or in the project you run the command
   from:** `npx gsd-lite update` runs that copy; update it first.
 
-- **Updates download again.** GitHub now answers a release download with a
+- **The updater can download releases.** GitHub now answers a release download with a
   redirect to `release-assets.githubusercontent.com`, a host the updater did
   not accept, so it refused the redirect and no update was installed, by
   `gsd update` or by the daily check at session start. The host is accepted
   now. The download is still checked against the release's SHA-256 and
   Ed25519 signature before anything is installed, and the GitHub token is
   still not sent along with the redirect.
+
+- **The updater requires a signature for any release tag that is not a
+  plain version.** A tag such as `v0+.99.0` skipped the Ed25519 signature
+  check (it read as older than 0.8.3, the first signed release) while still
+  counting as newer than the installed version, so an unsigned installer
+  would have run. Using it took the right to publish releases on this
+  repository, which is the case the signature exists for. Only a plain
+  `x.y.z` (optionally with a `-prerelease` suffix) below 0.8.3 may now go
+  unsigned.
+
+- **After `gsd update` installs an update, the next session no longer calls
+  it failed.** The "update failed" notice an earlier background check left
+  stayed in place, so the next session reported the update just installed as
+  failed.
 
 - **`npx gsd-lite update` installs updates into an npx install.** Run from a
   package rather than from `~/.claude/hooks`, the updater took every npx
