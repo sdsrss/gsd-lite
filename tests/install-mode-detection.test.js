@@ -190,19 +190,22 @@ describe("the server's version check reads the plugin's record for the plugin's 
 // `npx gsd-lite update` (and `gsd update` from a global install) runs cli.js
 // from the package, so the updater it loads lives in the npx cache, never in
 // <config>/hooks. Judged by its own location, every npx install read as a
-// plugin install there: the command installed nothing and said to run
-// `claude plugin update` — the advice the session notice and doctor give npx
-// users led to a dead end. The CLI is asking about what is installed, so it
-// reads the marker install.js writes. Network-free: a preload answers the
-// release lookup, and the tarball URL fails the host allowlist before any
-// download starts.
+// plugin install there, and the command never installed anything. What it
+// printed depended on the package's own version, which it took for the
+// installed one: `npx gsd-lite` by name runs the newest release, so usually
+// "Already up to date"; a package older than the latest release (a lagging
+// global install) said to run `claude plugin update`. The CLI is asking about
+// what is installed, so it reads the marker install.js writes. Network-free:
+// a preload answers the release lookup, and the tarball URL fails the host
+// allowlist before any download starts.
 describe('install mode, as `gsd update` reads it', () => {
-  function cliUpdate(t, { marker }) {
+  function cliUpdate(t, { marker, plugins }) {
     const ctx = home(t);
     const runtime = join(ctx.claudeDir, 'gsd');
     mkdirSync(runtime, { recursive: true });
     writeFileSync(join(runtime, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '0.18.0' }));
     if (marker) writeFileSync(join(runtime, '.install-mode'), `${marker}\n`);
+    if (plugins) writePlugins(ctx.claudeDir, plugins);
     // The package as npx unpacks it: no .git, so not dev mode.
     const pkg = join(ctx.root, 'npx-cache', 'node_modules', 'gsd-lite');
     mkdirSync(pkg, { recursive: true });
@@ -231,6 +234,17 @@ describe('install mode, as `gsd update` reads it', () => {
 
   it('with no npx install it still says the plugin updates itself', (t) => {
     const out = cliUpdate(t, { marker: null });
+    assert.match(out, /Run: claude plugin update gsd@gsd/, out);
+    assert.doesNotMatch(out, /Downloading/, out);
+  });
+
+  // The plugin check comes before the marker. A user-scope plugin beside a
+  // `manual` marker (an npx install left behind) is updated by `claude plugin
+  // update`; reading the marker first would run install.js against an
+  // installed plugin, the case getInstallMode's comment warns about. Moving
+  // the marker check above the plugin check left the suite green until this.
+  it('a user-scope plugin wins over a manual marker', (t) => {
+    const out = cliUpdate(t, { marker: 'manual', plugins: [{ scope: 'user', version: '0.19.0' }] });
     assert.match(out, /Run: claude plugin update gsd@gsd/, out);
     assert.doesNotMatch(out, /Downloading/, out);
   });
