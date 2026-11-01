@@ -308,18 +308,36 @@ setTimeout(() => process.exit(0), 4000).unref();
       // Whole-string: a value that merely started like a version carried the
       // rest — a newline and markup included — into the session's context.
       const safeSemver = (s) => /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(String(s || '')) ? String(s) : '?.?.?';
-      if (notif.kind === 'updated') {
+      // A notice about updating to a version that is installed now is stale:
+      // the update went in another way since (`npx gsd-lite update`,
+      // `npx gsd-lite@latest install`, `claude plugin update`). Asked of the
+      // updater beside this file, so it is this install's version. On any
+      // doubt (unreadable version, `to` not a plain version) it is shown.
+      let alreadyInstalled = false;
+      if ((notif.kind === 'failed' || notif.kind === 'available') && safeSemver(notif.to) !== '?.?.?') {
+        try {
+          const updater = require('./gsd-auto-update.cjs');
+          const installed = updater.getCurrentVersion();
+          alreadyInstalled = installed !== '0.0.0' && updater.compareVersions(installed, notif.to) >= 0;
+        } catch { /* show it */ }
+      }
+      if (alreadyInstalled) {
+        // Say nothing; the file is removed below like any shown notice.
+      } else if (notif.kind === 'updated') {
         console.log(`✅ GSD-Lite auto-updated: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}`);
       } else if (notif.kind === 'available' && notif.action === 'plugin_update') {
         console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Update it from /plugin → Installed → gsd → Update now, or run \`claude plugin update gsd@gsd\` in a shell`);
       } else if (notif.kind === 'available') {
-        console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run gsd update`);
+        // `npx gsd-lite`, not `gsd`: an npx-only install has no `gsd` on PATH,
+        // and npx runs a global copy where there is one. `--force` because the
+        // check that wrote this notice holds a plain update off for a day.
+        console.log(`📦 GSD-Lite update available: v${safeSemver(notif.from)} → v${safeSemver(notif.to)}. Run \`npx gsd-lite update --force\``);
       } else if (notif.kind === 'failed') {
         // A failed background update used to be entirely silent: the notification
         // was only ever written on success. The runtime is intact either way now,
         // so this is informational rather than an emergency — but a user whose
         // updates have been failing for a month should get to know.
-        console.log(`⚠️  GSD-Lite update to v${safeSemver(notif.to)} failed; still on v${safeSemver(notif.from)}. Run gsd update to see why.`);
+        console.log(`⚠️  GSD-Lite update to v${safeSemver(notif.to)} failed; still on v${safeSemver(notif.from)}. Run \`npx gsd-lite update --force\` to see why.`);
       } else if (notif.kind === 'check_failed') {
         // The updater builds the reason from codes and numbers it chose, but
         // this line reaches the model, so it is held to a plain character set

@@ -118,7 +118,7 @@ Check for update-related information:
   last background update check. Parse it and record by its `kind`:
   - `available` (with `from`, `to`, `action: "plugin_update"`): INFO "Update available: v{from} → v{to}" — a plugin install is updated by the plugin system, not by gsd: `/plugin` → **Installed** → gsd → **Update now**, or `claude plugin update gsd@gsd` from a shell
   - `updated` (with `from`, `to`): INFO "Auto-updated v{from} → v{to}; restart Claude Code to load it"
-  - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `gsd update` (or `npx gsd-lite update`) to see why
+  - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `npx gsd-lite update --force` to see why (`--force`: the failed check holds a plain update off for a day)
   - `check_failed` (with `count`, `since`, `reason`): WARN "Update checks failing: {count} in a row since {since} — {reason}" (the reason is described below)
   - The SessionStart hook prints this file and then deletes it, so it is usually absent. Absence is normal: record nothing for it.
 - If `~/.claude/gsd/runtime/update-state.json` has `checkFailure` (`count`, `since`, `reason`) with a `count` of 3 or more, the update checks are failing now: WARN "Update checks failing: {count} in a row since {since} — {reason}". Fewer than 3 is a blip, which SessionStart does not report either: record nothing. The reason ends with what happened to a proxy, when the environment sets one:
