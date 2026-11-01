@@ -6,9 +6,10 @@ All notable changes to this project are documented here.
 
 Patch: `npx gsd-lite update` updates an npx install, the dependency overrides
 move onto versions without known advisories, and releases reach npm through
-npm trusted publishing. Nothing to do for an npx or plugin install; with a
-global install (`npm i -g gsd-lite`), `gsd update` runs that package's own
-code, so update the global package once to get the fix below.
+npm trusted publishing. Nothing to do for an npx or plugin install. If
+gsd-lite is also installed globally (`npm i -g gsd-lite`), both `gsd update`
+and `npx gsd-lite update` run that global copy, so update it once to get the
+fix below.
 
 - **`npx gsd-lite update` updates an npx install.** The command loads the
   updater from the package it was run from, and the updater judged the
@@ -16,12 +17,11 @@ code, so update the global package once to get the fix below.
   `~/.claude/hooks` (or `$CLAUDE_CONFIG_DIR/hooks`), so any other location
   read as a plugin install. Run through npx, or from a global install, the
   command therefore never installed an update for an npx install, and took
-  the package's own version for the installed one. `npx gsd-lite` by name
-  runs the newest release, so it usually said "Already up to date" while the
-  install stayed on its old version; a package older than the latest release
-  (a global install that lags behind) said to run `claude plugin update`,
-  which is not how an npx install updates. `/gsd:doctor` sends npx users to
-  this command when an update failed. It now reads the install mode that
+  the package's own version for the installed one. Depending on that version
+  and on the last check, it said to run `claude plugin update` (which is not
+  how an npx install updates), that the check was throttled, or that the
+  install was up to date. `/gsd:doctor` sends npx users to this command when
+  an update failed. It now reads the install mode that
   `npx gsd-lite install` records. The update check that runs on its own at
   session start was not affected; a plugin install still gets the
   `claude plugin update` advice.
