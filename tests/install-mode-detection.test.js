@@ -186,3 +186,52 @@ describe("the server's version check reads the plugin's record for the plugin's 
     assert.match(String(result.warning), /plugin registry has v0\.0\.1/);
   });
 });
+
+// `npx gsd-lite update` (and `gsd update` from a global install) runs cli.js
+// from the package, so the updater it loads lives in the npx cache, never in
+// <config>/hooks. Judged by its own location, every npx install read as a
+// plugin install there: the command installed nothing and said to run
+// `claude plugin update` — the advice the session notice and doctor give npx
+// users led to a dead end. The CLI is asking about what is installed, so it
+// reads the marker install.js writes. Network-free: a preload answers the
+// release lookup, and the tarball URL fails the host allowlist before any
+// download starts.
+describe('install mode, as `gsd update` reads it', () => {
+  function cliUpdate(t, { marker }) {
+    const ctx = home(t);
+    const runtime = join(ctx.claudeDir, 'gsd');
+    mkdirSync(runtime, { recursive: true });
+    writeFileSync(join(runtime, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: '0.18.0' }));
+    if (marker) writeFileSync(join(runtime, '.install-mode'), `${marker}\n`);
+    // The package as npx unpacks it: no .git, so not dev mode.
+    const pkg = join(ctx.root, 'npx-cache', 'node_modules', 'gsd-lite');
+    mkdirSync(pkg, { recursive: true });
+    for (const f of ['cli.js', 'package.json']) cpSync(join(PROJECT_ROOT, f), join(pkg, f));
+    cpSync(join(PROJECT_ROOT, 'hooks'), join(pkg, 'hooks'), { recursive: true });
+    const stub = join(ctx.root, 'stub-fetch.cjs');
+    writeFileSync(stub, `globalThis.fetch = async () => ({ status: 200, ok: true, json: async () => (${JSON.stringify({
+      tag_name: 'v99.0.0',
+      assets: [{ name: 'gsd-lite-99.0.0.tgz', browser_download_url: 'https://example.invalid/gsd-lite-99.0.0.tgz' }],
+      body: '',
+    })}) });\n`);
+    const env = { HOME: ctx.home, CLAUDE_CONFIG_DIR: ctx.claudeDir, TMPDIR: ctx.root, PATH: dirname(process.execPath) };
+    const run = spawnSync(process.execPath, ['--require', stub, join(pkg, 'cli.js'), 'update', '--force'], {
+      cwd: ctx.root, env, encoding: 'utf8', timeout: 30000,
+    });
+    assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+    return run.stdout;
+  }
+
+  it('an npx install is updated, not sent to `claude plugin update`', (t) => {
+    const out = cliUpdate(t, { marker: 'manual' });
+    assert.match(out, /Current: v0\.18\.0 — Latest: v99\.0\.0/, out);
+    assert.match(out, /Downloading v99\.0\.0/, out);
+    assert.doesNotMatch(out, /claude plugin update/, out);
+  });
+
+  it('with no npx install it still says the plugin updates itself', (t) => {
+    const out = cliUpdate(t, { marker: null });
+    assert.match(out, /Run: claude plugin update gsd@gsd/, out);
+    assert.doesNotMatch(out, /Downloading/, out);
+  });
+});

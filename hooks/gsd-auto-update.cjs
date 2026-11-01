@@ -206,10 +206,18 @@ function shouldAnnounceCheckFailure(failure) {
 // new GitHub release would re-trigger install.js — resurrecting the plugin.
 // Guard here so checkForUpdate is a no-op until the orphan is cleaned up
 // (session-init Phase 0 handles the cleanup itself).
+// The marker install.js writes into <config>/gsd: 'manual', 'plugin', or null
+// when it is missing (installs before 0.7.7, or no install at all).
+function readInstallModeMarker() {
+  try {
+    return fs.readFileSync(path.join(claudeDir, 'gsd', '.install-mode'), 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
 function isOrphan() {
-  const installModeMarker = path.join(claudeDir, 'gsd', '.install-mode');
-  let mode = null;
-  try { mode = fs.readFileSync(installModeMarker, 'utf8').trim(); } catch { /* missing → fall through */ }
+  const mode = readInstallModeMarker();
   if (mode === 'manual') return false;
   if (mode === 'plugin') {
     try {
@@ -238,8 +246,9 @@ async function checkForUpdate(options = {}) {
     fetchLatestRelease: fetchLatestReleaseImpl = fetchLatestRelease,
     downloadAndInstall: downloadAndInstallImpl = downloadAndInstall,
     getCurrentVersion: getCurrentVersionImpl = getCurrentVersion,
+    fromCli = false,
   } = options;
-  const installMode = getInstallMode();
+  const installMode = getInstallMode({ fromCli });
 
   try {
     if (isOrphan()) {
@@ -466,7 +475,7 @@ function isDevMode() {
   }
 }
 
-function getInstallMode() {
+function getInstallMode({ fromCli = false } = {}) {
   // Check if installed as a Claude Code plugin (installed_plugins.json has gsd entry)
   // Hook files live at ~/.claude/hooks/ so pluginRoot (=__dirname/..) equals claudeDir,
   // but that doesn't mean it's a manual install — check the plugin registry first.
@@ -479,6 +488,12 @@ function getInstallMode() {
   // an installed plugin's cache.
   if (pluginInstalledForUser(claudeDir)) return 'plugin';
   if (isDevMode()) return 'dev';
+  // `gsd update` / `npx gsd-lite update` loads this file from the package, never
+  // from <config>/hooks, so the location rule below said 'plugin' for every npx
+  // install there: nothing was installed, the current version was the package's
+  // own, and the advice was `claude plugin update`. The CLI is asking about what
+  // is installed, which is what install.js's marker records.
+  if (fromCli) return readInstallModeMarker() === 'manual' ? 'manual' : 'plugin';
   // The npx install's copy is the one in <config>/hooks. Compared as real
   // paths, this file's directory to that one: __dirname is resolved through
   // symlinks and claudeDir is as given, so under a symlinked ~/.claude, or a
