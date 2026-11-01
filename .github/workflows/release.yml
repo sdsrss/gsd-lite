@@ -84,16 +84,20 @@ jobs:
       # with no signed Release behind it, which is exactly the state auto-update
       # clients fail closed on (they read GitHub Releases, not npm).
       contents: write
-      # `id-token: write` is what `npm publish --provenance` needs: npm exchanges
-      # this job's OIDC token for a Sigstore signature binding the tarball to
+      # `id-token: write` is how this job authenticates to npm. With trusted
+      # publishing, npm exchanges the job's OIDC token for a short-lived publish
+      # token; no npm token secret is involved. The same OIDC token is what
+      # `--provenance` turns into a Sigstore signature binding the tarball to
       # this workflow, this repo and this commit.
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
+      # Node 24, not 22: trusted publishing needs npm >= 11.5.1, and Node 22
+      # bundles npm 10. `validate` stays on 22; it does not publish.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
@@ -103,7 +107,7 @@ jobs:
         # R-11b: fail fast and with a clear message when the secret is simply
         # missing. This is a convenience, not the gate — the real assertion is
         # "Verify signature against the embedded public key" below, and publish
-        # now runs after it. An empty NPM_TOKEN secret has bitten this release
+        # now runs after it. A silently empty secret has bitten this release
         # before, so cheap checks that name the missing secret earn their place.
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
@@ -195,11 +199,27 @@ jobs:
         # the holder of RELEASE_SIGNING_KEY, and is what the auto-update client
         # checks; provenance proves to *npm consumers* that this tarball was
         # built by this workflow from this commit. It needs `id-token: write`
-        # (granted on this job) and `--access public` (already passed). If the
-        # OIDC exchange fails the publish fails with it, which is the safe
-        # direction: nothing reaches npm and the run is re-runnable.
+        # (granted on this job) and `--access public` (already passed). Trusted
+        # publishing turns provenance on by itself for a public repo and package
+        # (npm lib/utils/oidc.js); the flag stays so the requirement is explicit
+        # and tests/repo-gates.test.js can pin it.
+        #
+        # Authentication is npm trusted publishing (OIDC), configured on
+        # npmjs.com for this repository and this file, release.yml, with no
+        # environment. There is deliberately no token here. npm 11 tries the OIDC
+        # exchange first and, when it fails, logs one verbose line and publishes
+        # with whatever token the environment holds — so with a real token wired
+        # in, a broken trusted-publisher setting would still publish and the job
+        # would stay green. Without one, npm falls back to the placeholder that
+        # setup-node exports when `registry-url` is set, and the publish fails
+        # (401, 403 or 404) before anything reaches npm; the run is re-runnable.
+        # On that failure, check the trusted-publisher fields on npmjs.com and
+        # this job's `id-token: write`. Do not add a token back:
+        # tests/repo-gates.test.js fails if one appears outside a comment.
+        #
+        # `npm view` still answers with that placeholder in place, so the
+        # already-published check below keeps a re-run idempotent.
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           TARBALL: ${{ steps.pack.outputs.tarball }}
         run: |
           VERSION=$(node -p "require('./package.json').version")

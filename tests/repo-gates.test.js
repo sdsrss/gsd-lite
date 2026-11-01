@@ -175,7 +175,8 @@ describe('repo gates — the release workflow signs before it publishes', () => 
     // `npm publish` runs before the GitHub Release step, so a job that cannot
     // write the Release still ships to npm — leaving a version on npm with no
     // signed Release behind it, which is exactly the state auto-update clients
-    // fail closed on. `id-token: write` is what `--provenance` exchanges for a
+    // fail closed on. `id-token: write` is how npm authenticates the publish
+    // (trusted publishing, no token) and what `--provenance` exchanges for a
     // Sigstore attestation. The top level stays read-only so `validate` — which
     // runs `npm ci` over the whole dependency tree first — never holds a
     // write-capable token.
@@ -185,7 +186,7 @@ describe('repo gates — the release workflow signs before it publishes', () => 
 
     const publishJob = workflow.slice(workflow.indexOf('\n  publish:'));
     assert.match(publishJob, /permissions:\s*\n\s+contents: write\s*\n\s+id-token: write/,
-      'the publish job needs contents: write for the Release and id-token: write for provenance');
+      'the publish job needs contents: write for the Release and id-token: write for trusted publishing and provenance');
     assert.match(publishJob, /npm publish .*--provenance/,
       'provenance is what ties the published tarball to this workflow and commit');
   });
@@ -262,7 +263,8 @@ describe('repo gates — the prompt layer never hands an agent a bare relative d
 describe('repo gates — actions are pinned to commit SHAs', () => {
   // A floating tag is mutable by the action's owner: `@v5` can point at
   // different code tomorrow, and whatever it points at runs inside this repo's
-  // CI — in release.yml's case, alongside the npm token and the signing key. A
+  // CI — in release.yml's case, inside the job that can publish to npm and
+  // holds the signing key. A
   // 40-hex SHA cannot be repointed. The trailing `# v5` comment is how a reader
   // still knows which major is pinned, so it is kept and searched past.
   for (const name of ['ci.yml', 'release.yml']) {
@@ -274,6 +276,34 @@ describe('repo gates — actions are pinned to commit SHAs', () => {
       const floating = uses.filter(u => !/@[0-9a-f]{40}$/.test(u));
       assert.deepEqual(floating, [],
         `pin to the commit SHA of the major, not the tag: ${floating.join(', ')}`);
+    });
+  }
+});
+
+describe('repo gates — npm publishes through trusted publishing, never a token', () => {
+  // npm 11 tries the OIDC exchange first and, when it fails, logs one verbose
+  // line and publishes with whatever token the environment holds
+  // (lib/utils/oidc.js). So while a token is wired into a workflow, a broken
+  // trusted-publisher setting on npmjs.com still publishes and the job stays
+  // green; only `npm view gsd-lite@<v> _npmUser` would tell. With no token,
+  // the same misconfiguration fails the publish step. Comments are stripped
+  // first because the publish step explains this in prose; matched
+  // case-insensitively so a lower-case spelling cannot slip past.
+  const workflowDir = join(repoRoot, '.github', 'workflows');
+  const files = readdirSync(workflowDir).filter((f) => /\.ya?ml$/.test(f));
+
+  it('finds workflows to check', () => {
+    // Vacuity guard: an empty directory would satisfy the loop below silently.
+    assert.ok(files.length >= 2, `expected the workflow set, found ${files.length}`);
+  });
+
+  for (const file of files) {
+    it(`${file} names no NPM_TOKEN or NODE_AUTH_TOKEN outside comments`, () => {
+      const offenders = readWorkflow(file)
+        .split('\n')
+        .flatMap((text, i) => (/NPM_TOKEN|NODE_AUTH_TOKEN/i.test(text) ? [`${file}:${i + 1}: ${text.trim()}`] : []));
+      assert.deepEqual(offenders, [],
+        `npm authenticates through trusted publishing; a token here turns a broken OIDC setup into a silent fallback:\n  ${offenders.join('\n  ')}`);
     });
   }
 });
