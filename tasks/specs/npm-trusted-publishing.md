@@ -1,5 +1,5 @@
 # npm 发布改用 trusted publishing（GitHub Actions OIDC）
-状态：进行中（仓库改动已完成并在本地提交；npmjs.com 配置与首次发版由用户决定）
+状态：已完成（v0.19.1 于 2026-11-01 通过 OIDC 发布，NPM_TOKEN secret 已删除）
 
 ## 背景与目标
 `release.yml` 的 publish job 用 `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` 发布。目标：改成 npm trusted
@@ -16,7 +16,7 @@ publishing，仓库里不再引用任何 npm token，信任配置一旦出错，
 - [x] AC2：新断言在旧 workflow 上失败、在新 workflow 上通过 — 验证：分别在改 workflow 前后运行 `node --test tests/repo-gates.test.js`
 - [x] AC3：publish job 用 Node 24，`id-token: write` 还在，任何层级都没有 token；"版本已存在就跳过"仍然保留
 - [x] AC4：`npm run lint` 与 `npm test` 全部通过
-- [ ] AC5（发版时）：每个包 `npm view <包>@<版本> _npmUser` = `GitHub Actions <npm-oidc-no-reply@github.com>`
+- [x] AC5（发版时）：每个包 `npm view <包>@<版本> _npmUser` = `GitHub Actions <npm-oidc-no-reply@github.com>`
 
 ## 方案
 - 发布点只有一个：`release.yml` → `publish` job → `npm publish "$TARBALL" --access public --provenance`。
@@ -39,7 +39,7 @@ publishing，仓库里不再引用任何 npm token，信任配置一旦出错，
 - [x] S2：先加断言并确认它在旧 workflow 上为红 — 覆盖 AC2
 - [x] S3：改 workflow 和注释，断言转绿 — 覆盖 AC2、AC3
 - [x] S4：lint + 全量测试，本地提交 — 覆盖 AC4
-- [ ] S5（等用户）：npmjs.com 配置 → 打 tag 前评审 → 发版 → 核对 `_npmUser` → 问用户是否删 secret — 覆盖 AC5
+- [x] S5：npmjs.com 配置 → 打 tag 前评审 → 发版 → 核对 `_npmUser` → 问用户是否删 secret — 覆盖 AC5
 
 ## 决策与进展
 - 分支 `ci/npm-trusted-publishing`，没有提交到 main（项目约定是走 PR）。
@@ -57,4 +57,4 @@ publishing，仓库里不再引用任何 npm token，信任配置一旦出错，
 - `bash scripts/gate-replay-changed.sh main HEAD` → DISCRIMINATIVE（在 943fb8b 上 30 条里 1 条失败，就是新断言）
 - 占位 token 下的 `npm view`（本机 npm 11.19.0 配 setup-node 同款 .npmrc）→ 0.19.0 返回 `0.19.0`；99.0.0 返回 E404
 - 提交：`415151e`（分支 `ci/npm-trusted-publishing`）
-- AC5：未运行，要等首次 OIDC 发版
+- AC5：v0.19.1 → `_npmUser` = `GitHub Actions <npm-oidc-no-reply@github.com>`；provenance logIndex 3635538040；`gh secret delete NPM_TOKEN` 已执行，回读确认只剩 RELEASE_SIGNING_KEY
