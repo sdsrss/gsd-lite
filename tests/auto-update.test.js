@@ -408,6 +408,39 @@ describe('validateExtractedPackage', () => {
   });
 });
 
+// GitHub answers a release asset download with a 302 to
+// release-assets.githubusercontent.com (2026-11-01, on
+// .../releases/download/v0.19.0/gsd-lite-0.19.0.tgz). That host was not in
+// ALLOWED_TARBALL_HOSTS, so every update, the daily one included, stopped at
+// "Redirect URL failed host validation" and never installed. No test walked
+// the redirect at all.
+describe('downloadAndInstall follows the release-asset redirect', () => {
+  it('requests the release-assets host, and the token stays behind', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      const calls = [];
+      const fetchImpl = async (url, opts) => {
+        calls.push({ url, auth: opts?.headers?.Authorization });
+        if (calls.length === 1) {
+          const location = 'https://release-assets.githubusercontent.com/github-production-release-asset/1/x?sig=y';
+          return { status: 302, ok: false, headers: { get: (h) => (h.toLowerCase() === 'location' ? location : null) } };
+        }
+        // Stop right after the redirect: nothing to extract or install.
+        return { status: 500, ok: false, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) };
+      };
+      const ok = await ctx.mod.downloadAndInstall(
+        'https://github.com/sdsrss/gsd-lite/releases/download/v9.9.9/gsd-lite-9.9.9.tgz', false, 'secret-token', { fetchImpl });
+      assert.equal(ok, false);
+      assert.equal(calls.length, 2, `the redirect was refused: ${JSON.stringify(calls)}`);
+      assert.match(calls[1].url, /^https:\/\/release-assets\.githubusercontent\.com\//);
+      assert.equal(calls[0].auth, 'Bearer secret-token');
+      assert.equal(calls[1].auth, undefined, 'the GitHub token must not follow the redirect to the asset host');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+});
+
 describe('validateTarballUrl', () => {
   it('accepts valid github.com tarball URL', async () => {
     const ctx = await loadAutoUpdate('manual');
