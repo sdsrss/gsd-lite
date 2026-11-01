@@ -386,6 +386,12 @@ async function checkForUpdate(options = {}) {
           writeNotification(success
             ? { kind: 'updated', from: currentVersion, to: latest.version }
             : { kind: 'failed', from: currentVersion, to: latest.version });
+        } else if (success) {
+          // `gsd update` does not notify, and it printed the result itself. A
+          // notice an earlier background check left ("failed", "available")
+          // is about the update just installed; left in place, the next
+          // session reported that update as failed.
+          clearNotification();
         }
 
         return {
@@ -846,6 +852,14 @@ function writeNotification(notification) {
   try {
     fs.mkdirSync(stateDir, { recursive: true });
     atomicWriteJson(NOTIFICATION_FILE, notification);
+  } catch {
+    /* silent */
+  }
+}
+
+function clearNotification() {
+  try {
+    fs.rmSync(NOTIFICATION_FILE, { force: true });
   } catch {
     /* silent */
   }
