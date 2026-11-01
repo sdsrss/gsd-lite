@@ -188,13 +188,11 @@ describe("the server's version check reads the plugin's record for the plugin's 
 });
 
 // `npx gsd-lite update` (and `gsd update` from a global install) runs cli.js
-// from the package, so the updater it loads lives in the npx cache, never in
-// <config>/hooks. Judged by its own location, every npx install read as a
-// plugin install there, and the command never installed anything. It took the
-// package's own version for the installed one, and depending on that version
-// and on the last check it said to run `claude plugin update`, that the check
-// was throttled, or that the install was up to date. The CLI is asking about
-// what is installed, so it reads the marker install.js writes. Network-free:
+// from a package (the npx cache, a global or a project node_modules), so the
+// updater it loads is never the one in <config>/hooks. Judged by its own
+// location, every npx install read as a plugin install there, and no update
+// was ever installed into it. The CLI is asking about what is installed, so
+// it reads the marker install.js writes. Network-free:
 // a preload answers the release lookup, and the tarball URL fails the host
 // allowlist before any download starts.
 describe('install mode, as `gsd update` reads it', () => {
