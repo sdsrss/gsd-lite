@@ -2,6 +2,41 @@
 
 All notable changes to this project are documented here.
 
+## [0.19.1] - 2026-11-01
+
+Patch: `npx gsd-lite update` updates an npx install, the dependency overrides
+move onto versions without known advisories, and releases reach npm through
+npm trusted publishing. Nothing to do on your side.
+
+- **`npx gsd-lite update` updates an npx install.** The command loads the
+  updater from the package it was run from, and the updater judged the
+  install by where that file sits: the npx install's copy lives in
+  `~/.claude/hooks` (or `$CLAUDE_CONFIG_DIR/hooks`), so any other location
+  read as a plugin install. Run through npx, or from a global install, every
+  npx install therefore installed nothing, reported the package's own version
+  as the installed one, and said to run `claude plugin update`, which is not
+  how an npx install updates. `/gsd:doctor` sends npx users to this command
+  when an update failed. It now reads the install mode that
+  `npx gsd-lite install` records. The update check that runs on its own at
+  session start was not affected; a plugin install still gets the
+  `claude plugin update` advice.
+
+- **The dependency overrides move onto patched versions.**
+  `@hono/node-server` goes to `^2.1.3` (the override held it at `^1.19.14`,
+  and GHSA-rmxm-3fg6-px4f has no patched 1.x; the MCP SDK accepts 2.x), and
+  the floors of `fast-uri` (`^4.2.3`), `ip-address` (`^10.7.5`) and `qs`
+  (`^6.17.1`) move onto the versions that close their advisories. The two
+  high advisories, zod (GHSA-mrhx-c7xc-m3w5) and body-parser
+  (GHSA-27r3-jxmh-p828), come through the SDK's own version ranges; an npx
+  install and every update resolve those fresh, so they get the patched
+  versions on their own. The repository's lockfile now has them too.
+  The HTTP-side packages are not loaded by this stdio server.
+
+- **Releases are published to npm by GitHub Actions through npm trusted
+  publishing** instead of a maintainer's access token. `npm view
+  gsd-lite@0.19.1 _npmUser` names GitHub Actions; the provenance attestation
+  and the signed GitHub Release are unchanged.
+
 ## [0.19.0] - 2026-10-22
 
 Minor, not patch: `npx gsd-lite install` now registers its MCP server where
