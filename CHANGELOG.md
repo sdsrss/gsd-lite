@@ -4,27 +4,19 @@ All notable changes to this project are documented here.
 
 ## [0.19.1] - 2026-11-01
 
-Patch: `npx gsd-lite update` updates an npx install, the dependency overrides
-move onto versions without known advisories, and releases reach npm through
-npm trusted publishing. Nothing to do for an npx or plugin install. If
-gsd-lite is also installed globally (`npm i -g gsd-lite`), both `gsd update`
-and `npx gsd-lite update` run that global copy, so update it once to get the
-fix below.
+Patch: `npx gsd-lite update` installs updates into an npx install, the
+dependency overrides move onto versions without known advisories, and
+releases reach npm through npm trusted publishing. A plugin install updates
+as usual (`claude plugin update gsd@gsd`). If gsd-lite is also installed
+globally, or in the project you run the command from, `npx gsd-lite update`
+runs that copy; update it first.
 
-- **`npx gsd-lite update` updates an npx install.** The command loads the
-  updater from the package it was run from, and the updater judged the
-  install by where that file sits: the npx install's copy lives in
-  `~/.claude/hooks` (or `$CLAUDE_CONFIG_DIR/hooks`), so any other location
-  read as a plugin install. Run through npx, or from a global install, the
-  command therefore never installed an update for an npx install, and took
-  the package's own version for the installed one. Depending on that version
-  and on the last check, it said to run `claude plugin update` (which is not
-  how an npx install updates), that the check was throttled, or that the
-  install was up to date. `/gsd:doctor` sends npx users to this command when
-  an update failed. It now reads the install mode that
-  `npx gsd-lite install` records. The update check that runs on its own at
-  session start was not affected; a plugin install still gets the
-  `claude plugin update` advice.
+- **`npx gsd-lite update` installs updates into an npx install.** Run from a
+  package rather than from `~/.claude/hooks`, the updater took every npx
+  install for a plugin install and never installed an update into it. It now
+  reads the install mode that `npx gsd-lite install` records. After a recent
+  check the command is throttled, as before (a day, longer after a rate
+  limit); add `--force` to check now.
 
 - **The dependency overrides move onto patched versions.**
   `@hono/node-server` goes to `^2.1.3` (the override held it at `^1.19.14`,
