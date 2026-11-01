@@ -144,16 +144,20 @@ describe('repo gates — the release workflow signs before it publishes', () => 
     assert.ok(!/name:.*Check coverage threshold/.test(ci));
   });
 
-  it('runs the coverage gate only on the Node versions that have the flags', () => {
-    // --test-coverage-lines / --test-coverage-branches landed in Node 22.8. On
-    // Node 20 they are unknown options: node exits before running a single
-    // test, so the 20 leg of the matrix has to run `npm test` instead. Folding
-    // the two steps back into one `npm run test:coverage` turns that leg red
-    // for a reason that has nothing to do with the code under review — and the
-    // obvious "fix" for that red is to drop 20, which is the engines floor.
+  it('tests the engines floor, and runs the coverage gate on every leg', () => {
+    // The floor is read from package.json, not written here: a floor that moves
+    // without the matrix following it is the case this guards. While Node 20
+    // was the floor its leg ran plain `npm test`, because the coverage
+    // threshold flags (Node 22.8+) are unknown options to it and node exits
+    // before running a test. With 22 as the floor every leg has them, so one
+    // unconditional step is the gate, and a leg that skipped it would be a leg
+    // nothing checks coverage on.
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    const floor = pkg.engines?.node?.match(/^>=\s*(\d+)/)?.[1];
+    assert.ok(floor, `package.json engines.node is not a ">=N" floor: ${pkg.engines?.node}`);
     const ci = readWorkflow('ci.yml');
-    assert.match(ci, /node-version:\s*\[[^\]]*\b20\b[^\]]*\]/,
-      'Node 20 is the engines floor and must stay in the CI matrix');
+    const matrix = ci.match(/node-version:\s*\[([^\]]*)\]/)?.[1].split(',').map(v => v.trim());
+    assert.ok(matrix?.includes(floor), `the engines floor, Node ${floor}, must be in the CI matrix [${matrix}]`);
 
     // Split into step blocks so an `if:` is read against its own step rather
     // than whichever condition happens to sit above it in the file.
@@ -161,13 +165,9 @@ describe('repo gates — the release workflow signs before it publishes', () => 
     const coverageSteps = steps.filter(s => /run:[\s\S]*npm run test:coverage/.test(s));
     assert.equal(coverageSteps.length, 1,
       `expected exactly one step running the coverage gate, found ${coverageSteps.length}`);
-    assert.match(coverageSteps[0], /if:\s*matrix\.node-version\s*!=\s*20/,
-      'the coverage step must skip Node 20, whose node binary rejects the threshold flags outright');
-
-    const plainTestSteps = steps.filter(s => /run:\s*npm test\b/.test(s));
-    assert.equal(plainTestSteps.length, 1,
-      'Node 20 must still run the suite — without this step the 20 leg tests nothing');
-    assert.match(plainTestSteps[0], /if:\s*matrix\.node-version\s*==\s*20/);
+    assert.doesNotMatch(coverageSteps[0], /\bif:/, 'the coverage gate must run on every matrix leg');
+    assert.equal(steps.filter(s => /run:\s*npm test\b/.test(s)).length, 0,
+      'a plain `npm test` step is a matrix leg without the coverage gate');
   });
 
   it('grants the publish job the two writes it needs, and the run no more', () => {
