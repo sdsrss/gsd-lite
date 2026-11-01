@@ -21,8 +21,9 @@ reach npm through npm trusted publishing.
 
 - **The updater can download releases.** GitHub now answers a release download with a
   redirect to `release-assets.githubusercontent.com`, a host the updater did
-  not accept, so it refused the redirect and no update was installed, by
-  `gsd update` or by the daily check at session start. The host is accepted
+  not accept, so the daily check at session start refused the redirect and
+  never installed an update (`gsd update` stopped earlier for an npx install,
+  as the `npx gsd-lite update` item below describes). The host is accepted
   now. The download is still checked against the release's SHA-256 and
   Ed25519 signature before anything is installed, and the GitHub token is
   still not sent along with the redirect.
@@ -32,7 +33,9 @@ reach npm through npm trusted publishing.
   check (it read as older than 0.8.3, the first signed release) while still
   counting as newer than the installed version, so an unsigned installer
   would have run. Using it took the right to publish releases on this
-  repository, which is the case the signature exists for. Only a plain
+  repository, or the ability to pass for GitHub to the updater (a
+  TLS-intercepting proxy the machine trusts, for one): the cases the
+  signature exists for. Only a plain
   `x.y.z` (optionally with a `-prerelease` suffix) below 0.8.3 may now go
   unsigned.
 
