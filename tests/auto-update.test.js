@@ -685,6 +685,21 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
     });
   });
 
+  it('requiresSignature fails closed on a tag that is not strict semver', async () => {
+    await withRealModule(async (mod) => {
+      // requiresSignature cut the version at `+`, compareVersions does not: a
+      // release tagged v0+.99.0 read as core "0" (below MIN, so no signature
+      // needed) and, to compareVersions, as newer than any installed 0.x. Anyone
+      // able to publish a release could ship an unsigned install.js that way —
+      // the case the signature exists for (pre-tag review of 0.19.1).
+      assert.ok(mod.compareVersions('0+.99.0', '0.19.0') > 0, 'premise: the tag reads as an update');
+      for (const v of ['0+.99.0', 'v0+.99.0', '0.8.2+x', '1.0.0+build', '0.8', '0.8.2.1', 'x', '']) {
+        assert.equal(mod.requiresSignature(v), true, `${JSON.stringify(v)} must require a signature`);
+      }
+      assert.equal(mod.requiresSignature('v0.8.2'), false, 'a v-prefixed pre-signing version still does not');
+    });
+  });
+
   it('installs a legitimate tarball whose checksum matches, running install.js', async () => {
     await withRealModule(async (mod, root, marker) => {
       const { bytes, sha256 } = await buildFixtureTarball(root);
