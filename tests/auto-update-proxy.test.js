@@ -343,6 +343,7 @@ describe('repeated check failures are recorded and announced', () => {
     delete process.env.PLUGIN_AUTO_UPDATE;
     const runtime = join(claudeDir, 'gsd', 'runtime');
     return {
+      runtime,
       updater: require(join(claudeDir, 'hooks', 'gsd-auto-update.cjs')),
       state: () => readFile(join(runtime, 'update-state.json'), 'utf8').then(JSON.parse),
       notification: () => readFile(join(runtime, 'update-notification.json'), 'utf8').then(JSON.parse, () => null),
@@ -358,6 +359,29 @@ describe('repeated check failures are recorded and announced', () => {
     force: true, install: false, notify,
     fetchLatestRelease: async () => latest,
     getCurrentVersion: () => '0.3.0',
+  });
+
+  // `gsd update` does not notify, so an update it installed left the notice an
+  // earlier failed background check wrote, and the next session said "update to
+  // v… failed; still on v…" about the version just installed (pre-tag review of
+  // 0.19.1, reproduced through SessionStart). Once installed, no earlier notice
+  // about updating is true any more.
+  it('an update gsd update installs clears the notice a failed check left', async () => {
+    const ctx = await manualInstall();
+    try {
+      await mkdir(join(ctx.runtime), { recursive: true });
+      await writeFile(join(ctx.runtime, 'update-notification.json'), JSON.stringify({ kind: 'failed', from: '0.3.0', to: '0.4.0' }));
+      const res = await ctx.updater.checkForUpdate({
+        force: true, install: true, notify: false,
+        fetchLatestRelease: async () => ({ version: '0.4.0', tarballUrl: 'https://github.com/x/y.tgz' }),
+        downloadAndInstall: async () => true,
+        getCurrentVersion: () => '0.3.0',
+      });
+      assert.equal(res?.updated, true, JSON.stringify(res));
+      assert.equal(await ctx.notification(), null, 'the stale "failed" notice must be gone');
+    } finally {
+      await ctx.cleanup();
+    }
   });
 
   it('keeps the reason, counts the streak, and announces it from the third failure', async () => {
