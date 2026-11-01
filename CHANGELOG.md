@@ -6,17 +6,22 @@ All notable changes to this project are documented here.
 
 Patch: `npx gsd-lite update` updates an npx install, the dependency overrides
 move onto versions without known advisories, and releases reach npm through
-npm trusted publishing. Nothing to do on your side.
+npm trusted publishing. Nothing to do for an npx or plugin install; with a
+global install (`npm i -g gsd-lite`), `gsd update` runs that package's own
+code, so update the global package once to get the fix below.
 
 - **`npx gsd-lite update` updates an npx install.** The command loads the
   updater from the package it was run from, and the updater judged the
   install by where that file sits: the npx install's copy lives in
   `~/.claude/hooks` (or `$CLAUDE_CONFIG_DIR/hooks`), so any other location
-  read as a plugin install. Run through npx, or from a global install, every
-  npx install therefore installed nothing, reported the package's own version
-  as the installed one, and said to run `claude plugin update`, which is not
-  how an npx install updates. `/gsd:doctor` sends npx users to this command
-  when an update failed. It now reads the install mode that
+  read as a plugin install. Run through npx, or from a global install, the
+  command therefore never installed an update for an npx install, and took
+  the package's own version for the installed one. `npx gsd-lite` by name
+  runs the newest release, so it usually said "Already up to date" while the
+  install stayed on its old version; a package older than the latest release
+  (a global install that lags behind) said to run `claude plugin update`,
+  which is not how an npx install updates. `/gsd:doctor` sends npx users to
+  this command when an update failed. It now reads the install mode that
   `npx gsd-lite install` records. The update check that runs on its own at
   session start was not affected; a plugin install still gets the
   `claude plugin update` advice.
@@ -30,7 +35,10 @@ npm trusted publishing. Nothing to do on your side.
   (GHSA-27r3-jxmh-p828), come through the SDK's own version ranges; an npx
   install and every update resolve those fresh, so they get the patched
   versions on their own. The repository's lockfile now has them too.
-  The HTTP-side packages are not loaded by this stdio server.
+  Of these, the stdio server loads zod, which validates every tool call, and
+  fast-uri, both now on patched versions; express, body-parser, hono,
+  `@hono/node-server`, qs and ip-address are not loaded at all (traced over
+  initialize, the tool list and a tool call).
 
 - **Releases are published to npm by GitHub Actions through npm trusted
   publishing** instead of a maintainer's access token. `npm view
