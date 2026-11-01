@@ -361,16 +361,18 @@ describe('repeated check failures are recorded and announced', () => {
     getCurrentVersion: () => '0.3.0',
   });
 
-  // `gsd update` does not notify, so an update it installed left the notice an
-  // earlier failed background check wrote, and the next session said "update to
-  // v… failed; still on v…" about the version just installed (pre-tag review of
-  // 0.19.1, reproduced through SessionStart). Once installed, no earlier notice
-  // about updating is true any more.
-  it('an update gsd update installs clears the notice a failed check left', async () => {
+  // 0.19.1 deleted the notice file after a CLI-installed update, so the next
+  // session would not call that update failed. It deleted a `check_failed`
+  // notice too: background checks can keep failing for a reason the shell's
+  // CLI does not share (its proxy route), and that notice was the only word of
+  // it (0.19.1 review F5). The session now skips a notice whose update is
+  // already installed (session-init tests), so the CLI leaves the file alone.
+  it('a CLI-installed update leaves a check_failed notice in place', async () => {
     const ctx = await manualInstall();
     try {
-      await mkdir(join(ctx.runtime), { recursive: true });
-      await writeFile(join(ctx.runtime, 'update-notification.json'), JSON.stringify({ kind: 'failed', from: '0.3.0', to: '0.4.0' }));
+      await mkdir(ctx.runtime, { recursive: true });
+      const notice = { kind: 'check_failed', count: 3, since: '2026-11-01T00:00:00Z', reason: 'ECONNREFUSED' };
+      await writeFile(join(ctx.runtime, 'update-notification.json'), JSON.stringify(notice));
       const res = await ctx.updater.checkForUpdate({
         force: true, install: true, notify: false,
         fetchLatestRelease: async () => ({ version: '0.4.0', tarballUrl: 'https://github.com/x/y.tgz' }),
@@ -378,7 +380,35 @@ describe('repeated check failures are recorded and announced', () => {
         getCurrentVersion: () => '0.3.0',
       });
       assert.equal(res?.updated, true, JSON.stringify(res));
-      assert.equal(await ctx.notification(), null, 'the stale "failed" notice must be gone');
+      assert.deepEqual(await ctx.notification(), notice);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  // The throttled path replays the last check's "update available" without
+  // looking at what is installed now. After that update went in another way
+  // (`npx gsd-lite@latest install`, a forced update), a plain `update` within
+  // the day still announced the installed version as available (0.19.1 F3).
+  it('a throttled check does not replay an update that is already installed', async () => {
+    const ctx = await manualInstall();
+    try {
+      await mkdir(ctx.runtime, { recursive: true });
+      await writeFile(join(ctx.runtime, 'update-state.json'), JSON.stringify({
+        lastCheck: new Date().toISOString(), updateAvailable: true, latestVersion: '0.4.0',
+      }));
+      const res = await ctx.updater.checkForUpdate({
+        install: true, notify: false,
+        fetchLatestRelease: async () => assert.fail('throttled: no fetch'),
+        getCurrentVersion: () => '0.4.0',
+      });
+      assert.equal(res, null, JSON.stringify(res));
+      const stillBehind = await ctx.updater.checkForUpdate({
+        install: true, notify: false,
+        fetchLatestRelease: async () => assert.fail('throttled: no fetch'),
+        getCurrentVersion: () => '0.3.0',
+      });
+      assert.equal(stillBehind?.action, 'cached', 'premise: an older install still gets the replay');
     } finally {
       await ctx.cleanup();
     }

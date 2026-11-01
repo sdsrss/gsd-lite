@@ -457,6 +457,53 @@ describe('session init prints only versions from an update notification', () => 
   });
 });
 
+// A notice about an update that has since gone in another way (`npx gsd-lite
+// update`, `npx gsd-lite@latest install`, `claude plugin update`) is stale.
+// The next session still said the update failed, or was available, naming the
+// version now installed (0.19.1 review F3/F4). And the commands it named were
+// `gsd update`, which an npx-only install does not have on PATH.
+describe('session init speaks only of updates that are not installed yet', () => {
+  async function session(notice, installed) {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-si-stale-'));
+    const home = join(root, 'home');
+    const claudeDir = join(home, '.claude');
+    try {
+      await mkdir(join(claudeDir, 'hooks'), { recursive: true });
+      await mkdir(join(claudeDir, 'gsd', 'runtime'), { recursive: true });
+      cpSync(SESSION_INIT, join(claudeDir, 'hooks', 'gsd-session-init.cjs'));
+      cpSync(AUTO_UPDATE, join(claudeDir, 'hooks', 'gsd-auto-update.cjs'));
+      cpSync(LIB_DIR, join(claudeDir, 'hooks', 'lib'), { recursive: true });
+      await writeFile(join(claudeDir, 'gsd', 'package.json'), JSON.stringify({ name: 'gsd-lite', version: installed }));
+      await writeFile(join(claudeDir, 'gsd', '.install-mode'), 'manual\n');
+      await writeFile(join(claudeDir, 'gsd', 'runtime', 'update-notification.json'), JSON.stringify(notice));
+      return execFileSync(process.execPath, [join(claudeDir, 'hooks', 'gsd-session-init.cjs')], {
+        cwd: root, env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' }, encoding: 'utf8', timeout: 6000,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it('a failed update that has since been installed is not reported', async () => {
+    const out = await session({ kind: 'failed', from: '0.19.0', to: '0.19.1' }, '0.19.1');
+    assert.doesNotMatch(out, /GSD-Lite update/, out);
+  });
+
+  it('an available update that has since been installed is not reported', async () => {
+    const out = await session({ kind: 'available', from: '0.19.0', to: '0.19.1' }, '0.19.1');
+    assert.doesNotMatch(out, /GSD-Lite update/, out);
+  });
+
+  it('an update still ahead is reported, with a command an npx install can run', async () => {
+    const failed = await session({ kind: 'failed', from: '0.19.0', to: '0.19.1' }, '0.19.0');
+    assert.match(failed, /update to v0\.19\.1 failed; still on v0\.19\.0/, failed);
+    assert.match(failed, /npx gsd-lite update --force/, failed);
+    const available = await session({ kind: 'available', from: '0.19.0', to: '0.19.1' }, '0.19.0');
+    assert.match(available, /update available: v0\.19\.0 → v0\.19\.1/, available);
+    assert.match(available, /npx gsd-lite update --force/, available);
+  });
+});
+
 describe('session init reports update checks that keep failing', () => {
   it('prints the streak and the reason, sanitised, and clears the notice', async () => {
     const root = await mkdtemp(join(tmpdir(), 'gsd-si-checkfail-'));

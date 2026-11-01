@@ -268,10 +268,14 @@ async function checkForUpdate(options = {}) {
         if (verbose && Number.isInteger(failure?.count) && typeof failure.reason === 'string') {
           console.log(`The last check failed (${failure.count} in a row): ${failure.reason}`);
         }
-        if (state.updateAvailable && state.latestVersion) {
+        // Only while it is still ahead of what is installed: that update may
+        // have gone in another way since (`npx gsd-lite@latest install`, a
+        // forced update), and replaying it announced the installed version.
+        const installedNow = state.updateAvailable && state.latestVersion ? getCurrentVersionImpl(installMode) : null;
+        if (installedNow && compareVersions(state.latestVersion, installedNow) > 0) {
           return {
             updateAvailable: true,
-            from: getCurrentVersionImpl(installMode),
+            from: installedNow,
             to: state.latestVersion,
             // Nothing was fetched and nothing was installed — this is last
             // check's answer, replayed. Labelled so a caller does not report it
@@ -386,13 +390,10 @@ async function checkForUpdate(options = {}) {
           writeNotification(success
             ? { kind: 'updated', from: currentVersion, to: latest.version }
             : { kind: 'failed', from: currentVersion, to: latest.version });
-        } else if (success) {
-          // `gsd update` does not notify, and it printed the result itself. A
-          // notice an earlier background check left ("failed", "available")
-          // is about the update just installed; left in place, the next
-          // session reported that update as failed.
-          clearNotification();
         }
+        // A non-notifying run (`gsd update`) leaves the notice file alone: the
+        // session skips a notice whose update is already installed, and a
+        // `check_failed` notice about the background checks stays true.
 
         return {
           updateAvailable: !success,
@@ -559,6 +560,13 @@ async function fetchLatestRelease(token) {
 
     const data = await res.json();
     if (!data.tag_name) return { error: 'the latest release has no tag' };
+    // A version or nothing: every later step (compareVersions, requiresSignature,
+    // the asset name) reads this string as one. `vv0.8.2` passed through as
+    // `v0.8.2` and read as the unsigned-era 0.8.2 in requiresSignature.
+    const version = String(data.tag_name).replace(/^v/, '');
+    if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
+      return { error: 'the latest release tag is not a version' };
+    }
     // R-11: prefer the CI-published deterministic npm-pack asset (gsd-lite-X.Y.Z.tgz).
     // Its bytes — and therefore its SHA-256 — are fixed at publish time, so the
     // `sha256:` in the release body is enforceable. GitHub's source tarball_url has
@@ -589,7 +597,7 @@ async function fetchLatestRelease(token) {
     // silently truncated to a wrong-length capture.
     const sigMatch = lastMatch(/\bsig[:=]\s*([A-Za-z0-9+/=]{80,120})\s*$/gim);
     return {
-      version: data.tag_name.replace(/^v/, ''),
+      version,
       tarballUrl: downloadUrl,
       releaseUrl: data.html_url,
       checksum: checksumMatch ? checksumMatch[1].toLowerCase() : null,
@@ -858,14 +866,6 @@ function writeNotification(notification) {
   }
 }
 
-function clearNotification() {
-  try {
-    fs.rmSync(NOTIFICATION_FILE, { force: true });
-  } catch {
-    /* silent */
-  }
-}
-
 /**
  * The one line a CLI should add on top of checkForUpdate's own verbose output.
  *
@@ -891,7 +891,9 @@ function describeUpdateOutcome(result) {
       return `\n! Update available: v${result.to} (from an earlier check). Run: claude plugin update gsd@gsd`;
     }
     return `\n! Update available: v${result.to} (from an earlier check — this run was throttled).`
-      + '\n  Run `gsd update --force` to check again now.';
+      // npx form: an npx-only install has no `gsd` on PATH, and npx runs a
+      // global copy where there is one.
+      + '\n  Run `npx gsd-lite update --force` to check again now.';
   }
   return `\n! Update available v${result.to} but the install did not complete. Try manually.`;
 }

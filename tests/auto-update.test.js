@@ -842,6 +842,27 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
     });
   });
 
+  // A tag is an update only if it is a version. `vv0.8.2` lost one `v` here and
+  // reached requiresSignature as `v0.8.2`, read there as the unsigned-era 0.8.2
+  // (0.19.1 review F6). Refused at the source, everything after sees a version.
+  it('fetchLatestRelease refuses a tag that is not a version', async () => {
+    await withRealModule(async (mod) => {
+      const realFetch = globalThis.fetch;
+      const tagged = (tag) => { globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ tag_name: tag, tarball_url: TARBALL_URL, body: '' }) }); };
+      try {
+        for (const tag of ['vv0.8.2', 'v0+.99.0', 'v1.0', 'release-1.0.0', 'v1.0.0+build', ' v1.0.0']) {
+          tagged(tag);
+          const latest = await mod.fetchLatestRelease(null);
+          assert.match(String(latest?.error), /not a version/, `${JSON.stringify(tag)} -> ${JSON.stringify(latest)}`);
+        }
+        tagged('v1.2.3-rc.1');
+        assert.equal((await mod.fetchLatestRelease(null)).version, '1.2.3-rc.1', 'a prerelease tag is still a version');
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
   // Every way the check can come back empty says which, for update-state.json
   // and the SessionStart notice; a bare null was what made a stopped updater
   // invisible. A 403 stays `false`, the rate-limit signal.
@@ -1096,6 +1117,9 @@ describe('describeUpdateOutcome', () => {
       assert.match(line, /0\.2\.0/);
       assert.doesNotMatch(line, /failed/i, 'no install was attempted on the throttled path');
       assert.match(line, /--force/, 'tell the user how to re-check');
+      // An npx-only install has no `gsd` on PATH; npx runs a global copy where
+      // there is one, so this form works for both.
+      assert.match(line, /npx gsd-lite update --force/, 'a command an npx-only install can run');
     });
   });
 
