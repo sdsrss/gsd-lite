@@ -2,7 +2,40 @@
 
 All notable changes to this project are documented here.
 
-## [0.20.0] - 2026-11-01
+## [0.20.1] - 2026-11-02
+
+Patch: the updater no longer installs a release that needs a newer Node.js
+than the one it runs on.
+
+**Do I have to do anything?**
+
+- **On Node 22 or later:** nothing.
+- **On Node 20:** releases require Node 22 (`engines` is `>=22.0.0` since
+  0.20.0), and this updater now checks that, so from the next release on an
+  npx or global install is not updated, and a plugin install is told to
+  upgrade Node.js before updating. The session says which Node.js the
+  release needs; move to Node 22 or 24 to get updates again.
+- **npx install still on 0.19.0 or earlier:** do what the 0.19.1 entry's
+  "Do I have to do anything?" says, once.
+
+- **The updater checks which Node.js a release needs.** An npx or global
+  install reads `engines.node` from the downloaded release after its
+  checksum and signature are verified, and before anything is installed.
+  When the Node.js running the updater is older, the release is not
+  installed, and the next session says which version it needs;
+  `npx gsd-lite update` says the same. Until now every release was
+  installed: npm checks `engines` only when npx or npm fetches a package,
+  and the updater does neither.
+
+- **A plugin install is told to upgrade Node.js first.** Claude Code
+  installs plugin updates, so gsd cannot hold one back. When the release
+  needs a newer Node.js, the update notice now says so instead of offering
+  the update. When that requirement cannot be read from GitHub, the notice
+  is the usual one.
+
+- **`/gsd:doctor` reports an update held back this way.**
+
+## [0.20.0] - 2026-11-02
 
 Minor, not patch: Node.js 22 is now the oldest version gsd-lite supports.
 Node 20 reached end of life on 2026-04-30.
