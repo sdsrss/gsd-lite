@@ -9,16 +9,18 @@ than the one it runs on.
 
 **Do I have to do anything?**
 
-- **On Node 22 or later:** nothing.
+- **npx install still on 0.19.0 or earlier:** its updater cannot install a
+  release. On Node 22 or later, do what the 0.19.1 entry's "Do I have to do
+  anything?" says, once. On Node 20 that command declines this release;
+  move to Node 22 or later first.
+- **Otherwise, on Node 22 or later:** nothing.
 - **On Node 20:** releases require Node 22 (`engines` is `>=22.0.0` since
-  0.20.0), and gsd now checks that before installing one. An npx or global
-  install running 0.20.1 is not updated again until it moves to Node 22 or
-  later, and a plugin install is told to upgrade Node.js before updating;
-  the session says which Node.js a release needs. This release is checked
-  too: on Node 20, 0.20.1's own `npx gsd-lite update` declines 0.20.1.
-- **npx install still on 0.19.0 or earlier:** on Node 22 or later, do what
-  the 0.19.1 entry's "Do I have to do anything?" says, once. On Node 20
-  that command declines this release; move to Node 22 or later first.
+  0.20.0), and gsd checks that from this release on. An npx or global
+  install on 0.19.1 or 0.20.0 still gets 0.20.1 from its daily update,
+  because those versions do not check; once on 0.20.1, it is not updated
+  again until it moves to Node 22 or later. A plugin install running 0.20.1
+  is told to upgrade Node.js before updating to such a release. The session
+  says which Node.js a release needs.
 
 - **The updater checks which Node.js a release needs.** An npx or global
   install reads `engines.node` from the downloaded release after its
