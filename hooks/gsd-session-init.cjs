@@ -313,9 +313,9 @@ setTimeout(() => process.exit(0), 4000).unref();
       // `npx gsd-lite@latest install`, `claude plugin update`). Judged against
       // the install the notice is about, not the one running this: an npx
       // install and a project-scope plugin share this file, and each runs its
-      // own copy of this hook. `plugin_update` (written whenever the updater
-      // runs in plugin mode, from either copy) is about the plugin, whose
-      // version only the plugin's copy can see, so the npx copy shows it.
+      // own copy of this hook. `plugin_update` (written by the background
+      // check in plugin mode, from either copy) is about the plugin; this
+      // reads only its own copy's version, so the npx copy shows it.
       // `failed` comes from an npx or global install, whose version is the
       // runtime's. On any doubt (no way to tell, unreadable version, `to` not
       // a plain version) it is shown.

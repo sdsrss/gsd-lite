@@ -9,16 +9,17 @@ Node 20 reached end of life on 2026-04-30.
 
 **Do I have to do anything?**
 
-- **npx install still on 0.19.0 or earlier**, on any Node version: the
-  updater those versions shipped cannot install a release. Do what the
-  0.19.1 entry's "Do I have to do anything?" says, once.
+- **npx install still on 0.19.0 or earlier:** the updater those versions
+  shipped cannot install a release. Do what the 0.19.1 entry's "Do I have
+  to do anything?" says, once.
 - **Otherwise, on Node 22 or later:** nothing.
 - **On Node 20:** move to Node 22 or 24. Nothing in 0.20.0 needs Node 22
-  yet, so it still runs on Node 20, but it is no longer tested there, and
-  later releases may use Node 22 features. npm warns (`EBADENGINE`) when
-  `npx` or `npm install` fetches it, though not during the daily update
-  check or a plugin update; with npm's `engine-strict` set, npm refuses
-  instead.
+  yet, so it still runs on Node 20 unless npm's `engine-strict` is set, but
+  it is no longer tested there, and later releases may use Node 22
+  features. npm warns (`EBADENGINE`) when `npx` or `npm install` fetches
+  it, though not during the daily update check or a plugin update. With
+  `engine-strict` set, npm refuses instead: npx will not run it, the daily
+  update fails, and after a plugin update the MCP server does not start.
   To stay on 0.19.1 with an npx install: `npx gsd-lite@0.19.1 install`, and
   run Claude Code with `PLUGIN_AUTO_UPDATE=1` in its environment so the daily
   update check does not install a newer release. That does not work for a
@@ -32,9 +33,9 @@ Node 20 reached end of life on 2026-04-30.
   an update went in another way (`npx gsd-lite@latest install`,
   `claude plugin update`), the next session no longer reports that version as
   failed or as available, and a throttled `npx gsd-lite update` no longer
-  announces it as available. One exception: with an npx install and a plugin
-  installed for one project only, a session in another project cannot see the
-  plugin's version, so a plugin update notice is still shown there once.
+  announces it as available. A plugin update notice can still be shown once
+  where an npx install's hook runs and the plugin is installed only for some
+  projects: that hook does not look up the plugin's version.
 
 - **A "could not check for updates" notice survives a manual update.** In
   0.19.1, an update installed by `gsd update` also deleted that notice,
