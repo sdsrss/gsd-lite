@@ -1413,14 +1413,20 @@ describe('downloadAndInstall works in a directory only it can reach', () => {
   const REPORT_DIR = 'const fs = require("node:fs");\n'
     + 'fs.writeFileSync(process.env.GSD_TEST_MARKER, JSON.stringify({ dir: __dirname, mode: fs.statSync(__dirname).mode & 0o777 }));\n';
 
+  // os.tmpdir() reads TMPDIR on POSIX and TEMP/TMP on Windows.
+  const TMP_VARS = ['TMPDIR', 'TMP', 'TEMP'];
+  const pointTmpdirAt = (dir) => { for (const k of TMP_VARS) process.env[k] = dir; };
+
   async function withTmpdir(fn) {
     const tmp = await mkdtemp(join(tmpdir(), 'gsd-tmpdir-'));
-    const saved = process.env.TMPDIR;
-    process.env.TMPDIR = tmp;
+    const saved = Object.fromEntries(TMP_VARS.map((k) => [k, process.env[k]]));
+    pointTmpdirAt(tmp);
     try {
       return await fn(tmp);
     } finally {
-      if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved;
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
       await rm(tmp, { recursive: true, force: true });
     }
   }
@@ -1475,7 +1481,7 @@ describe('downloadAndInstall works in a directory only it can reach', () => {
       await withTmpdir(async (tmp) => {
         const file = join(tmp, 'a-file');
         await writeFile(file, '');
-        process.env.TMPDIR = file;
+        pointTmpdirAt(file);
         const { bytes, sha256 } = await buildFixtureTarball(root);
         const ok = await mod.downloadAndInstall(TARBALL_URL, false, null, {
           expectedChecksum: sha256,
@@ -1492,7 +1498,7 @@ describe('downloadAndInstall works in a directory only it can reach', () => {
   it('still installs when TMPDIR does not exist yet', async () => {
     await withRealModule(async (mod, root, marker) => {
       await withTmpdir(async (tmp) => {
-        process.env.TMPDIR = join(tmp, 'not', 'yet');
+        pointTmpdirAt(join(tmp, 'not', 'yet'));
         const { bytes, sha256 } = await buildFixtureTarball(root);
         const ok = await mod.downloadAndInstall(TARBALL_URL, false, null, {
           expectedChecksum: sha256,
