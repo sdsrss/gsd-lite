@@ -4,7 +4,8 @@
 // warnings when context usage is high.
 //
 // Architecture:
-// 1. StatusLine hook writes metrics to /tmp/gsd-ctx-{session_id}.json
+// 1. StatusLine hook writes metrics to gsd-ctx-{session_id}.json in the
+//    private directory lib/ctx-bridge.cjs picks (not the shared temp dir)
 // 2. This hook reads those metrics after each tool use
 // 3. When remaining context drops below thresholds, injects a warning
 //    via hookSpecificOutput.additionalContext
@@ -111,18 +112,18 @@ process.stdin.on('end', () => {
     const isCritical = remaining <= CRITICAL_THRESHOLD;
     const currentLevel = isCritical ? 'critical' : 'warning';
 
-    // Atomic debounce state write helper. warnPath sits in os.tmpdir(), which is
-    // world-writable on a shared host, and both halves of the old temp name were
-    // derivable — same planted-symlink exposure as the statusline bridge this
-    // file reads from. atomicWrite opens the temp O_EXCL under a random name,
-    // and its rename evicts a planted link instead of being stopped by one.
+    // Atomic debounce state write helper. warnPath is in ctx-bridge's private
+    // directory, next to the metrics file. atomicWrite opens the temp O_EXCL
+    // under a random name, and its rename evicts a planted link instead of
+    // being stopped by one.
     //
     // Best effort, and that is the whole point: this file is bookkeeping, the
     // warning below is the product. A throw here used to reach the outer catch
-    // and exit 0 with empty stdout, so planting a symlink at a path anyone can
-    // derive from `ls /tmp/gsd-ctx-*` silently suppressed every context-exhaustion
-    // warning for that session. Failing to debounce means the warning may repeat —
-    // noisy, and noticed. Losing the warning is silent, and is not.
+    // and exit 0 with empty stdout, so when these files lived in /tmp, a symlink
+    // planted at a path anyone could derive from `ls /tmp/gsd-ctx-*` silently
+    // suppressed every context-exhaustion warning for that session. Failing to
+    // debounce means the warning may repeat — noisy, and noticed. Losing the
+    // warning is silent, and is not.
     const writeWarnData = (data) => {
       try {
         atomicWrite(warnPath, JSON.stringify(data));
