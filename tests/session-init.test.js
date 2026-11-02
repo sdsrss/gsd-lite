@@ -504,6 +504,72 @@ describe('session init speaks only of updates that are not installed yet', () =>
   });
 });
 
+describe('with an npx install and a project-scope plugin, a notice is judged against the install that wrote it', () => {
+  // Both installs read the one notice file. The npx install's copy of this hook
+  // runs in every project; the plugin's copy runs in the project it was
+  // installed for, where the npx copy stands down. Each has its own version.
+  async function session({ notice, runtime, plugin, copy }) {
+    const root = await mkdtemp(join(tmpdir(), 'gsd-si-writer-'));
+    const home = join(root, 'home');
+    const claudeDir = join(home, '.claude');
+    const project = join(root, 'project');
+    const pluginDir = join(claudeDir, 'plugins', 'cache', 'gsd', 'gsd', plugin);
+    try {
+      await mkdir(project, { recursive: true });
+      await mkdir(join(claudeDir, 'gsd', 'runtime'), { recursive: true });
+      for (const hooks of [join(claudeDir, 'hooks'), join(pluginDir, 'hooks')]) {
+        await mkdir(hooks, { recursive: true });
+        cpSync(SESSION_INIT, join(hooks, 'gsd-session-init.cjs'));
+        cpSync(AUTO_UPDATE, join(hooks, 'gsd-auto-update.cjs'));
+        cpSync(LIB_DIR, join(hooks, 'lib'), { recursive: true });
+      }
+      await writeFile(join(pluginDir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version: plugin }));
+      await writeFile(join(claudeDir, 'gsd', 'package.json'), JSON.stringify({ name: 'gsd-lite', version: runtime }));
+      await writeFile(join(claudeDir, 'gsd', '.install-mode'), 'manual\n');
+      await writeFile(join(claudeDir, 'plugins', 'installed_plugins.json'), JSON.stringify({
+        version: 2,
+        plugins: { 'gsd@gsd': [{ scope: 'project', projectPath: project, installPath: pluginDir, version: plugin }] },
+      }));
+      await writeFile(join(claudeDir, 'gsd', 'runtime', 'update-notification.json'), JSON.stringify(notice));
+      // The plugin's copy in its project; the npx copy anywhere else.
+      const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, PLUGIN_AUTO_UPDATE: '1' };
+      delete env.CLAUDE_PLUGIN_ROOT;
+      if (copy === 'plugin') env.CLAUDE_PLUGIN_ROOT = pluginDir;
+      const script = join(copy === 'plugin' ? join(pluginDir, 'hooks') : join(claudeDir, 'hooks'), 'gsd-session-init.cjs');
+      return execFileSync(process.execPath, [script], {
+        cwd: copy === 'plugin' ? project : root, env, encoding: 'utf8', timeout: 6000,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it("the plugin's copy reports the npx install's failed update, which the plugin's version does not settle", async () => {
+    const out = await session({
+      notice: { kind: 'failed', from: '0.19.1', to: '0.20.0' }, runtime: '0.19.1', plugin: '0.20.0', copy: 'plugin',
+    });
+    assert.match(out, /update to v0\.20\.0 failed; still on v0\.19\.1/, out);
+  });
+
+  it("the npx copy reports the plugin's available update, which the npx install's version does not settle", async () => {
+    const out = await session({
+      notice: { kind: 'available', from: '0.19.1', to: '0.20.0', action: 'plugin_update' }, runtime: '0.20.0', plugin: '0.19.1', copy: 'npx',
+    });
+    assert.match(out, /update available: v0\.19\.1 → v0\.20\.0\. Update it from \/plugin/, out);
+  });
+
+  it("each copy stays quiet about an update its own install has since taken", async () => {
+    const plugin = await session({
+      notice: { kind: 'available', from: '0.19.1', to: '0.20.0', action: 'plugin_update' }, runtime: '0.19.1', plugin: '0.20.0', copy: 'plugin',
+    });
+    assert.doesNotMatch(plugin, /GSD-Lite update/, plugin);
+    const npx = await session({
+      notice: { kind: 'failed', from: '0.19.1', to: '0.20.0' }, runtime: '0.20.0', plugin: '0.19.1', copy: 'npx',
+    });
+    assert.doesNotMatch(npx, /GSD-Lite update/, npx);
+  });
+});
+
 describe('session init reports update checks that keep failing', () => {
   it('prints the streak and the reason, sanitised, and clears the notice', async () => {
     const root = await mkdtemp(join(tmpdir(), 'gsd-si-checkfail-'));
