@@ -16,7 +16,9 @@ Patch: a security fix in the updater of npx and global installs.
   run that copy's updater. This matters most on Node 20, where 0.20.1's
   updater never installs this release and downloads and unpacks it again,
   the old way, at every daily check. npm warns there (`EBADENGINE`) and
-  installs it anyway, unless `engine-strict` is set.
+  installs it anyway. With `engine-strict` set, npm refuses it: move to
+  Node 22 or later first, or until you can, run Claude Code with
+  `PLUGIN_AUTO_UPDATE=1` in its environment, which stops the daily check.
 - **Otherwise:** nothing.
 
 - **The updater unpacks a release where only you can reach it.** It
@@ -26,8 +28,8 @@ Patch: a security fix in the updater of npx and global installs.
   account on the same computer that had created it, open to everyone, could
   replace the release's `install.js` after its checksum and signature were
   checked, and the updater then ran that code as you. 0.20.2's updater, in
-  the daily update and in `npx gsd-lite update`, unpacks into a new folder
-  with a random name that only you can open.
+  the daily update, `gsd update` and `npx gsd-lite update`, unpacks into a
+  new folder with a random name that only you can open.
 
 ## [0.20.1] - 2026-11-02
 
