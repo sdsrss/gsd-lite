@@ -50,7 +50,8 @@ Node 20 reached end of life on 2026-04-30.
   yet, so it still runs on Node 20 unless npm's `engine-strict` is set, but
   it is no longer tested there, and later releases may use Node 22
   features. npm warns (`EBADENGINE`) when `npx` or `npm install` fetches
-  it, though not during the daily update check or a plugin update. With
+  it. It also warns during the daily update and after a plugin update,
+  into output nobody sees. With
   `engine-strict` set, npm refuses instead: npx will not run it, the daily
   update fails, and after a plugin update the MCP server does not start.
   To stay on 0.19.1 with an npx install: `npx gsd-lite@0.19.1 install`, and
