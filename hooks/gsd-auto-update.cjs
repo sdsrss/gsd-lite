@@ -791,8 +791,8 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
     // after the checks below and before it ran. The same name also put two
     // updates started in one millisecond in one directory. mkdtemp makes a new
     // one with a random name, no access for group or others, and never takes
-    // an existing one. The
-    // mkdirSync keeps what the old call also did: create a TMPDIR not there yet.
+    // an existing one. The mkdirSync keeps what the old call also did: create
+    // a TMPDIR that is not there yet.
     fs.mkdirSync(os.tmpdir(), { recursive: true });
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-update-'));
 
