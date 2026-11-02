@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { cpSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cpSync, realpathSync } from 'node:fs';
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const SOURCE = join(import.meta.dirname, '..', 'hooks', 'gsd-auto-update.cjs');
 const LIB_DIR = join(import.meta.dirname, '..', 'hooks', 'lib');
@@ -542,12 +542,12 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
   const INSTALL_MARKER = 'require("node:fs").writeFileSync(process.env.GSD_TEST_MARKER, "installed");\n';
   const TARBALL_URL = 'https://codeload.github.com/sdsrss/gsd-lite/tar.gz/refs/tags/v9.9.9';
 
-  async function buildFixtureTarball(rootDir, version = '9.9.9', extraPackageFields = {}) {
+  async function buildFixtureTarball(rootDir, version = '9.9.9', extraPackageFields = {}, installScript = INSTALL_MARKER) {
     const pkgDirName = `gsd-lite-${version}`;
     const pkgDir = join(rootDir, pkgDirName);
     await mkdir(pkgDir, { recursive: true });
     await writeFile(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version, ...extraPackageFields }) + '\n');
-    await writeFile(join(pkgDir, 'install.js'), INSTALL_MARKER);
+    await writeFile(join(pkgDir, 'install.js'), installScript);
     const tarballPath = join(rootDir, 'release.tar.gz');
     const r = spawnSync('tar', ['czf', tarballPath, '-C', rootDir, pkgDirName]);
     assert.equal(r.status, 0, `tar create failed: ${r.stderr}`);
@@ -1397,6 +1397,111 @@ describe('the updater does not install a release this Node cannot run', () => {
   it('/gsd:doctor reads the requirement the updater records', async () => {
     const doctor = await readFile(join(import.meta.dirname, '..', 'commands', 'doctor.md'), 'utf8');
     assert.match(doctor, /update-state\.json` has `needsNode`/);
+  });
+});
+
+// The release is extracted, and its install.js run, in a temp directory. On
+// Linux that is under /tmp, where every local user can create entries, so it
+// has to be a directory this process just made and no one else can enter. It
+// was gsd-update-<Date.now()>, created with mkdirSync({ recursive: true }),
+// which takes a directory already at that path without a word: another user
+// who made it first, writable by all, could swap the verified install.js
+// before it ran. Freezing the clock pins that name.
+describe('downloadAndInstall works in a directory only it can reach', () => {
+  const NOW = 1_762_000_000_000;
+  // install.js reports where it ran and who could write there.
+  const REPORT_DIR = 'const fs = require("node:fs");\n'
+    + 'fs.writeFileSync(process.env.GSD_TEST_MARKER, JSON.stringify({ dir: __dirname, mode: fs.statSync(__dirname).mode & 0o777 }));\n';
+
+  async function withTmpdir(fn) {
+    const tmp = await mkdtemp(join(tmpdir(), 'gsd-tmpdir-'));
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = tmp;
+    try {
+      return await fn(tmp);
+    } finally {
+      if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved;
+      await rm(tmp, { recursive: true, force: true });
+    }
+  }
+
+  it('does not take a directory someone else made at its path', async (t) => {
+    await withRealModule(async (mod, root, marker) => {
+      await withTmpdir(async (tmp) => {
+        t.mock.method(Date, 'now', () => NOW);
+        const planted = join(tmp, `gsd-update-${NOW}`);
+        await mkdir(planted);
+        await chmod(planted, 0o777);
+        await writeFile(join(planted, 'theirs'), '');
+        // __dirname is a real path; compare real paths, or a symlinked TMPDIR
+        // makes the assertion below pass for the wrong reason. Taken now: the
+        // update removed the directory it took.
+        const plantedReal = realpathSync(planted);
+        const { bytes, sha256 } = await buildFixtureTarball(root, '9.9.9', {}, REPORT_DIR);
+        const ok = await mod.downloadAndInstall(TARBALL_URL, false, null, {
+          expectedChecksum: sha256,
+          fetchImpl: makeFetchImpl(bytes),
+        });
+        assert.equal(ok, true, 'premise: the install succeeded');
+        const ran = JSON.parse(await readFile(marker, 'utf8'));
+        assert.equal(dirname(ran.dir), realpathSync(tmp), 'premise: it ran under TMPDIR');
+        assert.notEqual(ran.dir, plantedReal, 'install.js ran in a directory it did not create');
+        if (process.platform !== 'win32') {
+          assert.equal(ran.mode & 0o077, 0, `mode ${ran.mode.toString(8)}: other users could write where install.js ran`);
+        }
+        assert.deepEqual(await readdir(planted), ['theirs'], 'the other directory is left as it was');
+        assert.deepEqual(await readdir(tmp), [`gsd-update-${NOW}`], 'and its own is removed');
+      });
+    });
+  });
+
+  // The same name is also what two processes got when they started an update
+  // in the same millisecond: the first to finish removed the directory the
+  // other was still writing to (parallel test files, one failure on Node 26).
+  it('two updates started in the same millisecond each get their own', async (t) => {
+    await withRealModule(async (mod, root) => {
+      await withTmpdir(async () => {
+        t.mock.method(Date, 'now', () => NOW);
+        const { bytes, sha256 } = await buildFixtureTarball(root);
+        const opts = { expectedChecksum: sha256, fetchImpl: makeFetchImpl(bytes) };
+        const both = await Promise.all([1, 2].map(() => mod.downloadAndInstall(TARBALL_URL, false, null, opts)));
+        assert.deepEqual(both, [true, true]);
+      });
+    });
+  });
+
+  it('returns false, without throwing, when TMPDIR cannot hold a directory', async () => {
+    await withRealModule(async (mod, root, marker) => {
+      await withTmpdir(async (tmp) => {
+        const file = join(tmp, 'a-file');
+        await writeFile(file, '');
+        process.env.TMPDIR = file;
+        const { bytes, sha256 } = await buildFixtureTarball(root);
+        const ok = await mod.downloadAndInstall(TARBALL_URL, false, null, {
+          expectedChecksum: sha256,
+          fetchImpl: makeFetchImpl(bytes),
+        });
+        assert.equal(ok, false);
+        assert.equal(await markerWritten(marker), false);
+      });
+    });
+  });
+
+  // The old mkdirSync({ recursive: true }) made a TMPDIR that did not exist
+  // yet; the update still goes in there.
+  it('still installs when TMPDIR does not exist yet', async () => {
+    await withRealModule(async (mod, root, marker) => {
+      await withTmpdir(async (tmp) => {
+        process.env.TMPDIR = join(tmp, 'not', 'yet');
+        const { bytes, sha256 } = await buildFixtureTarball(root);
+        const ok = await mod.downloadAndInstall(TARBALL_URL, false, null, {
+          expectedChecksum: sha256,
+          fetchImpl: makeFetchImpl(bytes),
+        });
+        assert.equal(ok, true);
+        assert.equal(await readFile(marker, 'utf8'), 'installed');
+      });
+    });
   });
 });
 });

@@ -779,11 +779,21 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
     // returning false, so the caller can say that rather than "failed".
     onNodeTooOld = null,
   } = opts;
-  const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
+  let tmpDir = null;
   if (fetchImpl === fetch) useEnvProxy();
 
   try {
-    fs.mkdirSync(tmpDir, { recursive: true });
+    // install.js is run from here, so this must be a directory no one else can
+    // have made or can enter. os.tmpdir() is /tmp on Linux, where every local
+    // user can create entries: the name was gsd-update-<Date.now()>, and
+    // mkdirSync({ recursive: true }) took a directory already at that path, so
+    // another user who made it first (writable by all) could swap install.js
+    // after the checks below and before it ran. The same name also put two
+    // updates started in one millisecond in one directory. mkdtemp makes a new
+    // one with a random name, 0700, and never takes an existing one. The
+    // mkdirSync keeps what the old call also did: create a TMPDIR not there yet.
+    fs.mkdirSync(os.tmpdir(), { recursive: true });
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-update-'));
 
     // Download tarball via fetch (no shell interpolation)
     if (verbose) console.log('  Downloading tarball...');
