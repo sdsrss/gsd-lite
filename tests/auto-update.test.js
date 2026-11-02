@@ -1154,8 +1154,8 @@ describe('describeUpdateOutcome', () => {
 });
 
 // 0.20.0 raised engines.node to >=22.0.0, and the updater went on installing
-// the newest release on whatever Node ran it: npm's EBADENGINE comes only when
-// npx or npm fetches a package, and neither runs here. The first release to use
+// the newest release on whatever Node ran it: install.js's `npm ci` only warned
+// about engines, into output nobody reads. The first release to use
 // a Node 22 feature would have reached Node 20 installs with nothing said, and
 // stopped them working (0.20.0 review MEDIUM-2).
 describe('the updater does not install a release this Node cannot run', () => {
