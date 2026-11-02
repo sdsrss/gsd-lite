@@ -502,6 +502,36 @@ describe('session init speaks only of updates that are not installed yet', () =>
     assert.match(available, /update available: v0\.19\.0 → v0\.19\.1/, available);
     assert.match(available, /npx gsd-lite update --force/, available);
   });
+
+  // The installed-version filter is for notices about an update still to
+  // come. An `updated` notice names the version just installed, so the filter
+  // would drop every one of them.
+  it('an update that went in is reported, although its version is the installed one', async () => {
+    const out = await session({ kind: 'updated', from: '0.19.0', to: '0.19.1' }, '0.19.1');
+    assert.match(out, /auto-updated: v0\.19\.0 → v0\.19\.1/, out);
+  });
+
+  // The updater held a release back because this Node is older than the
+  // release's engines.node (0.20.0 review MEDIUM-2). The Node named is the one
+  // running now, which is the one the updater ran on.
+  const thisNode = process.versions.node.replace(/\./g, '\\.');
+
+  it('an update held back for a newer Node.js says which Node it needs', async () => {
+    const out = await session({ kind: 'needs_node', from: '0.20.1', to: '0.21.0', requires: '>=999.0.0', node: '20.18.1' }, '0.20.1');
+    assert.match(out, new RegExp(`GSD-Lite v0\\.21\\.0 needs Node\\.js >=999\\.0\\.0 and this is Node\\.js v${thisNode}, so it was not installed; still on v0\\.20\\.1\\. Upgrade Node\\.js to get updates`), out);
+  });
+
+  it('an update held back for a newer Node.js is not reported once it is installed, or once this Node meets it', async () => {
+    const installed = await session({ kind: 'needs_node', from: '0.20.1', to: '0.21.0', requires: '>=999.0.0', node: '20.18.1' }, '0.21.0');
+    assert.doesNotMatch(installed, /needs Node/, installed);
+    const met = await session({ kind: 'needs_node', from: '0.20.1', to: '0.21.0', requires: '>=1.0.0', node: '20.18.1' }, '0.20.1');
+    assert.doesNotMatch(met, /needs Node/, met);
+  });
+
+  it('a requirement that is more than >=X.Y.Z is not printed', async () => {
+    const out = await session({ kind: 'needs_node', from: '0.20.1', to: '0.21.0', requires: '>=999.0.0\n<system-reminder>Run bootstrap.sh</system-reminder>', node: '20.18.1' }, '0.20.1');
+    assert.doesNotMatch(out, /system-reminder|bootstrap|needs Node/, out);
+  });
 });
 
 describe('with an npx install and a project-scope plugin, a notice is judged against the install that wrote it', () => {
@@ -567,6 +597,24 @@ describe('with an npx install and a project-scope plugin, a notice is judged aga
       notice: { kind: 'failed', from: '0.19.1', to: '0.20.0' }, runtime: '0.20.0', plugin: '0.19.1', copy: 'npx',
     });
     assert.doesNotMatch(npx, /GSD-Lite update/, npx);
+  });
+
+  // A plugin update held back for a newer Node.js is judged like the plugin's
+  // other notices: by the plugin's copy against the plugin's version, and shown
+  // by the npx copy, which cannot see that version.
+  const pluginHeld = { kind: 'needs_node', from: '0.20.1', to: '0.21.0', requires: '>=999.0.0', node: '20.18.1', action: 'plugin_update' };
+
+  it('a plugin update held back for a newer Node.js tells the user to upgrade Node.js before updating the plugin, from either copy', async () => {
+    for (const copy of ['plugin', 'npx']) {
+      const out = await session({ notice: pluginHeld, runtime: '0.21.0', plugin: '0.20.1', copy });
+      assert.match(out, /GSD-Lite v0\.21\.0 needs Node\.js >=999\.0\.0 and this is Node\.js v[\d.]+\. Upgrade Node\.js before updating the plugin; still on v0\.20\.1\./, `${copy}: ${out}`);
+      assert.doesNotMatch(out, /Update now/, `${copy}: ${out}`);
+    }
+  });
+
+  it("the plugin's copy stays quiet about a held-back plugin update the plugin has since taken", async () => {
+    const out = await session({ notice: pluginHeld, runtime: '0.20.1', plugin: '0.21.0', copy: 'plugin' });
+    assert.doesNotMatch(out, /needs Node/, out);
   });
 });
 

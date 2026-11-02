@@ -72,6 +72,8 @@ describe('auto update install modes', () => {
         install: true,
         notify: true,
         fetchLatestRelease: async () => ({ version: '0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+        // A plugin install reads the release's Node requirement from GitHub; not here.
+        fetchNodeRequirement: async () => null,
         downloadAndInstall: async () => { installCalled = true; return true; },
       });
 
@@ -114,6 +116,8 @@ describe('auto update install modes', () => {
           force: true,
           install: true,
           fetchLatestRelease: async () => ({ version: '0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+          // A plugin install reads the release's Node requirement from GitHub; not here.
+          fetchNodeRequirement: async () => null,
           downloadAndInstall: async () => { installCalled = true; return true; },
         });
         assert.equal(ctx.mod.getInstallMode(), 'plugin');
@@ -538,11 +542,11 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
   const INSTALL_MARKER = 'require("node:fs").writeFileSync(process.env.GSD_TEST_MARKER, "installed");\n';
   const TARBALL_URL = 'https://codeload.github.com/sdsrss/gsd-lite/tar.gz/refs/tags/v9.9.9';
 
-  async function buildFixtureTarball(rootDir, version = '9.9.9') {
+  async function buildFixtureTarball(rootDir, version = '9.9.9', extraPackageFields = {}) {
     const pkgDirName = `gsd-lite-${version}`;
     const pkgDir = join(rootDir, pkgDirName);
     await mkdir(pkgDir, { recursive: true });
-    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version }) + '\n');
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gsd-lite', version, ...extraPackageFields }) + '\n');
     await writeFile(join(pkgDir, 'install.js'), INSTALL_MARKER);
     const tarballPath = join(rootDir, 'release.tar.gz');
     const r = spawnSync('tar', ['czf', tarballPath, '-C', rootDir, pkgDirName]);
@@ -1049,6 +1053,8 @@ describe('auto-update — R-11 integrity verification (real-module E2E)', () => 
         force: true,
         install: true,
         fetchLatestRelease: latestStub('9.9.9'),
+        // A plugin install reads the release's Node requirement from GitHub; not here.
+        fetchNodeRequirement: async () => null,
         getCurrentVersion: () => '0.3.0',
         downloadAndInstall: async () => { downloaded = true; return true; },
       });
@@ -1145,5 +1151,244 @@ describe('describeUpdateOutcome', () => {
     });
   });
 
+});
+
+// 0.20.0 raised engines.node to >=22.0.0, and the updater went on installing
+// the newest release on whatever Node ran it: npm's EBADENGINE comes only when
+// npx or npm fetches a package, and neither runs here. The first release to use
+// a Node 22 feature would have reached Node 20 installs with nothing said, and
+// stopped them working (0.20.0 review MEDIUM-2).
+describe('the updater does not install a release this Node cannot run', () => {
+  const noticePath = (claudeDir) => join(claudeDir, 'gsd', 'runtime', 'update-notification.json');
+  const readNotice = async (claudeDir) => JSON.parse(await readFile(noticePath(claudeDir), 'utf8'));
+
+  it('unmetNodeRequirement reads >=X.Y.Z and nothing else', async () => {
+    await withRealModule(async (mod) => {
+      assert.equal(mod.unmetNodeRequirement('>=22.0.0', '20.18.1'), '>=22.0.0');
+      assert.equal(mod.unmetNodeRequirement('>= 22.14.0', '22.13.9'), '>=22.14.0', 'returned in one spelling');
+      assert.equal(mod.unmetNodeRequirement('>=22.0.0', 'v21.99.99'), '>=22.0.0');
+      for (const v of ['22.0.0', '22.0.1', '24.11.0', '26.8.1', 'v22.0.0', '23.0.0-nightly20250101']) {
+        assert.equal(mod.unmetNodeRequirement('>=22.0.0', v), null, v);
+      }
+      // A form this updater cannot read is not evidence that this Node is too
+      // old: it installs, as every updater before this one did.
+      for (const r of ['^22.0.0', '>=22', '>=22.0', '>=22.0.0 <26', '22.x', '>=20.0.0 || >=22.0.0', '>=22.0.0\nx', '', null, undefined, 22]) {
+        assert.equal(mod.unmetNodeRequirement(r, '20.0.0'), null, JSON.stringify(r));
+      }
+      assert.equal(mod.unmetNodeRequirement('>=22.0.0', 'not a version'), null);
+      // The default is this process's own Node.
+      assert.equal(mod.unmetNodeRequirement('>=999.0.0'), '>=999.0.0');
+      assert.equal(mod.unmetNodeRequirement('>=1.0.0'), null);
+    });
+  });
+
+  it('npx install: a release whose engines.node this Node does not meet is downloaded, verified and not installed', async () => {
+    await withRealModule(async (mod, root, marker) => {
+      const { bytes, sha256 } = await buildFixtureTarball(root, '9.9.9', { engines: { node: '>=22.0.0' } });
+      const told = [];
+      const ok = await mod.downloadAndInstall(TARBALL_URL, false, null, {
+        expectedChecksum: sha256,
+        expectedSignature: signSha(sha256),
+        requireSignature: true,
+        publicKey: testPubPem,
+        fetchImpl: makeFetchImpl(bytes),
+        nodeVersion: '20.18.1',
+        onNodeTooOld: (range) => told.push(range),
+      });
+      assert.equal(ok, false);
+      assert.deepEqual(told, ['>=22.0.0']);
+      assert.equal(await markerWritten(marker), false, 'install.js must not run');
+    });
+  });
+
+  it('npx install: a release whose engines.node this Node meets is installed', async () => {
+    await withRealModule(async (mod, root, marker) => {
+      const { bytes, sha256 } = await buildFixtureTarball(root, '9.9.9', { engines: { node: '>=22.0.0' } });
+      const told = [];
+      const ok = await mod.downloadAndInstall(TARBALL_URL, false, null, {
+        expectedChecksum: sha256,
+        fetchImpl: makeFetchImpl(bytes),
+        nodeVersion: '22.0.0',
+        onNodeTooOld: (range) => told.push(range),
+      });
+      assert.equal(ok, true);
+      assert.deepEqual(told, []);
+      assert.equal(await readFile(marker, 'utf8'), 'installed');
+    });
+  });
+
+  it('npx install: checkForUpdate names the Node the release needs instead of reporting a failed update', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      const result = await ctx.mod.checkForUpdate({
+        force: true,
+        install: true,
+        notify: true,
+        nodeVersion: '20.18.1',
+        fetchLatestRelease: async () => ({ version: '0.3.1', tag: 'v0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+        downloadAndInstall: async (_url, _verbose, _token, opts) => { opts.onNodeTooOld('>=22.0.0'); return false; },
+      });
+      assert.equal(result.updated, false);
+      assert.equal(result.updateAvailable, true);
+      assert.equal(result.needsNode, '>=22.0.0');
+      assert.equal(result.node, '20.18.1');
+      assert.deepEqual(await readNotice(ctx.claudeDir),
+        { kind: 'needs_node', from: '0.3.0', to: '0.3.1', requires: '>=22.0.0', node: '20.18.1' });
+      assert.equal((await readState(ctx.claudeDir)).needsNode, '>=22.0.0');
+      assert.equal(ctx.mod.getCurrentVersion('manual'), '0.3.0');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('a later check that finds nothing held back forgets the requirement', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      await writeState(ctx.claudeDir, {
+        lastCheck: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        latestVersion: '0.3.1', updateAvailable: true, needsNode: '>=22.0.0',
+      });
+      await ctx.mod.checkForUpdate({
+        install: true,
+        nodeVersion: '22.1.0',
+        fetchLatestRelease: async () => ({ version: '0.3.1', tag: 'v0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+        downloadAndInstall: async () => true,
+      });
+      assert.equal((await readState(ctx.claudeDir)).needsNode, undefined);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('plugin install: the notice names the Node the release needs instead of offering the plugin update', async () => {
+    const ctx = await loadAutoUpdate('plugin');
+    const asked = [];
+    try {
+      const result = await ctx.mod.checkForUpdate({
+        force: true,
+        install: true,
+        notify: true,
+        nodeVersion: '20.18.1',
+        // Asked at the tag as published, which need not be `v` + the version.
+        fetchLatestRelease: async () => ({ version: '0.3.1', tag: '0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+        fetchNodeRequirement: async (tag) => { asked.push(tag); return '>=22.0.0'; },
+        downloadAndInstall: async () => assert.fail('a plugin install is not downloaded'),
+      });
+      assert.deepEqual(asked, ['0.3.1']);
+      assert.equal(result.action, 'plugin_update');
+      assert.equal(result.needsNode, '>=22.0.0');
+      assert.equal(result.node, '20.18.1');
+      assert.deepEqual(await readNotice(ctx.claudeDir),
+        { kind: 'needs_node', from: '0.3.0', to: '0.3.1', requires: '>=22.0.0', node: '20.18.1', action: 'plugin_update' });
+      assert.equal((await readState(ctx.claudeDir)).needsNode, '>=22.0.0');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('plugin install: a requirement that is met, or cannot be read, leaves the plugin update notice as it was', async () => {
+    for (const requirement of [null, '>=22.0.0']) {
+      const ctx = await loadAutoUpdate('plugin');
+      try {
+        const result = await ctx.mod.checkForUpdate({
+          force: true,
+          install: true,
+          notify: true,
+          nodeVersion: '22.1.0',
+          fetchLatestRelease: async () => ({ version: '0.3.1', tag: 'v0.3.1', tarballUrl: 'https://example.test/release.tgz' }),
+          fetchNodeRequirement: async () => requirement,
+        });
+        assert.equal(result.needsNode, undefined, String(requirement));
+        assert.deepEqual(await readNotice(ctx.claudeDir),
+          { kind: 'available', from: '0.3.0', to: '0.3.1', action: 'plugin_update' }, String(requirement));
+        assert.equal((await readState(ctx.claudeDir)).needsNode, undefined);
+      } finally {
+        await ctx.cleanup();
+      }
+    }
+  });
+
+  it('a throttled check replays the requirement only while this Node still does not meet it', async () => {
+    const ctx = await loadAutoUpdate('manual');
+    try {
+      await writeState(ctx.claudeDir, {
+        lastCheck: new Date().toISOString(), latestVersion: '0.3.2', updateAvailable: true, needsNode: '>=22.0.0',
+      });
+      const throttled = async () => assert.fail('throttled: nothing is fetched');
+      const held = await ctx.mod.checkForUpdate({ install: true, nodeVersion: '20.18.1', fetchLatestRelease: throttled });
+      assert.equal(held.action, 'cached');
+      assert.equal(held.needsNode, '>=22.0.0');
+      assert.equal(held.node, '20.18.1');
+      const met = await ctx.mod.checkForUpdate({ install: true, nodeVersion: '22.1.0', fetchLatestRelease: throttled });
+      assert.equal(met.action, 'cached');
+      assert.equal(met.needsNode, undefined);
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('fetchLatestRelease keeps the tag the release was published under', async () => {
+    await withRealModule(async (mod) => {
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ tag_name: 'v9.9.9', tarball_url: TARBALL_URL, body: '' }) });
+      try {
+        assert.equal((await mod.fetchLatestRelease(null)).tag, 'v9.9.9');
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
+  it('fetchNodeRequirement reads engines.node from package.json at the tag, and null for anything else', async () => {
+    await withRealModule(async (mod) => {
+      const realFetch = globalThis.fetch;
+      const calls = [];
+      const answer = (res) => { globalThis.fetch = async (url, init) => { calls.push({ url: String(url), init }); return res; }; };
+      const body = (text) => ({ ok: true, status: 200, text: async () => text });
+      try {
+        answer(body(JSON.stringify({ name: 'gsd-lite', engines: { node: '>=22.0.0' } })));
+        assert.equal(await mod.fetchNodeRequirement('v0.21.0', 'tok'), '>=22.0.0');
+        assert.equal(calls[0].url, 'https://api.github.com/repos/sdsrss/gsd-lite/contents/package.json?ref=v0.21.0');
+        assert.equal(calls[0].init.headers.Accept, 'application/vnd.github.raw+json');
+        assert.equal(calls[0].init.headers.Authorization, 'Bearer tok');
+        assert.ok(calls[0].init.signal, 'bounded by a timeout');
+        for (const res of [{ ok: false, status: 404 }, body('not json'), body('{}'), body('null'), body(JSON.stringify({ engines: { node: 22 } }))]) {
+          answer(res);
+          assert.equal(await mod.fetchNodeRequirement('v0.21.0', null), null, JSON.stringify(res));
+        }
+        globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+        assert.equal(await mod.fetchNodeRequirement('v0.21.0', null), null);
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+  });
+
+  it('the update command says which Node a release needs, for each way it can be held back', async () => {
+    await withRealModule(async (mod) => {
+      const held = { updateAvailable: true, from: '0.20.1', to: '0.21.0', needsNode: '>=22.0.0', node: '20.18.1' };
+      const npx = mod.describeUpdateOutcome({ ...held, updated: false, installMode: 'manual' });
+      assert.match(npx, /v0\.21\.0 needs Node\.js >=22\.0\.0 and this is Node\.js v20\.18\.1/);
+      assert.match(npx, /not installed/i);
+      assert.match(npx, /npx gsd-lite update --force/);
+      assert.doesNotMatch(npx, /failed|did not complete/i, 'nothing failed');
+
+      const plugin = mod.describeUpdateOutcome({ ...held, action: 'plugin_update', installMode: 'plugin' });
+      assert.match(plugin, /needs Node\.js >=22\.0\.0 and this is Node\.js v20\.18\.1/);
+      assert.match(plugin, /Upgrade Node\.js first/);
+
+      for (const installMode of ['manual', 'plugin']) {
+        const cached = mod.describeUpdateOutcome({ ...held, action: 'cached', installMode });
+        assert.match(cached, /needs Node\.js >=22\.0\.0/, installMode);
+        assert.match(cached, /earlier check/, installMode);
+      }
+    });
+  });
+
+  // The notice is deleted once shown; doctor reads what the state keeps.
+  it('/gsd:doctor reads the requirement the updater records', async () => {
+    const doctor = await readFile(join(import.meta.dirname, '..', 'commands', 'doctor.md'), 'utf8');
+    assert.match(doctor, /update-state\.json` has `needsNode`/);
+  });
 });
 });

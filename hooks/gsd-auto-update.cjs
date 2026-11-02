@@ -246,6 +246,8 @@ async function checkForUpdate(options = {}) {
     fetchLatestRelease: fetchLatestReleaseImpl = fetchLatestRelease,
     downloadAndInstall: downloadAndInstallImpl = downloadAndInstall,
     getCurrentVersion: getCurrentVersionImpl = getCurrentVersion,
+    fetchNodeRequirement: fetchNodeRequirementImpl = fetchNodeRequirement,
+    nodeVersion = process.versions.node,
     fromCli = false,
   } = options;
   const installMode = getInstallMode({ fromCli });
@@ -273,6 +275,8 @@ async function checkForUpdate(options = {}) {
         // forced update), and replaying it announced the installed version.
         const installedNow = state.updateAvailable && state.latestVersion ? getCurrentVersionImpl(installMode) : null;
         if (installedNow && compareVersions(state.latestVersion, installedNow) > 0) {
+          // Held back for a newer Node last time, and this Node still is not.
+          const needsNode = unmetNodeRequirement(state.needsNode, nodeVersion);
           return {
             updateAvailable: true,
             from: installedNow,
@@ -282,6 +286,7 @@ async function checkForUpdate(options = {}) {
             // as an install that failed.
             action: 'cached',
             installMode,
+            ...(needsNode && { needsNode, node: nodeVersion }),
           };
         }
         if (verbose) console.log('Throttled — last check:', state.lastCheck);
@@ -310,9 +315,11 @@ async function checkForUpdate(options = {}) {
         return null;
       }
 
-      // Successful fetch — clear rate-limit back-off and any failure streak
+      // Successful fetch — clear rate-limit back-off and any failure streak,
+      // and last check's Node requirement, which this check decides afresh.
       state.rateLimited = false;
       delete state.checkFailure;
+      delete state.needsNode;
       const currentVersion = getCurrentVersionImpl(installMode);
       if (verbose) console.log(`Current: v${currentVersion} — Latest: v${latest.version}`);
 
@@ -320,19 +327,24 @@ async function checkForUpdate(options = {}) {
 
       if (hasUpdate) {
         if (installMode === 'plugin' && install) {
+          // Claude Code installs the update, so all this can change is the
+          // advice: not "update" when the release needs a newer Node. When the
+          // requirement cannot be read, the advice is what it was.
+          const needsNode = unmetNodeRequirement(
+            await fetchNodeRequirementImpl(latest.tag ?? `v${latest.version}`, token),
+            nodeVersion,
+          );
           saveState({
             ...state,
             lastCheck: new Date().toISOString(),
             latestVersion: latest.version,
             updateAvailable: true,
+            ...(needsNode && { needsNode }),
           });
           if (notify) {
-            writeNotification({
-              kind: 'available',
-              from: currentVersion,
-              to: latest.version,
-              action: 'plugin_update',
-            });
+            writeNotification(needsNode
+              ? { kind: 'needs_node', from: currentVersion, to: latest.version, requires: needsNode, node: nodeVersion, action: 'plugin_update' }
+              : { kind: 'available', from: currentVersion, to: latest.version, action: 'plugin_update' });
           }
           return {
             updateAvailable: true,
@@ -341,6 +353,7 @@ async function checkForUpdate(options = {}) {
             action: 'plugin_update',
             autoInstallSupported: false,
             installMode,
+            ...(needsNode && { needsNode, node: nodeVersion }),
           };
         }
 
@@ -361,6 +374,7 @@ async function checkForUpdate(options = {}) {
         }
 
         if (verbose) console.log(`Downloading v${latest.version}...`);
+        let needsNode = null;
         const success = await downloadAndInstallImpl(latest.tarballUrl, verbose, token, {
           expectedChecksum: latest.checksum,
           expectedSignature: latest.signature,
@@ -369,6 +383,8 @@ async function checkForUpdate(options = {}) {
           // Gate on the core version so a `0.8.3-rc.1` prerelease of MIN can't be
           // used to slip an unsigned "update" past a pre-MIN client.
           requireSignature: requiresSignature(latest.version),
+          nodeVersion,
+          onNodeTooOld: (requirement) => { needsNode = requirement; },
         });
 
         saveState({
@@ -377,6 +393,7 @@ async function checkForUpdate(options = {}) {
           latestVersion: latest.version,
           updateAvailable: !success,
           lastUpdate: success ? new Date().toISOString() : state.lastUpdate,
+          ...(needsNode && { needsNode }),
         });
 
         // Both outcomes are reported. Only success used to be, so a runtime that
@@ -389,7 +406,9 @@ async function checkForUpdate(options = {}) {
         if (notify) {
           writeNotification(success
             ? { kind: 'updated', from: currentVersion, to: latest.version }
-            : { kind: 'failed', from: currentVersion, to: latest.version });
+            : needsNode
+              ? { kind: 'needs_node', from: currentVersion, to: latest.version, requires: needsNode, node: nodeVersion }
+              : { kind: 'failed', from: currentVersion, to: latest.version });
         }
         // A non-notifying run (`gsd update`) leaves the notice file alone: the
         // session skips a notice whose update is already installed, and a
@@ -401,6 +420,7 @@ async function checkForUpdate(options = {}) {
           from: currentVersion,
           to: latest.version,
           installMode,
+          ...(needsNode && { needsNode, node: nodeVersion }),
         };
       }
 
@@ -598,6 +618,7 @@ async function fetchLatestRelease(token) {
     const sigMatch = lastMatch(/\bsig[:=]\s*([A-Za-z0-9+/=]{80,120})\s*$/gim);
     return {
       version,
+      tag: String(data.tag_name),
       tarballUrl: downloadUrl,
       releaseUrl: data.html_url,
       checksum: checksumMatch ? checksumMatch[1].toLowerCase() : null,
@@ -605,6 +626,29 @@ async function fetchLatestRelease(token) {
     };
   } catch (err) {
     return { error: describeFetchFailure({ err }) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// engines.node of package.json at a release tag, or null when it cannot be
+// read. For a plugin install only, which is not downloaded here (Claude Code
+// updates it), so this is what its notice can go on; an npx install reads the
+// requirement from the verified package instead (downloadAndInstall).
+async function fetchNodeRequirement(tag, token) {
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/package.json?ref=${encodeURIComponent(tag)}`;
+  useEnvProxy();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const headers = { Accept: 'application/vnd.github.raw+json', 'User-Agent': 'gsd-lite-auto-update/1.0' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(url, { signal: controller.signal, headers });
+    if (!res.ok) return null;
+    const node = JSON.parse(await res.text())?.engines?.node;
+    return typeof node === 'string' ? node : null;
+  } catch {
+    return null;
   } finally {
     clearTimeout(timeout);
   }
@@ -634,6 +678,29 @@ function requiresSignature(version) {
   const m = /^v?(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(String(version));
   if (!m) return true;
   return compareVersions(m[1], MIN_SIGNED_VERSION) >= 0;
+}
+
+// ── Node requirement ───────────────────────────────────────
+// A release's engines.node, against the Node that would run it. npm checks
+// engines only when npx or npm fetches a package, and the updater does
+// neither, so without this a release needing a newer Node installed itself on
+// an older one with nothing said (0.20.0 raised the floor to 22).
+//
+// Reads one form, `>=X.Y.Z`. Every updater from 0.20.1 on reads every later
+// release's engines.node with this, so the form cannot change
+// (tests/repo-gates.test.js holds package.json to it). Any other form, or no
+// version to compare, is not evidence that this Node is too old and returns
+// null: the release installs, as it did before this check existed.
+// Returns the requirement in one spelling (digits only) when it is not met.
+function unmetNodeRequirement(range, version = process.versions.node) {
+  const req = /^\s*>=\s*(\d+)\.(\d+)\.(\d+)\s*$/.exec(typeof range === 'string' ? range : '');
+  const have = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(version));
+  if (!req || !have) return null;
+  for (let i = 1; i <= 3; i++) {
+    const diff = Number(have[i]) - Number(req[i]);
+    if (diff !== 0) return diff < 0 ? `>=${Number(req[1])}.${Number(req[2])}.${Number(req[3])}` : null;
+  }
+  return null;
 }
 
 function getCurrentVersion(mode = getInstallMode()) {
@@ -702,6 +769,12 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
     requireSignature = false,
     publicKey = RELEASE_PUBLIC_KEY,
     fetchImpl = fetch,
+    // install.js runs on this process's Node (process.execPath), and so do the
+    // hooks and the MCP server it sets up.
+    nodeVersion = process.versions.node,
+    // Called with the requirement when the release needs a newer Node, before
+    // returning false, so the caller can say that rather than "failed".
+    onNodeTooOld = null,
   } = opts;
   const tmpDir = path.join(os.tmpdir(), `gsd-update-${Date.now()}`);
   if (fetchImpl === fetch) useEnvProxy();
@@ -805,6 +878,16 @@ async function downloadAndInstall(tarballUrl, verbose = false, token = null, opt
       return false;
     }
 
+    // The package just verified is the one install.js would set up, so its
+    // own engines.node is the requirement.
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, 'package.json'), 'utf8'));
+    const needsNode = unmetNodeRequirement(pkg.engines?.node, nodeVersion);
+    if (needsNode) {
+      if (verbose) console.error(`  v${pkg.version} needs Node.js ${needsNode}; this is Node.js v${nodeVersion} — not installing`);
+      if (onNodeTooOld) onNodeTooOld(needsNode);
+      return false;
+    }
+
     // No backup/restore here any more. It never worked: the source was
     // pluginRoot/package.json (for the ~/.claude/hooks copy that is
     // ~/.claude/package.json, which does not exist, so backedUp stayed false)
@@ -881,6 +964,14 @@ function describeUpdateOutcome(result) {
   if (!result) return null;
   if (result.updated) return `\n✓ Updated: v${result.from} → v${result.to}`;
   if (!result.updateAvailable) return null;
+  if (result.needsNode) {
+    // Held back on purpose; nothing failed.
+    const why = `v${result.to} needs Node.js ${result.needsNode} and this is Node.js v${result.node}`
+      + (result.action === 'cached' ? ' (from an earlier check)' : '');
+    return result.installMode === 'plugin'
+      ? `\n! Update available, but ${why}. Upgrade Node.js first, then run: claude plugin update gsd@gsd`
+      : `\n! Not installed: ${why}. Upgrade Node.js, then run \`npx gsd-lite update --force\`.`;
+  }
   if (result.action === 'plugin_update') {
     return `\n! Update available: v${result.to}. Run: claude plugin update gsd@gsd`;
   }
@@ -903,6 +994,7 @@ module.exports = {
   describeUpdateOutcome,
   downloadAndInstall,
   fetchLatestRelease,
+  fetchNodeRequirement,
   getCurrentVersion,
   compareVersions,
   describeFetchFailure,
@@ -916,6 +1008,7 @@ module.exports = {
   isOrphan,
   shouldCheck,
   shouldSkipUpdateCheck,
+  unmetNodeRequirement,
   validateExtractedPackage,
   validateTarballUrl,
   verifyReleaseSignature,
