@@ -10,6 +10,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -168,6 +169,23 @@ describe('repo gates — the release workflow signs before it publishes', () => 
     assert.doesNotMatch(coverageSteps[0], /\bif:/, 'the coverage gate must run on every matrix leg');
     assert.equal(steps.filter(s => /run:\s*npm test\b/.test(s)).length, 0,
       'a plain `npm test` step is a matrix leg without the coverage gate');
+  });
+
+  it('keeps engines.node in the one form the installed updaters read', () => {
+    // Every updater from 0.20.1 on reads each later release's engines.node
+    // with unmetNodeRequirement, which knows only `>=X.Y.Z`. Any other form
+    // reads there as no requirement at all, and those installs would update
+    // onto a release their Node cannot run. The form cannot change while those
+    // updaters are in use, whatever a later updater learns to read.
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    const range = pkg.engines?.node;
+    assert.match(String(range), /^>=\d+\.\d+\.\d+$/,
+      `package.json engines.node must be ">=X.Y.Z", the form hooks/gsd-auto-update.cjs reads: ${range}`);
+    const { unmetNodeRequirement } = createRequire(import.meta.url)('../hooks/gsd-auto-update.cjs');
+    const [major, minor, patch] = range.slice(2).split('.').map(Number);
+    const below = patch > 0 ? `${major}.${minor}.${patch - 1}` : minor > 0 ? `${major}.${minor - 1}.99` : `${major - 1}.99.99`;
+    assert.equal(unmetNodeRequirement(range, below), range, `Node ${below} is below the floor and must be held back`);
+    assert.equal(unmetNodeRequirement(range, `${major}.${minor}.${patch}`), null, 'the floor itself is enough');
   });
 
   it('grants the publish job the two writes it needs, and the run no more', () => {

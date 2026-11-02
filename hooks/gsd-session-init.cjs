@@ -317,10 +317,11 @@ setTimeout(() => process.exit(0), 4000).unref();
       // check in plugin mode, from either copy) is about the plugin; this
       // reads only its own copy's version, so the npx copy shows it.
       // `failed` comes from an npx or global install, whose version is the
-      // runtime's. On any doubt (no way to tell, unreadable version, `to` not
-      // a plain version) it is shown.
+      // runtime's. `needs_node` is either, told apart the same way. On any
+      // doubt (no way to tell, unreadable version, `to` not a plain version)
+      // it is shown.
       let alreadyInstalled = false;
-      if ((notif.kind === 'failed' || notif.kind === 'available') && safeSemver(notif.to) !== '?.?.?') {
+      if ((notif.kind === 'failed' || notif.kind === 'available' || notif.kind === 'needs_node') && safeSemver(notif.to) !== '?.?.?') {
         try {
           const updater = require('./gsd-auto-update.cjs');
           const { realish } = require('./lib/hook-registry.cjs');
@@ -351,6 +352,18 @@ setTimeout(() => process.exit(0), 4000).unref();
         // so this is informational rather than an emergency — but a user whose
         // updates have been failing for a month should get to know.
         console.log(`⚠️  GSD-Lite update to v${safeSemver(notif.to)} failed; still on v${safeSemver(notif.from)}. Run \`npx gsd-lite update --force\` to see why.`);
+      } else if (notif.kind === 'needs_node') {
+        // Held back because the release's engines.node is above the Node that
+        // runs these hooks (the updater runs on this one). Said only while that
+        // is still so, and the requirement only in the updater's own spelling.
+        let requires = null;
+        try { requires = require('./gsd-auto-update.cjs').unmetNodeRequirement(notif.requires); } catch { /* no updater: nothing to judge by */ }
+        if (requires) {
+          const head = `⚠️  GSD-Lite v${safeSemver(notif.to)} needs Node.js ${requires} and this is Node.js v${process.versions.node}`;
+          console.log(notif.action === 'plugin_update'
+            ? `${head}. Upgrade Node.js before updating the plugin; still on v${safeSemver(notif.from)}.`
+            : `${head}, so it was not installed; still on v${safeSemver(notif.from)}. Upgrade Node.js to get updates.`);
+        }
       } else if (notif.kind === 'check_failed') {
         // The updater builds the reason from codes and numbers it chose, but
         // this line reaches the model, so it is held to a plain character set

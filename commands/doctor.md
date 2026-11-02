@@ -119,12 +119,14 @@ Check for update-related information:
   - `available` (with `from`, `to`, `action: "plugin_update"`): INFO "Update available: v{from} → v{to}" — a plugin install is updated by the plugin system, not by gsd: `/plugin` → **Installed** → gsd → **Update now**, or `claude plugin update gsd@gsd` from a shell
   - `updated` (with `from`, `to`): INFO "Auto-updated v{from} → v{to}; restart Claude Code to load it"
   - `failed` (with `from`, `to`): WARN "Update to v{to} failed; still on v{from}", fix `npx gsd-lite update --force` to see why (`--force`: the failed check holds a plain update off for a day)
+  - `needs_node` (with `from`, `to`, `requires`, `node`): WARN "v{to} needs Node.js {requires}; Node.js v{node} ran the check, so it is held back on v{from}". With `action: "plugin_update"` it is the plugin's update: upgrade Node.js before updating the plugin. Without it, the updater did not install it: upgrade Node.js, then run `npx gsd-lite update --force`
   - `check_failed` (with `count`, `since`, `reason`): WARN "Update checks failing: {count} in a row since {since} — {reason}" (the reason is described below)
   - The SessionStart hook prints this file and then deletes it, so it is usually absent. Absence is normal: record nothing for it.
 - If `~/.claude/gsd/runtime/update-state.json` has `checkFailure` (`count`, `since`, `reason`) with a `count` of 3 or more, the update checks are failing now: WARN "Update checks failing: {count} in a row since {since} — {reason}". Fewer than 3 is a blip, which SessionStart does not report either: record nothing. The reason ends with what happened to a proxy, when the environment sets one:
   - `(through the proxy set in the environment)`: the proxy was used and the request still failed; the proxy or the network is the thing to check
   - `(... only when started with NODE_USE_ENV_PROXY=1)`, `(... it needs v22.21+ or v24+)`, `(... NODE_USE_ENV_PROXY keeps Node from using it)`: each names the setting to change
   - `(... that Node refused to use)`: Node does not accept the proxy value (for example `host:port` with no scheme, a path after the port, or a `%` in the password that is not an escape); it needs to be an `http://` or `https://` URL Node can parse
+- If `~/.claude/gsd/runtime/update-state.json` has `needsNode` (for example `>=22.0.0`), the last successful check held `latestVersion` back because it needs that Node.js. Run `node --version`: if it is still below `needsNode`, WARN "v{latestVersion} needs Node.js {needsNode}; this is Node.js {node --version} — upgrade Node.js to get updates". If it meets it now, record nothing: the next check installs it, or offers it to a plugin install
 - If cannot determine: record INFO "Update status unavailable"
 
 ## STEP 6: Output Summary
