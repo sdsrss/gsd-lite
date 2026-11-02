@@ -8,21 +8,26 @@ Patch: a security fix in the updater of npx and global installs.
 
 **Do I have to do anything?**
 
-- **npx or global install, on Node 22 or later, on a computer other people
-  also log in to:** install this release with `npx gsd-lite@latest install`
-  rather than waiting for the daily update. That update is made by the
-  version you have now, which still has the problem fixed here.
+- **npx or global install, on a computer where other user accounts can run
+  programs:** install this release yourself rather than waiting for the
+  daily update, which the version you have now makes in the way fixed here.
+  Run `npx gsd-lite@latest install`; with a global install, also
+  `npm i -g gsd-lite@latest`, because `gsd update` and `npx gsd-lite update`
+  run that copy's updater. This matters most on Node 20, where 0.20.1's
+  updater never installs this release and downloads and unpacks it again,
+  the old way, at every daily check. npm warns there (`EBADENGINE`) and
+  installs it anyway, unless `engine-strict` is set.
 - **Otherwise:** nothing.
 
 - **The updater unpacks a release where only you can reach it.** It
   unpacked each release into a folder in the system temp directory (`/tmp`
-  on Linux, shared by every user of the computer), named after the current
-  time, and used that folder even when it already existed. Another user of
-  the same computer who had created it, open to everyone, could replace the
-  release's `install.js` after its checksum and signature were checked, and
-  the updater then ran their code as you. 0.20.2's updater, in the daily
-  update and in `npx gsd-lite update`, unpacks into a new folder with a
-  random name that only you can open.
+  on Linux, shared by every account on the computer), named after the
+  current time, and used that folder even when it already existed. Another
+  account on the same computer that had created it, open to everyone, could
+  replace the release's `install.js` after its checksum and signature were
+  checked, and the updater then ran that code as you. 0.20.2's updater, in
+  the daily update and in `npx gsd-lite update`, unpacks into a new folder
+  with a random name that only you can open.
 
 ## [0.20.1] - 2026-11-02
 
