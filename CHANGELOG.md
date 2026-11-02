@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here.
 
+## [0.20.2] - 2026-11-02
+
+Patch: a security fix in the updater of npx and global installs.
+
+**Do I have to do anything?**
+
+- **npx or global install, on Node 22 or later, on a computer other people
+  also log in to:** install this release with `npx gsd-lite@latest install`
+  rather than waiting for the daily update. That update is made by the
+  version you have now, which still has the problem fixed here.
+- **Otherwise:** nothing.
+
+- **The updater unpacks a release where only you can reach it.** It
+  unpacked each release into a folder in the system temp directory (`/tmp`
+  on Linux, shared by every user of the computer), named after the current
+  time, and used that folder even when it already existed. Another user of
+  the same computer who had created it, open to everyone, could replace the
+  release's `install.js` after its checksum and signature were checked, and
+  the updater then ran their code as you. 0.20.2's updater, in the daily
+  update and in `npx gsd-lite update`, unpacks into a new folder with a
+  random name that only you can open.
+
 ## [0.20.1] - 2026-11-02
 
 Patch: gsd's updater no longer installs a release that needs a newer
