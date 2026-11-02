@@ -4,26 +4,30 @@ All notable changes to this project are documented here.
 
 ## [0.20.0] - 2026-11-01
 
-Minor, not patch: gsd-lite now requires Node.js 22 or later. Node 20 reached
-end of life on 2026-04-30.
+Minor, not patch: Node.js 22 is now the oldest version gsd-lite supports.
+Node 20 reached end of life on 2026-04-30.
 
 **Do I have to do anything?**
 
-- **On Node 22 or later:** nothing.
-- **On Node 20:** move to Node 22 or 24. Nothing in 0.20.0 needs Node 22
-  yet, so it still runs on Node 20, but it is no longer tested there, npm
-  warns (`EBADENGINE`) when installing it, and later releases may use Node 22
-  features. To stay on 0.19.1 instead: `npx gsd-lite@0.19.1 install`, and run
-  Claude Code with `PLUGIN_AUTO_UPDATE=1` in its environment so the daily
-  update check does not install a newer release.
-- **npx install still on 0.19.0 or earlier:** run
+- **npx install still on 0.19.0 or earlier**, on any Node version: run
   `npx gsd-lite update --force` once. The updater those versions shipped
-  cannot download a release (see 0.19.1).
+  cannot install a release (see 0.19.1).
+- **Otherwise, on Node 22 or later:** nothing.
+- **On Node 20:** move to Node 22 or 24. Nothing in 0.20.0 needs Node 22
+  yet, so it still runs on Node 20, but it is no longer tested there, and
+  later releases may use Node 22 features. npm warns (`EBADENGINE`) when
+  `npx` or `npm install` fetches it; the daily update check and plugin
+  updates install it without showing that warning.
+  To stay on 0.19.1 with an npx install: `npx gsd-lite@0.19.1 install`, and
+  run Claude Code with `PLUGIN_AUTO_UPDATE=1` in its environment so the daily
+  update check does not install a newer release. That does not work for a
+  plugin install: `npx gsd-lite@0.19.1 install` leaves the plugin's version
+  as it is, and a plugin changes version only when Claude Code updates it.
 
 - **Node 22 is the minimum.** `engines` is `>=22.0.0`, and CI tests Node 22
   and 24.
 
-- **Update notices speak only of updates that are not installed yet.** After
+- **Update notices no longer offer an update that is already installed.** After
   an update went in another way (`npx gsd-lite@latest install`,
   `claude plugin update`), the next session no longer reports that version as
   failed or as available, and a throttled `npx gsd-lite update` no longer
