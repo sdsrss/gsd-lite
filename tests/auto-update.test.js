@@ -1176,6 +1176,14 @@ describe('the updater does not install a release this Node cannot run', () => {
         assert.equal(mod.unmetNodeRequirement(r, '20.0.0'), null, JSON.stringify(r));
       }
       assert.equal(mod.unmetNodeRequirement('>=22.0.0', 'not a version'), null);
+      // What it returns reaches SessionStart's output, so it stays digits:
+      // a number past what Number() prints plainly came back as 1e+21 or
+      // Infinity (pre-tag review of 0.20.1, LOW-1).
+      for (const r of [`>=${'1'.repeat(22)}.0.0`, `>=${'9'.repeat(400)}.0.0`, `>=22.${'0'.repeat(30)}1.0`]) {
+        const got = mod.unmetNodeRequirement(r, '20.0.0');
+        assert.ok(got === null || /^>=\d+\.\d+\.\d+$/.test(got), `${r.slice(0, 40)}… -> ${got}`);
+      }
+      assert.equal(mod.unmetNodeRequirement('>=022.0.0', '20.0.0'), '>=22.0.0', 'leading zeros are dropped');
       // The default is this process's own Node.
       assert.equal(mod.unmetNodeRequirement('>=999.0.0'), '>=999.0.0');
       assert.equal(mod.unmetNodeRequirement('>=1.0.0'), null);

@@ -692,8 +692,10 @@ function requiresSignature(version) {
 // version to compare, is not evidence that this Node is too old and returns
 // null: the release installs, as it did before this check existed.
 // Returns the requirement in one spelling (digits only) when it is not met.
+// At most nine digits a part: longer ones are no Node version, and Number()
+// printed them as 1e+21 or Infinity.
 function unmetNodeRequirement(range, version = process.versions.node) {
-  const req = /^\s*>=\s*(\d+)\.(\d+)\.(\d+)\s*$/.exec(typeof range === 'string' ? range : '');
+  const req = /^\s*>=\s*(\d{1,9})\.(\d{1,9})\.(\d{1,9})\s*$/.exec(typeof range === 'string' ? range : '');
   const have = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(version));
   if (!req || !have) return null;
   for (let i = 1; i <= 3; i++) {
