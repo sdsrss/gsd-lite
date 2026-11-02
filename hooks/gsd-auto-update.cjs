@@ -681,10 +681,11 @@ function requiresSignature(version) {
 }
 
 // ── Node requirement ───────────────────────────────────────
-// A release's engines.node, against the Node that would run it. npm checks
-// engines only when npx or npm fetches a package, and the updater does
-// neither, so without this a release needing a newer Node installed itself on
-// an older one with nothing said (0.20.0 raised the floor to 22).
+// A release's engines.node, against the Node that would run it. The only
+// engines check on the update path was npm's, in install.js's `npm ci`: a
+// warning into output nobody reads, or a failure under engine-strict. So a
+// release needing a newer Node installed itself on an older one with nothing
+// said (0.20.0 raised the floor to 22).
 //
 // Reads one form, `>=X.Y.Z`. Every updater from 0.20.1 on reads every later
 // release's engines.node with this, so the form cannot change
@@ -692,8 +693,8 @@ function requiresSignature(version) {
 // version to compare, is not evidence that this Node is too old and returns
 // null: the release installs, as it did before this check existed.
 // Returns the requirement in one spelling (digits only) when it is not met.
-// At most nine digits a part: longer ones are no Node version, and from 22
-// digits Number() printed them as 1e+21 or Infinity.
+// At most nine digits a part: longer ones are no Node version, and Number()
+// rounds a long one, or prints it as 1e+21 or Infinity.
 function unmetNodeRequirement(range, version = process.versions.node) {
   const req = /^\s*>=\s*(\d{1,9})\.(\d{1,9})\.(\d{1,9})\s*$/.exec(typeof range === 'string' ? range : '');
   const have = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(version));

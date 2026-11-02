@@ -4,32 +4,28 @@ All notable changes to this project are documented here.
 
 ## [0.20.1] - 2026-11-02
 
-Patch: the updater no longer installs a release that needs a newer Node.js
-than the one it runs on.
+Patch: gsd's updater no longer installs a release that needs a newer
+Node.js than the one it runs on.
 
 **Do I have to do anything?**
 
-- **npx install still on 0.19.0 or earlier:** its updater cannot install a
-  release. On Node 22 or later, do what the 0.19.1 entry's "Do I have to do
-  anything?" says, once. On Node 20 that command declines this release;
-  move to Node 22 or later first.
+- **npx or global install still on 0.19.0 or earlier:** its updater cannot
+  install a release. On Node 22 or later, do what the 0.19.1 entry's "Do I
+  have to do anything?" says, once. On Node 20, move to Node 22 or later
+  first: this release's `npx gsd-lite update` does not install it there.
 - **Otherwise, on Node 22 or later:** nothing.
 - **On Node 20:** releases require Node 22 (`engines` is `>=22.0.0` since
-  0.20.0), and gsd checks that from this release on. An npx or global
-  install on 0.19.1 or 0.20.0 still gets 0.20.1 from its daily update,
-  because those versions do not check; once on 0.20.1, it is not updated
-  again until it moves to Node 22 or later. A plugin install running 0.20.1
-  is told to upgrade Node.js before updating to such a release. The session
-  says which Node.js a release needs.
+  0.20.0); move to Node 22 or 24. 0.20.1's updater does not install such a
+  release on Node 20, and tells a plugin install to upgrade Node.js before
+  updating.
 
-- **The updater checks which Node.js a release needs.** An npx or global
-  install reads `engines.node` from the downloaded release after its
-  checksum and signature are verified, and before anything is installed.
-  When the Node.js running the updater is older, the release is not
-  installed, and the next session says which version it needs;
-  `npx gsd-lite update` says the same. Until now every release was
-  installed: npm checks `engines` only when npx or npm fetches a package,
-  and the updater does neither.
+- **The updater checks which Node.js a release needs.** For an npx or
+  global install, 0.20.1's updater reads `engines.node` from the downloaded
+  release after its checksum and signature are verified, and installs
+  nothing when the Node.js it runs on is older. The next session says which
+  version is needed, and 0.20.1's `npx gsd-lite update` says so too. Until
+  now the update went ahead: npm only warned, into output nobody reads,
+  unless `engine-strict` was set.
 
 - **A plugin install is told to upgrade Node.js first.** Claude Code
   installs plugin updates, so gsd cannot hold one back. When the release
