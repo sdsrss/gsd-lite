@@ -311,13 +311,14 @@ setTimeout(() => process.exit(0), 4000).unref();
       // A notice about updating to a version that is installed now is stale:
       // the update went in another way since (`npx gsd-lite update`,
       // `npx gsd-lite@latest install`, `claude plugin update`). Judged against
-      // the install that wrote it, not the one running this: an npx install
-      // and a project-scope plugin share this file, and each runs its own copy
-      // of this hook. Only a plugin's updater writes `plugin_update`, and only
-      // the plugin's copy knows the plugin's version; `failed` comes from an
-      // npx or global install, whose version is the runtime's. On any doubt
-      // (no way to tell, unreadable version, `to` not a plain version) it is
-      // shown.
+      // the install the notice is about, not the one running this: an npx
+      // install and a project-scope plugin share this file, and each runs its
+      // own copy of this hook. `plugin_update` (written whenever the updater
+      // runs in plugin mode, from either copy) is about the plugin, whose
+      // version only the plugin's copy can see, so the npx copy shows it.
+      // `failed` comes from an npx or global install, whose version is the
+      // runtime's. On any doubt (no way to tell, unreadable version, `to` not
+      // a plain version) it is shown.
       let alreadyInstalled = false;
       if ((notif.kind === 'failed' || notif.kind === 'available') && safeSemver(notif.to) !== '?.?.?') {
         try {
